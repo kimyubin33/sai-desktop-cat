@@ -164,6 +164,112 @@ const SCENARIOS = {
     ];
   },
 
+  // 4단계: A가 자기소개·프로젝트·작업 입력
+  'collab-setup'(ctx) {
+    const h = helpers(ctx);
+    const c = ctx.team.collab;
+    return [
+      { name: 'sync', wait: 500, action: () => ctx.team.syncNow(), capture: false },
+      { name: 'empty', wait: 300, action: () => ctx.openChat('collab'), window: h.w, settle: 1500 },
+      {
+        name: 'filled',
+        wait: 300,
+        action: async () => {
+          await c.saveProfile({ pr: '영상 편집과 촬영을 해 봤어요', skills: [{ name: '영상편집', level: 3 }, { name: '촬영', level: 2 }], learn: '', weeklyHours: 10 });
+          const pid = await c.createProject({ title: '학생회 홍보 영상', goal: '1분 홍보 영상과 포스터', deliverable: 'mp4, A2 포스터', deadline: '2026-11-28' });
+          const shoot = await c.addTask(pid, { title: '촬영', estimateHours: 3, difficulty: 2, skills: '촬영', doneCriteria: '인터뷰 3명 촬영본', prep: '카메라 대여, 장소 섭외' });
+          await c.addTask(pid, { title: '컷 편집', estimateHours: 5, difficulty: 3, skills: '영상편집', dependsOn: [shoot], doneCriteria: '1분 이내 편집본' });
+          await c.addTask(pid, { title: '포스터 디자인', estimateHours: 4, difficulty: 2, skills: '디자인', doneCriteria: 'A2 인쇄용 PDF' });
+          await c.addTask(pid, { title: '자막·소개 글', estimateHours: 2, difficulty: 1, skills: '글쓰기' });
+          await ctx.team.syncNow();
+          await h.js("__saiDemo.showTab('collab')")();
+        },
+        window: h.w,
+        settle: 1500,
+      },
+    ];
+  },
+
+  // 4단계: B가 자기소개 입력
+  'collab-profile'(ctx) {
+    const h = helpers(ctx);
+    return [
+      { name: 'sync', wait: 500, action: () => ctx.team.syncNow(), capture: false },
+      {
+        name: 'profile',
+        wait: 300,
+        action: async () => {
+          await ctx.team.collab.saveProfile({ pr: '포스터·카드뉴스 만들기를 좋아해요', skills: [{ name: '디자인', level: 3 }, { name: '글쓰기', level: 2 }], learn: '영상편집', weeklyHours: 6 });
+          ctx.openChat('collab');
+        },
+        window: h.w,
+        settle: 3500,
+      },
+    ];
+  },
+
+  // 4단계: A가 배분 제안을 받고 적용
+  'collab-plan'(ctx) {
+    const h = helpers(ctx);
+    return [
+      { name: 'open', wait: 500, action: () => ctx.openChat('collab'), capture: false, window: h.w, settle: 1500 },
+      {
+        name: 'plan',
+        wait: 1500,
+        action: h.js(`(async () => {
+          [...document.querySelectorAll('.plan button')].find(b => b.textContent.includes('배분 제안'))?.click();
+          await new Promise(r => setTimeout(r, 800));
+          document.querySelectorAll('.plan-row').forEach(d => d.open = true);
+          document.querySelector('.plan').scrollIntoView();
+        })()`),
+        window: h.w,
+        settle: 1500,
+      },
+      {
+        name: 'applied',
+        wait: 300,
+        action: h.js(`(async () => {
+          [...document.querySelectorAll('.plan button')].find(b => b.textContent.includes('이대로'))?.click();
+          await new Promise(r => setTimeout(r, 800));
+          document.querySelectorAll('.block')[2]?.scrollIntoView();
+        })()`),
+        window: h.w,
+        settle: 1500,
+      },
+    ];
+  },
+
+  // 4단계: B의 고양이가 배정 확인 → 수락 → 시작 안내
+  'collab-nudge'(ctx) {
+    const h = helpers(ctx);
+    const show = () => {
+      h.force('sit')();
+      ctx.advisor.maybeShowProgress();
+    };
+    return [
+      { name: 'sync', wait: 500, action: () => ctx.team.syncNow(), capture: false },
+      { name: 'accept-bubble', wait: 300, action: show, window: h.c },
+      {
+        name: 'accepted',
+        wait: 300,
+        action: async () => {
+          const b = ctx.cat.bubble;
+          ctx.cat.hideBubble();
+          ctx.advisor.handleAction(b.id, 'task-accept');
+          await new Promise((r) => setTimeout(r, 1000));
+          ctx.cat.hideBubble();
+          // 두 번째 배정도 수락
+          const n = ctx.team.collab.nudge();
+          if (n && n.key.startsWith('accept:')) await ctx.team.collab.accept(n.taskId);
+          ctx.team.collab.markNudged('plan-tight');
+        },
+        capture: false,
+      },
+      { name: 'next-bubble', wait: 500, action: show, window: h.c },
+      { name: 'tab', wait: 300, action: () => (ctx.cat.hideBubble(), ctx.openChat('collab')), window: h.w, settle: 1800 },
+    ];
+  },
+
   // A: 다시 동기화 → 보류됨 표시, 팀 약속 현황
   'team-review'(ctx) {
     const h = helpers(ctx);

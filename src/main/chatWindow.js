@@ -15,10 +15,11 @@ class ChatWindow {
       this.win.focus();
       this.win.webContents.send('chat:show-tab', tab);
       if (extra.explain) this.win.webContents.send('chat:start-explain', extra.explain);
+      if (extra.task) this.win.webContents.send('chat:focus-task', extra.task);
       return this.win;
     }
     this.win = new BrowserWindow({
-      width: 460,
+      width: 520,
       height: 700,
       minWidth: 380,
       minHeight: 520,
@@ -35,7 +36,7 @@ class ChatWindow {
       },
     });
     this.win.setMenu(null);
-    this.win.loadFile(path.join(__dirname, '..', 'renderer', 'chat', 'index.html'), { query: extra.explain ? { tab, explain: extra.explain } : { tab } });
+    this.win.loadFile(path.join(__dirname, '..', 'renderer', 'chat', 'index.html'), { query: { tab, ...(extra.explain ? { explain: extra.explain } : {}), ...(extra.task ? { task: extra.task } : {}) } });
     this.win.once('ready-to-show', () => this.win.show());
     this.win.on('closed', () => {
       this.win = null;

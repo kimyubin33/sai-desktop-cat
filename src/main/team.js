@@ -1,5 +1,6 @@
 // 팀 연결을 앱에 붙인다: 백엔드 선택, 주기적 동기화, 설정 저장.
 const { TeamSync } = require('../core/team/team-sync');
+const { CollabSync } = require('../core/collab/collab-sync');
 const { FirebaseBackend, parseFirebaseConfig } = require('../core/team/firebase-backend');
 const { MemoryBackend } = require('../core/team/memory-backend');
 const { randomCode } = require('../core/team/firebase-backend');
@@ -39,10 +40,19 @@ function createTeamService({ stores, onChange = () => {} }) {
     delayMs: process.env.SAI_SEND_DELAY_MS != null ? Number(process.env.SAI_SEND_DELAY_MS) : null,
   });
 
+  const collab = new CollabSync({ team: sync, cache: stores.teamCache });
+
   let timer = null;
   async function syncNow() {
     if (!sync.isConnected()) return { ok: false, reason: 'not-connected' };
     const r = await sync.sync();
+    if (r.ok) {
+      try {
+        await collab.sync();
+      } catch (e) {
+        stores.teamCache.update((c) => (c.lastError = String(e.message || e)));
+      }
+    }
     onChange();
     return r;
   }
@@ -84,7 +94,7 @@ function createTeamService({ stores, onChange = () => {} }) {
     };
   }
 
-  return { sync, syncNow, start, stop, configure, status };
+  return { sync, collab, syncNow, start, stop, configure, status };
 }
 
 module.exports = { createTeamService };

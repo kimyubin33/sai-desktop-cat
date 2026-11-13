@@ -12,7 +12,9 @@ class Advisor {
    *   { isConnected(), boosts(), pendingProposalsForMe(), respond(id, r) }
    * onExplain(topic): "내 사정도 있어요" → 대화창의 내 사정 이야기로
    */
-  constructor({ stores, cat, onChat, onExplain = () => {}, team = null }) {
+  constructor({ stores, cat, onChat, onExplain = () => {}, team = null, collab = null, onCollab = () => {} }) {
+    this.collab = collab;
+    this.onCollab = onCollab;
     this.stores = stores;
     this.cat = cat;
     this.onChat = onChat;
@@ -43,7 +45,7 @@ class Advisor {
     const s = this.stores.settings.get();
     if (silenceReason(s)) return this.schedule();
     if (this.cat.isBusy() || !this.cat.isVisible()) return this.schedule(BUSY_RETRY_MS);
-    if (!this.maybeShowProposal()) this.speakNow();
+    if (!this.maybeShowProposal() && !this.maybeShowProgress()) this.speakNow();
     this.schedule();
   }
 
@@ -99,7 +101,31 @@ class Advisor {
     return true;
   }
 
+  /** 업무 진행 확인 (배정 확인, 시작, 막힘, 준비물, 마감) */
+  maybeShowProgress() {
+    if (!this.collab || !this.teamConnected()) return false;
+    let n = null;
+    try {
+      n = this.collab.nudge();
+    } catch {
+      return false;
+    }
+    if (!n) return false;
+    this.collab.markNudged(n.key);
+    this.show({
+      id: `progress-${n.key}`,
+      kind: 'progress',
+      taskId: n.taskId,
+      actions: n.actions,
+      topic: null,
+      text: n.text,
+      source: { type: 'collab', label: n.source },
+    });
+    return true;
+  }
+
   actionsFor(entry) {
+    if (entry.kind === 'progress') return entry.actions;
     if (entry.kind === 'proposal') {
       return [
         { id: 'later', label: '나중에' },
@@ -170,9 +196,34 @@ class Advisor {
       case 'chat':
         this.onChat();
         break;
+      case 'open-collab':
+      case 'task-object':
+        this.onCollab(entry.taskId || null);
+        break;
+      case 'task-accept':
+        this.runTask(() => this.collab.accept(entry.taskId), '고마워요. 시작할 수 있을 때 알려 드릴게요.');
+        break;
+      case 'task-start':
+        this.runTask(() => this.collab.setStatus(entry.taskId, 'doing'), '좋아요. 막히면 언제든 말해 주세요.');
+        break;
+      case 'task-blocked':
+        this.runTask(() => this.collab.setStatus(entry.taskId, 'blocked'), '팀에 도움이 필요하다고 알려 둘게요. 어디서 막혔는지 협업 탭에 적어 두면 더 빨라요.');
+        break;
+      case 'task-done':
+        this.runTask(() => this.collab.setStatus(entry.taskId, 'done'), '수고했어요! 완료로 표시해 둘게요.');
+        break;
+      case 'task-ok':
+        break;
       default:
         break;
     }
+  }
+
+  runTask(fn, thanks) {
+    if (!this.collab) return;
+    fn()
+      .then(() => setTimeout(() => this.say(thanks), 400))
+      .catch((e) => setTimeout(() => this.say(`처리하지 못했어요: ${e.message}`), 400));
   }
 
   stop() {

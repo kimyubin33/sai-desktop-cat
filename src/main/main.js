@@ -82,6 +82,7 @@ function buildMenu() {
       })),
     },
     { label: '정리함', click: () => openChat('notes') },
+    { label: '협업 (업무·일정)', click: () => openChat('collab') },
     { label: '설정', click: () => openChat('settings') },
     { type: 'separator' },
     { label: `${s.catName} 보이기`, type: 'checkbox', checked: cat.isVisible(), click: (i) => cat.setVisible(i.checked) },
@@ -111,6 +112,8 @@ app.whenReady().then(() => {
     stores,
     cat,
     team: team.sync,
+    collab: team.collab,
+    onCollab: (taskId) => openChat('collab', taskId ? { task: taskId } : {}),
     onChat: () => openChat(),
     onExplain: (topic) => openChat('chat', { explain: topic }),
   });

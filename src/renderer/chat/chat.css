@@ -559,3 +559,218 @@ input.code {
   border-color: #9fd0aa;
   background: #f4fbf5;
 }
+
+/* 협업 */
+#tab-collab {
+  padding: 4px 16px 20px;
+}
+
+.collab .block {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+
+.collab details.block > summary {
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.collab .settings {
+  margin-top: 6px;
+}
+
+.collab .settings textarea,
+.collab .settings input[type='number'],
+.collab .settings input[type='date'] {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.collab .settings input[type='number'] {
+  width: 90px;
+}
+
+.skill-row input[type='text'] {
+  flex: 1;
+}
+
+.chip.learn {
+  background: #eef4ff;
+}
+
+.project-meta {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 6px 0;
+}
+
+.collab .warn {
+  font-size: 12px;
+  color: #9a5a1a;
+  background: #fff4e0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.loads {
+  margin-top: 8px;
+}
+
+.load-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.load-name {
+  width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar {
+  flex: 1;
+  height: 10px;
+  background: var(--soft);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bar .fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.bar .fill.over {
+  background: var(--danger);
+}
+
+.load-num {
+  width: 72px;
+  text-align: right;
+  color: var(--muted);
+}
+
+.plan-row {
+  display: block;
+}
+
+.plan-row summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.plan-row ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.task {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  background: #fffdf9;
+}
+
+.task.doing {
+  border-left-color: var(--accent);
+}
+
+.task.blocked {
+  border-left-color: var(--danger);
+}
+
+.task.done {
+  opacity: 0.6;
+}
+
+.task.focus {
+  outline: 2px solid var(--accent);
+}
+
+.task-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 2px 0 4px;
+}
+
+.status-select {
+  font: inherit;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  padding: 2px 4px;
+}
+
+.prep,
+.deps {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  margin: 4px 0;
+}
+
+.prep label,
+.deps label {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 4px;
+  margin: 1px 0 !important;
+}
+
+.task-actions {
+  margin-top: 6px;
+}
+
+.task-actions select {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+
+.inline-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.collab-msg {
+  display: block;
+  min-height: 16px;
+  margin-top: 6px;
+}
+
+.collab-msg.bad {
+  color: var(--danger);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 10px;
+}

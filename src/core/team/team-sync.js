@@ -99,6 +99,7 @@ class TeamSync {
       c.lastSync = 0;
       c.lastError = null;
       c.myUid = null;
+      c.collab = null;
     });
   }
 

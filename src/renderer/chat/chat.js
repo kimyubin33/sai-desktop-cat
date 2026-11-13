@@ -38,6 +38,7 @@
     document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
     document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('active', s.id === `tab-${tab}`));
     if (tab === 'notes') renderNotes();
+    if (tab === 'collab' && window.SaiCollab) window.SaiCollab.render(true);
     if (tab === 'settings') {
       loadSettings();
       renderTeam();
@@ -708,6 +709,7 @@
     state.settings = s;
     updateEngine(s);
     const params = new URLSearchParams(location.search);
+    if (params.get('task')) window.SaiCollab && window.SaiCollab.focus(params.get('task'));
     showTab(params.get('tab') || 'chat');
     if (params.get('explain')) startMode('explain', params.get('explain'));
   })();

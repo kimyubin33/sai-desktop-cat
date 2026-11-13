@@ -37,6 +37,22 @@ contextBridge.exposeInMainWorld('sai', {
   teamHoldTopic: invoke('team:hold-topic'),
   teamPropose: invoke('team:propose'),
 
+  collabView: invoke('collab:view'),
+  collabSaveProfile: invoke('collab:save-profile'),
+  collabCreateProject: invoke('collab:create-project'),
+  collabUpdateProject: invoke('collab:update-project'),
+  collabSetActive: invoke('collab:set-active'),
+  collabAddTask: invoke('collab:add-task'),
+  collabEditTask: invoke('collab:edit-task'),
+  collabDeleteTask: invoke('collab:delete-task'),
+  collabAccept: invoke('collab:accept'),
+  collabObject: invoke('collab:object'),
+  collabStatus: invoke('collab:status'),
+  collabTogglePrep: invoke('collab:toggle-prep'),
+  collabPlan: invoke('collab:plan'),
+  collabApplyPlan: invoke('collab:apply-plan'),
+  onFocusTask: (fn) => ipcRenderer.on('chat:focus-task', (_e, id) => fn(id)),
+
   onShowTab: (fn) => ipcRenderer.on('chat:show-tab', (_e, tab) => fn(tab)),
   onStartExplain: (fn) => ipcRenderer.on('chat:start-explain', (_e, topic) => fn(topic)),
 });

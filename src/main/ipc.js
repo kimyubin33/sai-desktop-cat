@@ -108,6 +108,69 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
     }) && true,
   );
 
+  // ---------- 협업 (4단계) ----------
+  const collab = team.collab;
+  const collabView = () => {
+    const connected = team.sync.isConnected();
+    if (!connected) return { connected: false };
+    const d = collab.data();
+    const members = collab.members();
+    const nameOf = new Map(members.map((m) => [m.uid, m.name]));
+    const project = collab.active();
+    return {
+      connected,
+      myUid: collab.myUid(),
+      members,
+      myProfile: collab.myProfile(),
+      projects: d.projects,
+      project,
+      tasks: project
+        ? collab.tasksOf(project.id).map((t) => ({
+            ...t,
+            assigneeName: t.assignee ? nameOf.get(t.assignee) || '나간 팀원' : null,
+            objectionNames: Object.keys(t.objections || {}).map((u) => nameOf.get(u) || '팀원'),
+          }))
+        : [],
+      objectionReasons: require('../core/collab/collab-sync').OBJECTION_REASONS,
+    };
+  };
+  const collabCall = (fn) => async (arg) => {
+    await fn(arg || {});
+    return collabView();
+  };
+  handle('collab:view', async ({ refresh } = {}) => {
+    if (refresh && team.sync.isConnected()) await team.syncNow();
+    return collabView();
+  });
+  handle('collab:save-profile', collabCall((p) => collab.saveProfile(p)));
+  handle('collab:create-project', collabCall((p) => collab.createProject(p)));
+  handle('collab:update-project', collabCall(({ id, ...p }) => collab.updateProject(id, p)));
+  handle('collab:set-active', collabCall(({ id }) => collab.setActive(id)));
+  handle('collab:add-task', collabCall(({ projectId, ...t }) => collab.addTask(projectId, t)));
+  handle('collab:edit-task', collabCall(({ projectId, id, ...t }) => collab.editTask(projectId, id, t)));
+  handle('collab:delete-task', collabCall(({ projectId, id }) => collab.deleteTask(projectId, id)));
+  handle('collab:accept', collabCall(({ id }) => collab.accept(id)));
+  handle('collab:object', collabCall(({ id, reason }) => collab.object(id, reason)));
+  handle('collab:status', collabCall(({ id, status }) => collab.setStatus(id, status)));
+  handle('collab:toggle-prep', collabCall(({ id, index }) => collab.togglePrep(id, index)));
+  handle('collab:plan', async ({ projectId }) => {
+    if (team.sync.isConnected()) await team.syncNow();
+    const p = collab.plan(projectId);
+    if (!p) return null;
+    const names = new Map(collab.members().map((m) => [m.uid, m.name]));
+    const titles = new Map(collab.tasksOf(projectId).map((t) => [t.id, t.title]));
+    return {
+      ...p,
+      assignments: p.assignments.map((a) => ({ ...a, name: a.uid ? names.get(a.uid) : null, title: titles.get(a.taskId) })),
+      missingProfiles: collab.members().filter((m) => !m.hasProfile).map((m) => m.name),
+    };
+  });
+  handle('collab:apply-plan', async ({ projectId, assignments }) => {
+    const n = await collab.applyPlan(projectId, assignments || []);
+    team.syncNow();
+    return { applied: n, view: collabView() };
+  });
+
   const publicSettings = () => {
     const s = stores.settings.get();
     return {
