@@ -9,6 +9,8 @@ use sai_core::http::client;
 use sai_core::time::now_ms;
 use sai_core::util::J;
 use serde_json::{json, Value};
+#[allow(unused_imports)]
+use sai_core::util::J as _J;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -34,7 +36,8 @@ pub struct Updater {
 }
 
 pub fn supported() -> bool {
-    cfg!(windows) && !cfg!(debug_assertions)
+    // 개발용: SAI_UPDATE_TEST 가 있으면 다른 운영체제·개발 실행에서도 확인·내려받기까지 해 본다 (설치는 하지 않음)
+    (cfg!(windows) && !cfg!(debug_assertions)) || std::env::var("SAI_UPDATE_TEST").is_ok()
 }
 
 impl Updater {
@@ -44,7 +47,8 @@ impl Updater {
             st.status = "unsupported".into();
             st.error = Some("이 실행 방식에서는 자동 업데이트를 하지 않아요 (Windows 설치 버전에서 동작).".into());
         }
-        Updater { st: Mutex::new(st), current: env!("CARGO_PKG_VERSION").to_string() }
+        let current = std::env::var("SAI_UPDATE_TEST").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        Updater { st: Mutex::new(st), current }
     }
 
     pub fn state(&self) -> Value {
@@ -127,18 +131,17 @@ impl Updater {
 
     /// 새 버전이 있으면 내려받아 확인까지 마치고 버전을 돌려준다
     async fn check_inner(&self, _a: &Arc<App>) -> Result<Option<String>, String> {
+        // GitHub API 는 시간당 호출 수 제한이 있어서, 최신 릴리스 주소가 넘어가는 곳(…/releases/tag/vX)으로 버전을 알아낸다
         let res = client()
-            .get(format!("https://api.github.com/repos/{REPO}/releases/latest"))
-            .header("accept", "application/vnd.github+json")
+            .get(RELEASES_URL)
+            .timeout(Duration::from_secs(30))
             .send()
             .await
             .map_err(|e| format!("GitHub 에 연결하지 못했어요: {e}"))?;
-        if !res.status().is_success() {
-            return Err(format!("GitHub 응답 {}", res.status()));
-        }
-        let rel: Value = res.json().await.map_err(|e| e.to_string())?;
-        let tag = rel.s("tag_name");
-        let latest = tag.trim_start_matches('v').to_string();
+        let final_url = res.url().to_string();
+        let tag = final_url.rsplit("/tag/").next().filter(|t| *t != final_url).map(String::from);
+        let Some(tag) = tag else { return Err(format!("최신 버전을 알아내지 못했어요 (응답 {})", res.status())) };
+        let latest = tag.trim_start_matches('v').trim_end_matches('/').to_string();
         let newer = match (semver::Version::parse(&latest), semver::Version::parse(&self.current)) {
             (Ok(l), Ok(c)) => l > c,
             _ => false,
@@ -147,12 +150,18 @@ impl Updater {
         if !newer {
             return Ok(None);
         }
-        let assets = rel.arr("assets");
+        let base = format!("https://github.com/{REPO}/releases/download/{tag}");
         let setup_name = format!("Sai-Setup-{latest}.exe");
-        let url_of = |name: &str| assets.iter().find(|x| x.s("name") == name).map(|x| x.s("browser_download_url"));
-        let setup_url = url_of(&setup_name).ok_or("새 버전에 설치 파일이 없어요.")?;
-        let sums_url = url_of("SHA256SUMS.txt").ok_or("새 버전에 확인용 파일(SHA256SUMS.txt)이 없어요.")?;
-        let sums = client().get(&sums_url).send().await.map_err(|e| e.to_string())?.text().await.map_err(|e| e.to_string())?;
+        let sums_res = client()
+            .get(format!("{base}/SHA256SUMS.txt"))
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|e| format!("확인용 파일을 받지 못했어요: {e}"))?;
+        if !sums_res.status().is_success() {
+            return Err(format!("새 버전에 확인용 파일(SHA256SUMS.txt)이 없어요 (응답 {}).", sums_res.status()));
+        }
+        let sums = sums_res.text().await.map_err(|e| e.to_string())?;
         let want = sums
             .lines()
             .find_map(|l| {
@@ -171,23 +180,31 @@ impl Updater {
         let dir = std::env::temp_dir().join("sai-update");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join(&setup_name);
-        let res = client().get(&setup_url).send().await.map_err(|e| e.to_string())?;
+        let res = client()
+            .get(format!("{base}/{setup_name}"))
+            .send()
+            .await
+            .map_err(|e| format!("설치 파일을 받지 못했어요: {e}"))?;
+        if !res.status().is_success() {
+            return Err(format!("설치 파일을 받지 못했어요 (응답 {}).", res.status()));
+        }
         let total = res.content_length().unwrap_or(0);
         let mut stream = res.bytes_stream();
         let mut hasher = Sha256::new();
         let mut buf: Vec<u8> = Vec::with_capacity(total as usize);
-        while let Some(chunk) = stream.next().await {
+        loop {
+            // 30초 동안 아무것도 오지 않으면 멈춘 것으로 본다
+            let next = tokio::time::timeout(Duration::from_secs(30), stream.next()).await.map_err(|_| "내려받기가 30초 동안 멈춰 있어서 그만뒀어요. 다시 눌러 주세요.".to_string())?;
+            let Some(chunk) = next else { break };
             let chunk = chunk.map_err(|e| format!("내려받다가 끊겼어요: {e}"))?;
             hasher.update(&chunk);
             buf.extend_from_slice(&chunk);
-            if total > 0 {
-                let p = (buf.len() as u64 * 100 / total) as u32;
-                self.set(|s| s.progress = p);
-            }
+            let p = if total > 0 { (buf.len() as u64 * 100 / total).min(99) as u32 } else { 0 };
+            self.set(|s| s.progress = p);
         }
         let got = format!("{:x}", hasher.finalize());
         if got != want {
-            return Err("내려받은 설치 파일이 확인용 값과 달라요. 다음에 다시 받을게요.".into());
+            return Err("내려받은 설치 파일이 확인용 값과 달라요. 다시 눌러 주세요.".into());
         }
         std::fs::write(&path, &buf).map_err(|e| format!("설치 파일을 저장하지 못했어요: {e}"))?;
         self.set(|s| {
@@ -196,6 +213,25 @@ impl Updater {
             s.file = Some(path);
         });
         Ok(Some(latest))
+    }
+
+    /// 화면의 "업데이트 확인": 바로 돌아오고, 확인·내려받기는 뒤에서 한다 (화면은 상태를 자주 읽어 % 를 보여 준다)
+    pub fn check_in_background(&self, a: &Arc<App>) -> Value {
+        if supported() {
+            let busy = matches!(self.st.lock().unwrap().status.as_str(), "checking" | "downloading" | "ready");
+            if !busy {
+                self.set(|s| {
+                    s.status = "checking".into();
+                    s.error = None;
+                });
+                let a2 = a.clone();
+                tauri::async_runtime::spawn(async move {
+                    a2.updater.check(&a2, false).await;
+                    crate::menu::refresh_tray(&a2.handle, &a2);
+                });
+            }
+        }
+        self.state()
     }
 
     /// 설치 버전(설치 폴더에 제거 프로그램이 있음)인지

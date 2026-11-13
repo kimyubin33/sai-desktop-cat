@@ -63,6 +63,15 @@ pub fn maybe_run(app: AppHandle, a: Arc<App>) {
                 }
                 mark("chat-summary");
             }
+            "update" => {
+                open_chat(&app, &a, "settings", json!({}));
+                tokio::time::sleep(Duration::from_millis(step)).await;
+                js("document.getElementById('updateCheck').scrollIntoView(); document.getElementById('updateCheck').click()");
+                for i in 0..12 {
+                    tokio::time::sleep(Duration::from_millis(700)).await;
+                    println!("DEMO update {i} {}", a.updater.state());
+                }
+            }
             "cat" => {
                 a.advisor.speak_now(&a);
                 mark("bubble");

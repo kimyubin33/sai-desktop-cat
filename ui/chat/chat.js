@@ -847,10 +847,25 @@
     if (line) box.append(el('div', { class: st.status === 'error' ? 'err' : 'hint', text: line }));
     $('#updateInstall').classList.toggle('hidden', st.status !== 'ready');
   }
+  // 확인·내려받기는 앱이 뒤에서 하고, 화면은 0.5초마다 상태를 읽어 진행률을 보여 준다
+  let updatePoll = null;
+  function pollUpdate() {
+    clearInterval(updatePoll);
+    updatePoll = setInterval(async () => {
+      try {
+        const st = await window.sai.updateStatus();
+        await renderUpdate(st);
+        if (!['checking', 'downloading'].includes(st.status)) clearInterval(updatePoll);
+      } catch {
+        clearInterval(updatePoll);
+      }
+    }, 500);
+  }
   $('#updateCheck').addEventListener('click', async () => {
     $('#updateInfo').textContent = '확인하는 중이에요…';
     try {
       await renderUpdate(await window.sai.updateCheck());
+      pollUpdate();
     } catch (e) {
       $('#updateInfo').textContent = errMsg(e);
     }

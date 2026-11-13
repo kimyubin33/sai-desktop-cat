@@ -381,7 +381,7 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
 
         // ---------- 업데이트 ----------
         "update:status" => Ok(a.updater.state()),
-        "update:check" => Ok(a.updater.check(a, true).await),
+        "update:check" => Ok(a.updater.check_in_background(a)),
         "update:install" => {
             a.updater.install(a);
             ok()
