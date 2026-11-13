@@ -878,7 +878,52 @@
 
   function updateEngine(s) {
     $('#catName').textContent = s.catName;
-    $('#engine').textContent = s.hasApiKey ? 'Claude 연결됨' : '기본 상담 흐름';
+    $('#engine').textContent = s.hasApiKey ? (s.usingSharedKey ? 'Claude 연결됨 (팀 공유 키)' : 'Claude 연결됨') : '기본 상담 흐름';
+    renderTeamKey(s);
+  }
+
+  // ---------- 팀에 Claude 키 공유 ----------
+  function renderTeamKey(s) {
+    const box = $('#teamKey');
+    if (!box) return;
+    box.textContent = '';
+    if (!s.teamConnected) {
+      box.append(el('p', { class: 'hint', text: '팀에 연결하면 내 키를 팀원과 함께 쓸 수 있어요.' }));
+      return;
+    }
+    const ts = s.teamShare || {};
+    const run = (fn, ok) => async () => {
+      $('#teamKeyStatus').textContent = '처리하는 중…';
+      try {
+        const ns = await fn();
+        state.settings = ns;
+        updateEngine(ns);
+        $('#teamKeyStatus').textContent = ok;
+      } catch (e) {
+        $('#teamKeyStatus').textContent = errMsg(e);
+      }
+    };
+    box.append(el('strong', { text: `팀 공유 (${s.teamName || '보고 있는 팀'})` }));
+    if (ts.shared && ts.mine) {
+      box.append(
+        el('p', { class: 'hint', text: '내 키를 이 팀에 공유하고 있어요. 키가 없는 팀원도 AI 기능을 쓰고, 요금은 내 계정에 나가요.' }),
+        el('div', { class: 'inline' }, el('button', { type: 'button', class: 'danger', text: '공유 끄기', onclick: run(() => window.sai.aiUnshareTeam(), '공유를 껐어요. 팀원 앱에서는 다음 동기화 때 사라져요.') })),
+      );
+    } else if (ts.shared) {
+      box.append(el('p', { class: 'hint', text: `${ts.byName}님이 Claude 키를 팀에 공유했어요. ${s.hasOwnKey ? '내 키가 있으니 내 키를 먼저 써요.' : '내 키가 없어도 AI 기능을 쓸 수 있어요.'}` }));
+    } else {
+      box.append(
+        el('p', { class: 'hint warn', text: '공유하면 키가 없는 팀원도 AI 기능을 쓸 수 있어요. 대신 팀원 사용량도 모두 내 계정으로 청구되고, 팀원은 누구든 키를 꺼내 볼 수 있어요. Console 에서 사용 한도를 정해 두고, 참여 코드는 팀원에게만 알려 주세요.' }),
+        el('div', { class: 'inline' }, el('button', {
+          type: 'button',
+          text: '이 팀에 내 키 공유하기',
+          disabled: !s.hasOwnKey,
+          onclick: () => confirm('팀원 사용량이 내 계정으로 청구되고, 팀원은 키를 볼 수 있어요. 공유할까요?') && run(() => window.sai.aiShareTeam(), '공유했어요. 팀원 앱은 다음 동기화(최대 5분) 때 키를 받아요.')(),
+        })),
+      );
+      if (!s.hasOwnKey) box.append(el('p', { class: 'hint', text: '먼저 위에 내 API 키를 저장해 주세요.' }));
+    }
+    box.append(el('span', { id: 'teamKeyStatus', class: 'status' }));
   }
 
   form.addEventListener('submit', async (e) => {

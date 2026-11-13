@@ -430,6 +430,18 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             ok()
         }
         "ai:test" => Ok(a.ai.test().await),
+        // 보고 있는 팀에 내 키를 공유하거나 끈다
+        "ai:share-team" => {
+            let Some(key) = a.ai.own_key() else { return Err("먼저 내 Claude API 키를 저장해 주세요.".into()) };
+            hub.active().claude_share(&key).await?;
+            a.ai.set_shared(hub.shared_claude_key());
+            Ok(public_settings(a))
+        }
+        "ai:unshare-team" => {
+            hub.active().claude_unshare().await?;
+            a.ai.set_shared(hub.shared_claude_key());
+            Ok(public_settings(a))
+        }
         _ => Err(format!("알 수 없는 요청: {ch}")),
     }
 }
@@ -439,6 +451,9 @@ fn public_settings(a: &Arc<App>) -> Value {
     json!({
         "catName": s["catName"], "frequency": s["frequency"], "quietUntil": s["quietUntil"], "dnd": s["dnd"],
         "retentionDays": s["retentionDays"], "ai": s["ai"], "hasApiKey": a.ai.has_key(),
+        "hasOwnKey": a.ai.own_key().is_some(), "usingSharedKey": a.ai.using_shared(),
+        "teamConnected": a.hub.active().is_connected(), "teamName": a.hub.active().name(),
+        "teamShare": a.hub.active().claude_status(),
     })
 }
 

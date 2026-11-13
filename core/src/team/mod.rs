@@ -15,6 +15,7 @@
 //!   held            받은 사람이 "내 사정도 있어요"로 보류함
 //! 서버로는 주제 id, 받는 사람 uid, 주(週)만 간다. 문안은 받는 쪽 앱의 일반 문안을 쓴다.
 pub mod backend;
+pub mod claude;
 pub mod codec;
 
 pub use backend::Backend;
@@ -51,6 +52,8 @@ pub struct HubInner {
     pub now: Clock,
     sync_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     pub tg: Mutex<HashMap<String, TgRuntime>>,
+    /// 팀에 공유된 Claude API 키 (팀 id → 키). 파일에는 두지 않는다
+    pub claude_keys: Mutex<HashMap<String, String>>,
     pub last_nudge_team: Mutex<Option<String>>,
 }
 
@@ -86,6 +89,7 @@ impl Hub {
             now,
             sync_locks: Mutex::new(HashMap::new()),
             tg: Mutex::new(HashMap::new()),
+            claude_keys: Mutex::new(HashMap::new()),
             last_nudge_team: Mutex::new(None),
         }))
     }
@@ -180,6 +184,7 @@ impl Hub {
             }
         });
         self.0.tg.lock().unwrap().remove(team_id);
+        self.0.claude_keys.lock().unwrap().remove(team_id);
     }
 
     // ---------- 만들기·참여·나가기 ----------
@@ -229,6 +234,9 @@ impl Hub {
             }
             if let Err(e) = t.tg_sync().await {
                 t.tg_record(false, &e);
+            }
+            if let Err(e) = t.claude_sync().await {
+                t.cache_update(|c| c["lastError"] = json!(e));
             }
         }
         r
@@ -724,5 +732,16 @@ mod tests {
         tb.respond(&p[0].s("id"), "agree").await.unwrap();
         ta.sync().await;
         assert_eq!(ta.proposals()[0]["agreedByAll"], true);
+
+        // Claude 키 공유: B 도 받고, 공유한 A 만 끌 수 있다
+        ta.claude_share("sk-ant-test-123").await.unwrap();
+        b.sync_team(&tb).await;
+        assert_eq!(b.shared_claude_key().as_deref(), Some("sk-ant-test-123"));
+        assert_eq!(tb.claude_status()["byName"], "유빈");
+        assert!(tb.claude_share("sk-ant-other").await.is_err());
+        assert!(tb.claude_unshare().await.is_err());
+        ta.claude_unshare().await.unwrap();
+        b.sync_team(&tb).await;
+        assert_eq!(b.shared_claude_key(), None);
     }
 }

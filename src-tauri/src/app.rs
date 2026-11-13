@@ -162,6 +162,8 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
 /// 모든 팀 동기화 + Google 할 일
 pub async fn sync_now(a: &Arc<App>) -> Value {
     let results = a.hub.sync_all().await;
+    // 팀에 공유된 Claude 키 (내 키가 없을 때 쓴다)
+    a.ai.set_shared(a.hub.shared_claude_key());
     if !results.is_empty() {
         let _ = a.google.sync_todo().await;
     }

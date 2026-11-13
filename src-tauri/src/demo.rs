@@ -45,6 +45,8 @@ pub fn maybe_run(app: AppHandle, a: Arc<App>) {
                 mark("schedule-unavail");
                 tokio::time::sleep(Duration::from_millis(step)).await;
                 js("__saiDemo.showTab('settings')");
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                js("document.getElementById('teamKey').scrollIntoView()");
                 mark("settings");
             }
             "chat" => {

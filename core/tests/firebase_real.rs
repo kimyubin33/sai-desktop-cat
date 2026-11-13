@@ -69,10 +69,21 @@ async fn firebase_contract() {
         Err(e) => panic!("{e}"),
     }
 
+    // 팀에 공유한 Claude 키: 공유한 사람만 끌 수 있다 (규칙을 아직 배포하지 않았으면 경고만)
+    match a.set_integration(&team, "claude", json!({ "apiKey": "sk-ant-check", "sharedBy": ua })).await {
+        Ok(()) => {
+            assert_eq!(b.get_integration(&team, "claude").await.unwrap().unwrap().s("apiKey"), "sk-ant-check");
+            assert!(b.delete_integration(&team, "claude").await.is_err(), "다른 팀원이 끄면 거절돼야 해요");
+            a.delete_integration(&team, "claude").await.unwrap();
+            println!("✓ Claude 키 공유: 팀원이 받고, 공유한 사람만 끔");
+        }
+        Err(e) if e.contains("403") => println!("::warning::Claude 키 공유 규칙이 서버에 아직 없어요. Firebase 콘솔 → Firestore → 규칙에 저장소의 firestore.rules 를 붙여 넣고 게시해 주세요."),
+        Err(e) => panic!("{e}"),
+    }
+
     b.leave_team(&team).await.unwrap();
     a.leave_team(&team).await.unwrap();
     // 나간 사람은 더 이상 팀 데이터를 볼 수 없다
     assert!(b.list_members(&team).await.is_err());
     println!("✓ 나가기 후에는 볼 수 없음\n모두 통과했어요.");
-    let _ = ua;
 }

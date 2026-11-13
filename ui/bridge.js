@@ -27,7 +27,7 @@
     start: 'chat:start', send: 'chat:send', summarizeNow: 'chat:summarize-now', updateSummary: 'chat:update-summary',
     list: 'chat:list', get: 'chat:get', remove: 'chat:delete', removeAll: 'chat:delete-all',
     topics: 'topics:list', sharePreview: 'share:preview', shareSave: 'share:save', outbox: 'share:outbox', outboxRemove: 'share:remove',
-    getSettings: 'settings:get', setSettings: 'settings:set', setApiKey: 'ai:set-key', testAi: 'ai:test', resetDampened: 'settings:reset-dampened',
+    getSettings: 'settings:get', setSettings: 'settings:set', setApiKey: 'ai:set-key', testAi: 'ai:test', aiShareTeam: 'ai:share-team', aiUnshareTeam: 'ai:unshare-team', resetDampened: 'settings:reset-dampened',
     shareConfirm: 'share:confirm', shareSetRecipient: 'share:set-recipient',
     teamStatus: 'team:status', teamConfigure: 'team:configure', teamCreate: 'team:create', teamJoin: 'team:join', teamLeave: 'team:leave',
     teamSwitch: 'team:switch', teamSync: 'team:sync', teamRespond: 'team:respond', teamHoldTopic: 'team:hold-topic', teamPropose: 'team:propose',

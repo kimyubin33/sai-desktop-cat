@@ -116,10 +116,21 @@ service cloud.firestore {
       // 팀 공용 연결 정보 (Telegram 봇 토큰 등): 팀원만 읽고 쓴다
       match /integrations/{name} {
         allow read: if isMember(teamId);
-        allow create, update: if isMember(teamId) && name in ['telegram']
+        // Telegram 봇: 팀원 누구나 등록·변경
+        allow create, update: if isMember(teamId) && name == 'telegram'
           && request.resource.data.keys().hasOnly(['botToken', 'botUsername'])
           && request.resource.data.botToken is string && request.resource.data.botToken.size() <= 100;
-        allow delete: if isMember(teamId);
+        // 팀에 공유한 Claude API 키: 공유한 사람만 바꾸고 끌 수 있다
+        allow create: if isMember(teamId) && name == 'claude'
+          && request.resource.data.keys().hasOnly(['apiKey', 'sharedBy'])
+          && request.resource.data.apiKey is string && request.resource.data.apiKey.size() <= 300
+          && request.resource.data.sharedBy == request.auth.uid;
+        allow update: if isMember(teamId) && name == 'claude'
+          && resource.data.sharedBy == request.auth.uid
+          && request.resource.data.keys().hasOnly(['apiKey', 'sharedBy'])
+          && request.resource.data.apiKey is string && request.resource.data.apiKey.size() <= 300
+          && request.resource.data.sharedBy == request.auth.uid;
+        allow delete: if isMember(teamId) && (name != 'claude' || resource.data.sharedBy == request.auth.uid);
       }
 
       // 내 Telegram 채팅 연결: 본인만 쓰고, 팀원은 업무 알림을 보내기 위해 읽는다

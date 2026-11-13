@@ -903,3 +903,4 @@ select.team-pick {
 .sched.compact .sched-time { min-width: 84px; }
 .msg.user.queued { opacity: 0.55; }
 .msg { overflow-wrap: anywhere; }
+.team-key { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 6px; }

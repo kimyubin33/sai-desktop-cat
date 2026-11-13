@@ -423,6 +423,10 @@ impl Backend {
         }))
     }
 
+    pub async fn delete_integration(&self, team_id: &str, name: &str) -> Result<()> {
+        self.delete_doc(&format!("teams/{team_id}/integrations/{name}")).await
+    }
+
     /// 내 Telegram 채팅 연결 — 본인만 쓰고, 팀원은 알림을 보내기 위해 읽는다
     pub async fn set_telegram_link(&self, team_id: &str, data: Value) -> Result<()> {
         let uid = self.sign_in().await?;

@@ -48,6 +48,8 @@ pub struct Config {
 pub struct Ai {
     settings: Store,
     pub last_error: Mutex<Option<String>>,
+    /// 팀에서 공유받은 키 (내 키가 없을 때만 쓴다)
+    shared: Mutex<Option<String>>,
 }
 
 async fn post(api_key: &str, body: &Value, timeout: Duration) -> Result<reqwest::Response> {
@@ -149,12 +151,12 @@ fn transcript(s: &Session, limit: usize) -> String {
 
 impl Ai {
     pub fn new(settings: Store) -> Ai {
-        Ai { settings, last_error: Mutex::new(None) }
+        Ai { settings, last_error: Mutex::new(None), shared: Mutex::new(None) }
     }
 
     pub fn config(&self) -> Config {
         let s = self.settings.get();
-        let key = crate::secret::decrypt_field(&s, "apiKeyEnc").filter(|k| !k.is_empty());
+        let key = self.own_key().or_else(|| self.shared.lock().unwrap().clone());
         let model = s["ai"].os("model").filter(|m| !m.is_empty()).unwrap_or_else(|| "claude-sonnet-5-5".into());
         Config { enabled: s["ai"].b("enabled") && key.is_some(), api_key: key, model, name: s.s("catName") }
     }
@@ -162,6 +164,19 @@ impl Ai {
     pub fn set_key(&self, key: &str) {
         let enc = crate::secret::encrypt(key.trim());
         self.settings.update(|s| s["apiKeyEnc"] = json!(enc));
+    }
+
+    pub fn own_key(&self) -> Option<String> {
+        self.settings.read(|s| crate::secret::decrypt_field(s, "apiKeyEnc")).filter(|k| !k.is_empty())
+    }
+
+    pub fn set_shared(&self, key: Option<String>) {
+        *self.shared.lock().unwrap() = key;
+    }
+
+    /// 내 키 없이 팀 공유 키로 쓰는 중인지
+    pub fn using_shared(&self) -> bool {
+        self.own_key().is_none() && self.shared.lock().unwrap().is_some()
     }
 
     pub fn has_key(&self) -> bool {
