@@ -257,6 +257,41 @@ class FirebaseBackend {
   async deleteTask(teamId, projectId, taskId) {
     await this.deleteDoc(`teams/${teamId}/projects/${projectId}/tasks/${taskId}`);
   }
+
+  // ---------- 외부 연결 (5단계) ----------
+  async upsert(collectionPath, id, data) {
+    const path = `${collectionPath}/${id}`;
+    const existing = await this.getDoc(path).catch(() => null);
+    if (existing) await this.patchDoc(path, data, Object.keys(data));
+    else await this.createDoc(collectionPath, id, data);
+  }
+
+  /** 팀 공용 연결 정보 (예: telegram 봇 토큰) — 팀원만 읽는다 */
+  async setIntegration(teamId, name, data) {
+    await this.upsert(`teams/${teamId}/integrations`, name, data);
+  }
+
+  async getIntegration(teamId, name) {
+    const d = await this.getDoc(`teams/${teamId}/integrations/${name}`);
+    if (!d) return null;
+    const { id, ...rest } = d;
+    return rest;
+  }
+
+  /** 내 Telegram 채팅 연결 — 본인만 쓰고, 팀원은 알림을 보내기 위해 읽는다 */
+  async setTelegramLink(teamId, data) {
+    const uid = await this.signIn();
+    await this.upsert(`teams/${teamId}/telegram`, uid, data);
+  }
+
+  async removeTelegramLink(teamId) {
+    const uid = await this.signIn();
+    await this.deleteDoc(`teams/${teamId}/telegram/${uid}`);
+  }
+
+  async listTelegramLinks(teamId) {
+    return (await this.listDocs(`teams/${teamId}/telegram`)).map(({ id, ...d }) => ({ uid: id, ...d }));
+  }
 }
 
 async function safeText(res) {

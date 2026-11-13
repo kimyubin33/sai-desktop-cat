@@ -113,6 +113,22 @@ function defineContract(test, makeUsers) {
     assert.deepEqual(task.prep, [{ text: '로고 파일', done: false }]);
     await denied(() => outsider.listTasks(t.teamId, pid));
   });
+
+  test('외부 연결: 봇 정보와 Telegram 연결은 팀원만, 연결은 본인 것만', async () => {
+    const [a, b, outsider] = await makeUsers(3);
+    const t = await a.createTeam({ name: '팀', displayName: 'A' });
+    await b.joinTeam({ joinCode: t.joinCode, displayName: 'B' });
+    await a.setIntegration(t.teamId, 'telegram', { botToken: '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ', botUsername: 'sai_test_bot' });
+    assert.equal((await b.getIntegration(t.teamId, 'telegram')).botUsername, 'sai_test_bot');
+    await denied(() => outsider.getIntegration(t.teamId, 'telegram'));
+
+    await b.setTelegramLink(t.teamId, { chatId: 987654321, teamAlerts: true });
+    const links = await a.listTelegramLinks(t.teamId);
+    assert.deepEqual(links.map((l) => [l.uid, l.chatId, l.teamAlerts]), [[await b.signIn(), 987654321, true]]);
+    await denied(() => outsider.listTelegramLinks(t.teamId));
+    await b.removeTelegramLink(t.teamId);
+    assert.equal((await a.listTelegramLinks(t.teamId)).length, 0);
+  });
 }
 
 module.exports = { defineContract };

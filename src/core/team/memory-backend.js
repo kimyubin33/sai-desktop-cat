@@ -234,6 +234,37 @@ class MemoryBackend {
       delete this.project(hub, teamId, projectId).tasks[taskId];
     });
   }
+
+  // ---------- 외부 연결 ----------
+  async setIntegration(teamId, name, data) {
+    this.tx((hub) => {
+      const c = this.coll(this.member(hub, teamId), 'integrations');
+      c[name] = { ...(c[name] || {}), ...structuredClone(data) };
+    });
+  }
+
+  async getIntegration(teamId, name) {
+    const t = this.member(this.load(), teamId);
+    return (t.integrations || {})[name] || null;
+  }
+
+  async setTelegramLink(teamId, data) {
+    this.tx((hub) => {
+      const c = this.coll(this.member(hub, teamId), 'telegram');
+      c[this.uidValue] = { ...(c[this.uidValue] || {}), ...structuredClone(data) };
+    });
+  }
+
+  async removeTelegramLink(teamId) {
+    this.tx((hub) => {
+      delete this.coll(this.member(hub, teamId), 'telegram')[this.uidValue];
+    });
+  }
+
+  async listTelegramLinks(teamId) {
+    const t = this.member(this.load(), teamId);
+    return Object.entries(t.telegram || {}).map(([uid, d]) => ({ uid, ...d }));
+  }
 }
 
 module.exports = { MemoryBackend, emptyHub };
