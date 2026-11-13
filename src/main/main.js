@@ -9,6 +9,7 @@ const { AiHelper } = require('./ai');
 const { registerChatIpc } = require('./ipc');
 const { createTeamService } = require('./team');
 const { createUpdater } = require('./updater');
+const { ensureAutoStart } = require('./autostart');
 const { runSnapshots } = require('./devSnapshot');
 
 if (!app.requestSingleInstanceLock()) {
@@ -129,6 +130,8 @@ app.whenReady().then(() => {
     s.dampenedTopics = {};
   });
   if (process.platform === 'win32') app.setAppUserModelId('com.kimyubin33.sai');
+  // 컴퓨터를 켜면 자동으로 실행 (켤 때마다 다시 등록)
+  ensureAutoStart();
 
   cat = new CatController({
     settings: stores.settings,
