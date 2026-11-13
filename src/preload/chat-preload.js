@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('sai', {
   teamCreate: invoke('team:create'),
   teamJoin: invoke('team:join'),
   teamLeave: invoke('team:leave'),
+  teamSwitch: invoke('team:switch'),
   teamSync: invoke('team:sync'),
   teamRespond: invoke('team:respond'),
   teamHoldTopic: invoke('team:hold-topic'),

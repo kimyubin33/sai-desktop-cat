@@ -74,7 +74,11 @@ function createOutboxItems(summary, choices, { now = Date.now(), rand = Math.ran
  */
 function mergeIntoOutbox(existing, items) {
   const next = [...existing];
-  const sameKey = (x, it) => x.topic === it.topic && x.target === it.target && (x.toMember || null) === (it.toMember || null);
+  const sameKey = (x, it) =>
+    (x.teamId || null) === (it.teamId || null) &&
+    x.topic === it.topic &&
+    x.target === it.target &&
+    (x.toMember || null) === (it.toMember || null);
   for (const it of items) {
     const i = next.findIndex((x) => sameKey(x, it) && !['sent', 'held'].includes(x.status));
     if (i >= 0) {

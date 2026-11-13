@@ -98,7 +98,7 @@ class Advisor {
       proposalId: p.id,
       topic: null,
       text: `팀에 이런 약속을 맞춰 보자는 제안이 있어요. "${p.text}"`,
-      source: { type: 'team', label: `팀 약속 제안 · 지금 ${p.agree}/${p.memberCount}명 동의` },
+      source: { type: 'team', label: `${p.teamName ? `${p.teamName} · ` : ''}팀 약속 제안 · 지금 ${p.agree}/${p.memberCount}명 동의` },
     });
     return true;
   }

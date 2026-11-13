@@ -828,3 +828,43 @@ input.code {
 .status.bad {
   color: var(--danger);
 }
+
+/* 여러 팀 */
+.team-switch {
+  font: inherit;
+  font-size: 11px;
+  max-width: 150px;
+  margin-top: 2px;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.team-list {
+  margin-bottom: 8px;
+}
+
+.team-banner {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-top: 6px;
+}
+
+select.team-pick {
+  font: inherit;
+  margin: 4px 0 8px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+#teamJoin {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}

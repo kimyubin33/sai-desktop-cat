@@ -1,8 +1,5 @@
 // 팀 연결을 앱에 붙인다: 백엔드 선택, 주기적 동기화, 설정 저장.
-const { TeamSync } = require('../core/team/team-sync');
-const { CollabSync } = require('../core/collab/collab-sync');
-const { Notifier } = require('../core/notify/notifier');
-const { TOPICS } = require('../core/topics');
+const { TeamHub } = require('../core/team/team-hub');
 const { createGoogleService } = require('./google');
 const { FirebaseBackend, parseFirebaseConfig } = require('../core/team/firebase-backend');
 const { MemoryBackend } = require('../core/team/memory-backend');
@@ -33,47 +30,25 @@ function createTeamService({ stores, onChange = () => {} }) {
     });
   }
 
-  const sync = new TeamSync({
-    makeBackend,
-    state: {
-      get: () => settings.get().team,
-      set: (v) => settings.update((s) => (s.team = v)),
-    },
+  const hub = new TeamHub({
+    settings,
     outbox: stores.sharedOutbox,
-    cache: stores.teamCache,
+    teamCache: stores.teamCache,
+    makeBackend,
     delayMs: process.env.SAI_SEND_DELAY_MS != null ? Number(process.env.SAI_SEND_DELAY_MS) : null,
-    onProposal: (topic) => notifier.proposal(TOPICS[topic] ? TOPICS[topic].teamProposal : ''),
   });
-
-  // Telegram: 업무 알림만 (배정·막힘·팀 약속·내 진행 확인)
-  const notifier = new Notifier({ team: sync, cache: stores.teamCache });
-  const collab = new CollabSync({
-    team: sync,
-    cache: stores.teamCache,
-    onEvent: (e) => {
-      if (e.type === 'assigned') return notifier.assigned(e.list, e.project);
-      if (e.type === 'blocked') return notifier.blocked(e.task, e.project, e.who);
-      return null;
-    },
+  const google = createGoogleService({
+    stores,
+    collabs: () => hub.all().map((b) => b.collab),
+    activeCollab: () => hub.active().collab,
   });
-  const google = createGoogleService({ stores, collab });
 
   let timer = null;
   async function syncNow() {
-    if (!sync.isConnected()) return { ok: false, reason: 'not-connected' };
-    const r = await sync.sync();
-    if (r.ok) {
-      try {
-        await collab.sync();
-      } catch (e) {
-        stores.teamCache.update((c) => (c.lastError = String(e.message || e)));
-      }
-      // 외부 연결은 실패해도 팀 동기화 결과를 막지 않는다 (각자 상태에 오류를 남김)
-      await notifier.sync().catch((e) => notifier.record(false, String(e.message || e)));
-      await google.syncTodo().catch(() => {});
-    }
+    const results = await hub.syncAll();
+    if (results.length) await google.syncTodo().catch(() => {});
     onChange();
-    return r;
+    return results.find((r) => !r.ok) || results[0] || { ok: false, reason: 'not-connected' };
   }
 
   function start() {
@@ -95,15 +70,16 @@ function createTeamService({ stores, onChange = () => {} }) {
       if (!prev || prev.projectId !== cfg.projectId) {
         // 다른 프로젝트로 바꾸면 이전 로그인과 팀 연결은 쓸 수 없다
         s.firebaseSessionEnc = null;
-        s.team = null;
+        s.teams = [];
+        s.activeTeamId = null;
       }
     });
-    sync.resetBackend();
+    hub.resetBackend();
     return cfg;
   }
 
   function status() {
-    const s = sync.status();
+    const s = hub.active().sync.status();
     const cfg = settings.get().firebase || BUILTIN_FIREBASE;
     return {
       ...s,
@@ -113,7 +89,48 @@ function createTeamService({ stores, onChange = () => {} }) {
     };
   }
 
-  return { sync, collab, notifier, google, syncNow, start, stop, configure, status };
+  function teams() {
+    const activeId = hub.active().teamId;
+    return hub.teams().map((t) => {
+      const b = hub.bundle(t.teamId);
+      const c = b.sync.cache.get();
+      return {
+        teamId: t.teamId,
+        name: t.name,
+        joinCode: t.joinCode,
+        displayName: t.displayName,
+        active: t.teamId === activeId,
+        memberCount: (c.members || []).length,
+        lastSync: c.lastSync || 0,
+        lastError: c.lastError || null,
+      };
+    });
+  }
+
+  return {
+    hub,
+    // 화면(협업·정리함·설정)은 "지금 보고 있는 팀"을 쓴다
+    get sync() {
+      return hub.active().sync;
+    },
+    get collab() {
+      return hub.active().collab;
+    },
+    get notifier() {
+      return hub.active().notifier;
+    },
+    google,
+    teams,
+    setActive: (id) => hub.setActive(id),
+    createTeam: (name, displayName) => hub.createTeam(name, displayName),
+    joinTeam: (code, displayName) => hub.joinTeam(code, displayName),
+    leaveTeam: (id) => hub.leaveTeam(id || hub.active().teamId),
+    syncNow,
+    start,
+    stop,
+    configure,
+    status,
+  };
 }
 
 module.exports = { createTeamService };

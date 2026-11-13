@@ -111,9 +111,10 @@ app.whenReady().then(() => {
   advisor = new Advisor({
     stores,
     cat,
-    team: team.sync,
-    collab: team.collab,
-    notifier: team.notifier,
+    // 고양이 말풍선은 모든 팀을 함께 본다
+    team: team.hub.teamFacade(),
+    collab: team.hub.collabFacade(),
+    notifier: team.hub.notifierFacade(),
     // 10분 넘게 입력이 없거나 화면이 잠겨 있으면 자리를 비운 것으로 본다
     isAway: () => powerMonitor.getSystemIdleState(600) !== 'active',
     onCollab: (taskId) => openChat('collab', taskId ? { task: taskId } : {}),

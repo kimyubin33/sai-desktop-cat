@@ -86,6 +86,9 @@
       return;
     }
     add(root, el('div', { id: 'collabMsg', class: 'status collab-msg' }));
+    if ((view.teams || []).length > 1) {
+      add(root, el('div', { class: 'team-banner', text: `${view.teamName} 팀의 협업이에요. 다른 팀은 위쪽 이름 아래에서 바꿀 수 있어요.` }));
+    }
     add(root, profileSection(), projectSection());
     if (view.project) add(root, planSection(), taskSection(), taskForm());
     if (focusTaskId) {

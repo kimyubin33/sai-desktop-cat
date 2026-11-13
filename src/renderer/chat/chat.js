@@ -313,7 +313,30 @@
       }),
     );
     const choices = {};
-    if (preview.team) {
+    let shareTeamId = preview.defaultTeamId;
+    const teamById = new Map((preview.teams || []).map((t) => [t.teamId, t]));
+    if (preview.teams && preview.teams.length > 1) {
+      // 팀플이 여럿이면 어느 팀 이야기인지 고른다. 받을 팀원 목록도 그 팀으로 바뀐다
+      panel.append(
+        el('div', { class: 'label', text: '어느 팀의 이야기인가요?' }),
+        el(
+          'select',
+          {
+            class: 'team-pick',
+            onchange: (e) => {
+              shareTeamId = e.target.value;
+              const t = teamById.get(shareTeamId);
+              for (const sel of panel.querySelectorAll('select.recipient')) {
+                sel.textContent = '';
+                sel.append(el('option', { value: '', text: '받을 팀원 고르기' }), ...t.members.map((m) => el('option', { value: m.uid, text: m.displayName })));
+              }
+              for (const c of Object.values(choices)) c.toMember = null;
+            },
+          },
+          preview.teams.map((t) => el('option', { value: t.teamId, text: `${t.name} (${t.memberCount}명)`, selected: t.teamId === shareTeamId })),
+        ),
+      );
+    } else if (preview.team) {
       panel.append(el('p', { class: 'hint', text: `연결된 팀: ${preview.team.name} (${preview.team.memberCount}명)` }));
     } else {
       panel.append(el('div', { class: 'warn', text: '아직 팀에 연결되지 않았어요. 저장해 두면 팀에 연결한 뒤 받을 사람을 골라 보낼 수 있어요.' }));
@@ -359,12 +382,15 @@
         );
       }
       opt.append(scopes, el('div', { class: 'label', text: '전달 방식' }), targets);
-      if (preview.members && preview.members.length) {
+      // 팀에 연결돼 있으면 항상 그린다 (고른 팀에 따라 목록이 바뀌므로, 지금 팀에 다른 팀원이 없어도)
+      if ((preview.teams || []).length) {
+        const current = teamById.get(shareTeamId);
+        const ms = current ? current.members : preview.members || [];
         const sel = el(
           'select',
-          { onchange: (e) => (choices[p.topic].toMember = e.target.value || null) },
-          el('option', { value: '', text: '받을 팀원 고르기' }),
-          preview.members.map((m) => el('option', { value: m.uid, text: m.displayName })),
+          { class: 'recipient', onchange: (e) => (choices[p.topic].toMember = e.target.value || null) },
+          el('option', { value: '', text: ms.length ? '받을 팀원 고르기' : '이 팀에는 아직 다른 팀원이 없어요' }),
+          ms.map((m) => el('option', { value: m.uid, text: m.displayName })),
         );
         opt.append(el('div', { class: 'label', text: '관련된 팀원 (상대에게 내 이름은 보이지 않아요)' }), sel);
       }
@@ -378,6 +404,7 @@
     save.addEventListener('click', async () => {
       const res = await window.sai.shareSave({
         id: sessionId,
+        teamId: shareTeamId,
         choices: Object.entries(choices).map(([topic, c]) => ({ topic, ...c })),
       });
       panel.remove();
@@ -386,7 +413,7 @@
         !res.saved
           ? '모두 비공개로 두었어요. 언제든 정리함에서 다시 정할 수 있어요.'
           : res.connected
-            ? `${res.saved}개 주제를 공유 대기함에 넣었어요. 원문과 이름은 들어가지 않고, 시간을 조금 두고 전달돼요. "검토 후 공유"는 정리함에서 확인한 뒤에 보내져요.`
+            ? `${res.teamName ? `"${res.teamName}" 팀으로 ` : ''}${res.saved}개 주제를 공유 대기함에 넣었어요. 원문과 이름은 들어가지 않고, 시간을 조금 두고 전달돼요. "검토 후 공유"는 정리함에서 확인한 뒤에 보내져요.`
             : `${res.saved}개 주제를 공유 대기함에 넣어 두었어요. 팀에 연결되면 전달돼요.`,
       );
     });
@@ -445,6 +472,8 @@
     if (!outbox.length) ob.append(el('div', { class: 'empty', text: '아직 공유하기로 한 주제가 없어요.' }));
     for (const it of outbox) {
       const status = it.status || (it.scope === 'review' ? 'review' : 'queued');
+      // 받을 팀원 고르기·보내기는 그 팀을 보고 있을 때만 (팀원 목록이 팀마다 다르므로)
+      const here = teamInfo.connected && (!it.teamId || it.teamId === teamInfo.activeTeamId);
       const controls = el('div', { class: 'controls' });
       const recipientSelect = () =>
         el(
@@ -453,7 +482,7 @@
           el('option', { value: '', text: '받을 팀원' }),
           others.map((m) => el('option', { value: m.uid, text: m.displayName, selected: m.uid === it.toMember })),
         );
-      if (teamInfo.connected && status === 'review') {
+      if (here && status === 'review') {
         const sel = it.target === 'person' ? recipientSelect() : null;
         if (sel) controls.append(sel);
         controls.append(
@@ -466,7 +495,7 @@
             },
           }),
         );
-      } else if (teamInfo.connected && status === 'needs-recipient') {
+      } else if (here && status === 'needs-recipient') {
         const sel = recipientSelect();
         controls.append(
           sel,
@@ -491,6 +520,7 @@
         );
       }
       const to = it.target === 'person' && it.toMember && nameOf(it.toMember) ? ` → ${nameOf(it.toMember)}` : '';
+      const teamTag = (teamInfo.teams || []).length > 1 && it.teamName ? `[${it.teamName}] ` : '';
       ob.append(
         el(
           'div',
@@ -498,7 +528,7 @@
           el(
             'div',
             { class: 'main' },
-            el('div', { class: 'title', text: `${it.label} · ${TARGET_TEXT[it.target]}${to}` }),
+            el('div', { class: 'title', text: `${teamTag}${it.label} · ${TARGET_TEXT[it.target]}${to}` }),
             el('div', { class: 'sub', text: it.target === 'team' ? it.teamProposal : it.advice, title: it.advice }),
             status === 'held'
               ? el('div', { class: 'hint', text: '상대가 자기 사정을 이야기해서 이 조언은 멈췄어요. 한쪽 이야기만으로 교정하지 않도록, 팀 약속으로 함께 맞춰 보는 걸 추천해요.' })
@@ -563,8 +593,46 @@
   }
 
   // ---------- 팀 연결 ----------
+  // 머리말의 팀 고르기 (팀이 둘 이상일 때)
+  function refreshTeamSwitch(info) {
+    const sel = $('#teamSwitch');
+    const teams = info.teams || [];
+    sel.textContent = '';
+    for (const t of teams) sel.append(el('option', { value: t.teamId, text: t.name, selected: t.active }));
+    sel.classList.toggle('hidden', teams.length < 2);
+  }
+
+  $('#teamSwitch').addEventListener('change', async (e) => {
+    const info = await window.sai.teamSwitch(e.target.value);
+    refreshTeamSwitch(info);
+    const current = document.querySelector('.tabs button.active');
+    showTab(current ? current.dataset.tab : 'chat');
+  });
+
   async function renderTeam(info) {
     info = info || (await window.sai.teamStatus());
+    refreshTeamSwitch(info);
+    const list = $('#teamList');
+    list.textContent = '';
+    for (const t of info.teams || []) {
+      list.append(
+        el(
+          'div',
+          { class: `item ${t.active ? 'agreed' : ''}` },
+          el(
+            'div',
+            { class: 'main' },
+            el('div', { class: 'title', text: `${t.name} · 팀원 ${t.memberCount}명` }),
+            el('div', { class: 'sub', text: `참여 코드 ${t.joinCode} · 내 이름 ${t.displayName}${t.lastError ? ' · 연결 문제 있음' : ''}` }),
+          ),
+          t.active
+            ? el('span', { class: 'status-pill sent', text: '보는 중' })
+            : el('button', { text: '보기', onclick: teamAction(() => window.sai.teamSwitch(t.teamId), `${t.name}을 보고 있어요.`) }),
+        ),
+      );
+    }
+    state.activeTeamName = ((info.teams || []).find((t) => t.active) || {}).name;
+    $('#teamJoinTitle').textContent = (info.teams || []).length ? '다른 팀 추가하기 (만들기 또는 참여 코드)' : '';
     const st = $('#teamStatus');
     st.textContent = '';
     const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '아직 없음');
@@ -583,7 +651,8 @@
 
     const editing = $('#teamConfig').dataset.editing === '1';
     $('#teamConfig').classList.toggle('hidden', info.localMode || (info.configured && !editing));
-    $('#teamJoin').classList.toggle('hidden', !info.configured || info.connected);
+    // 팀이 있어도 다른 팀을 더 만들거나 참여할 수 있다
+    $('#teamJoin').classList.toggle('hidden', !info.configured);
     $('#teamConnected').classList.toggle('hidden', !info.connected);
     $('#fbEdit').classList.toggle('hidden', !!info.localMode);
     const ml = $('#memberList');
@@ -601,6 +670,8 @@
         const info = await fn();
         msg.textContent = okText || '';
         await renderTeam(info);
+        $('#teamName').value = '';
+        $('#joinCode').value = '';
       } catch (e) {
         msg.textContent = errMsg(e);
       }
@@ -633,7 +704,8 @@
   );
   $('#teamSyncBtn').addEventListener('click', teamAction(() => window.sai.teamSync(), '동기화했어요.'));
   $('#teamLeave').addEventListener('click', () => {
-    if (!confirm('팀을 나갈까요? 이 기기에서 보낸 기록이 지워지고, 다시 참여하려면 참여 코드가 필요해요.')) return;
+    const name = state.activeTeamName || '이 팀';
+    if (!confirm(`"${name}"에서 나갈까요? 이 팀으로 보낸 기록이 지워지고, 다시 참여하려면 참여 코드가 필요해요. 다른 팀은 그대로예요.`)) return;
     teamAction(() => window.sai.teamLeave(), '팀에서 나왔어요.')();
   });
 
@@ -709,6 +781,7 @@
     const s = await window.sai.getSettings();
     state.settings = s;
     updateEngine(s);
+    window.sai.teamStatus().then(refreshTeamSwitch).catch(() => {});
     const params = new URLSearchParams(location.search);
     if (params.get('task')) window.SaiCollab && window.SaiCollab.focus(params.get('task'));
     showTab(params.get('tab') || 'chat');

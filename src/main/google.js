@@ -11,7 +11,15 @@ const { BUILTIN_GOOGLE } = require('./firebase-config');
 const DAY = 24 * 60 * 60 * 1000;
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
-function createGoogleService({ stores, collab }) {
+function createGoogleService({ stores, collabs, activeCollab }) {
+  const connected = () => collabs().filter((c) => c.team.isConnected());
+  const findProject = (projectId) => {
+    for (const c of connected()) {
+      const p = c.data().projects.find((x) => x.id === projectId);
+      if (p) return { c, p };
+    }
+    return null;
+  };
   const settings = stores.settings;
   const client = () => settings.get().googleClient || BUILTIN_GOOGLE;
   let auth = null;
@@ -102,7 +110,8 @@ function createGoogleService({ stores, collab }) {
   async function availability(projectId) {
     try {
       const now = Date.now();
-      const project = projectId ? collab.data().projects.find((p) => p.id === projectId) : collab.active();
+      const found = projectId && findProject(projectId);
+      const project = found ? found.p : activeCollab().active();
       const deadline = project && project.deadline ? new Date(`${project.deadline}T23:59`).getTime() : null;
       const until = Math.max(now + 7 * DAY, deadline || 0);
       const busy = await queryBusy(api, { from: now, to: until });
@@ -118,7 +127,8 @@ function createGoogleService({ stores, collab }) {
   /** 내 작업 시간을 캘린더 첫 빈 틈에 잡는다 (최대 2시간 블록) */
   async function scheduleTask(taskId) {
     try {
-      const f = collab.findTask(taskId);
+      const collab = connected().find((c) => c.findTask(taskId));
+      const f = collab && collab.findTask(taskId);
       if (!f) throw new Error('작업을 찾을 수 없어요.');
       const plan = collab.plan(f.projectId);
       const a = plan && plan.assignments.find((x) => x.taskId === taskId);
@@ -144,11 +154,13 @@ function createGoogleService({ stores, collab }) {
 
   // ---------- 할 일 ----------
   async function syncTodo() {
-    if (!client() || !getAuth().isSignedIn() || !collab.team.isConnected()) return null;
+    if (!client() || !getAuth().isSignedIn() || !connected().length) return null;
     try {
-      const me = collab.myUid();
       const results = [];
+      // 모든 팀의 프로젝트를 돌며, 팀마다 내 uid 기준으로 수락한 작업을 올린다
+      for (const collab of connected())
       for (const project of collab.data().projects) {
+        const me = collab.myUid();
         const mine = collab.tasksOf(project.id).filter((t) => t.assignee === me && t.accepted);
         const links = (settings.get().googleTaskLinks || {})[project.id] || {};
         if (!mine.length && !Object.keys(links).length) continue;

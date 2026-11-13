@@ -288,6 +288,93 @@ const SCENARIOS = {
     ];
   },
 
+  // 여러 팀: A 가 팀 두 개를 만든다
+  'multi-create'(ctx) {
+    const h = helpers(ctx);
+    const create = (name) => async () => {
+      await h.setVal('#displayName', '유빈')();
+      await h.setVal('#teamName', name)();
+      await h.click('#teamCreate')();
+    };
+    return [
+      { name: 'open', wait: 300, action: () => ctx.openChat('settings'), capture: false, window: h.w, settle: 1500 },
+      { name: 'first', wait: 1500, action: create('BION 홍보팀'), window: h.w, settle: 1500 },
+      { name: 'second', wait: 300, action: create('안동소주 팀플'), window: h.w, settle: 1500 },
+    ];
+  },
+
+  // 여러 팀: B 는 두 번째 팀에만 참여
+  'multi-join'(ctx) {
+    const h = helpers(ctx);
+    const hub = JSON.parse(fs.readFileSync(process.env.SAI_TEAM_FILE, 'utf8'));
+    const code = Object.entries(hub.joinCodes).find(([, v]) => v.teamName === '안동소주 팀플')[0];
+    return [
+      { name: 'open', wait: 300, action: () => ctx.openChat('settings'), capture: false, window: h.w, settle: 1500 },
+      {
+        name: 'joined',
+        wait: 1500,
+        action: async () => {
+          await h.setVal('#displayName', '민지')();
+          await h.setVal('#joinCode', code)();
+          await h.click('#teamJoinBtn')();
+        },
+        window: h.w,
+        settle: 1500,
+      },
+    ];
+  },
+
+  // 여러 팀: A 가 고민을 "안동소주 팀플"로 민지에게 공유 (보고 있는 팀은 BION 으로 바꿔 둔 상태에서)
+  'multi-share'(ctx) {
+    const h = helpers(ctx);
+    return [
+      {
+        name: 'switch',
+        wait: 500,
+        action: async () => {
+          const bion = ctx.team.teams().find((t) => t.name === 'BION 홍보팀');
+          ctx.team.setActive(bion.teamId);
+          await ctx.team.syncNow();
+        },
+        capture: false,
+      },
+      ...complaintSteps(h, ctx.openChat),
+      {
+        name: 'pick-team',
+        wait: 300,
+        action: h.js(`(async () => {
+          const pick = document.querySelector('.share-panel select.team-pick');
+          pick.value = [...pick.options].find(o => o.text.startsWith('안동소주')).value;
+          pick.dispatchEvent(new Event('change'));
+          for (const sel of document.querySelectorAll('.share-panel select.recipient')) {
+            sel.value = sel.options[1].value; sel.dispatchEvent(new Event('change'));
+          }
+          pick.scrollIntoView();
+        })()`),
+        window: h.w,
+        settle: 800,
+      },
+      { name: 'saved', wait: 300, action: h.click('.share-panel .card-actions .primary'), window: h.w, settle: 1500 },
+      { name: 'notes', wait: 300, action: async () => { await ctx.team.syncNow(); await h.js("__saiDemo.showTab('notes')")(); }, window: h.w, settle: 1500 },
+    ];
+  },
+
+  // 여러 팀: B 가 받은 주제 확인
+  'multi-receive'(ctx) {
+    const h = helpers(ctx);
+    return [
+      {
+        name: 'check',
+        wait: 500,
+        action: async () => {
+          await ctx.team.syncNow();
+          console.log('MULTI-BOOSTS', JSON.stringify(ctx.team.hub.teamFacade().boosts()), JSON.stringify(ctx.team.teams().map((t) => t.name)));
+        },
+        capture: false,
+      },
+    ];
+  },
+
   // A: 다시 동기화 → 보류됨 표시, 팀 약속 현황
   'team-review'(ctx) {
     const h = helpers(ctx);
