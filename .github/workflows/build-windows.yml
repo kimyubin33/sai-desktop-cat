@@ -91,6 +91,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win nsis portable zip --x64 -c.win.signAndEditExecutable=true --publish ${{ steps.ver.outputs.publish }}
 
+      # 초안(Draft)으로 남으면 팀원 앱이 업데이트로 보지 못하므로, 공개 상태와 "최신" 표시를 확실히 한다
+      - name: 릴리스 공개
+        if: steps.ver.outputs.publish == 'always'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="v${{ steps.ver.outputs.version }}"
+          gh release edit "$v" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release view "$v" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,assets --jq '"\(.tagName) draft=\(.isDraft) files=\([.assets[].name] | join(", "))"'
+
       - if: steps.ver.outputs.publish != 'skip'
         uses: actions/upload-artifact@v4
         with:
