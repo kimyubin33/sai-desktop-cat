@@ -53,8 +53,8 @@ class ChatService {
     return out;
   }
 
-  async start(mode) {
-    const { session, replies } = createSession(mode);
+  async start(mode, topic = null) {
+    const { session, replies } = createSession(mode, { topic });
     const polished = await this.polish(session, replies);
     this.save(session);
     return { session: this.publicView(session), replies: polished };

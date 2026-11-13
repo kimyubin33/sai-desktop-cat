@@ -1,7 +1,7 @@
 // 선택 기능: Claude API로 고양이의 말을 더 자연스럽게 다듬고, 정리 카드를 보강한다.
 // API 키가 없거나 호출이 실패하면 규칙 기반 흐름(core/counseling.js)이 그대로 동작한다.
 // 대화 단계·안전 확인·공유 범위 결정은 항상 이 앱의 규칙이 담당하고, AI는 문장과 정리 품질만 돕는다.
-const { safeStorage } = require('electron');
+const { encryptSecret, decryptSecret } = require('./secret');
 const { TOPICS } = require('../core/topics');
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
@@ -17,22 +17,8 @@ const PERSONA = `당신은 팀원 각자의 바탕화면에 사는 고양이 "{n
 - 심리 치료 효과를 약속하지 않고, 진단하지 않습니다.
 - 이모지, 마크다운, 목록 기호를 쓰지 않습니다.`;
 
-function encryptKey(key) {
-  if (!key) return null;
-  if (safeStorage.isEncryptionAvailable()) return 'enc:' + safeStorage.encryptString(key).toString('base64');
-  return 'raw:' + Buffer.from(key).toString('base64');
-}
-
-function decryptKey(stored) {
-  if (!stored) return null;
-  try {
-    if (stored.startsWith('enc:')) return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64'));
-    if (stored.startsWith('raw:')) return Buffer.from(stored.slice(4), 'base64').toString('utf8');
-  } catch {
-    return null;
-  }
-  return null;
-}
+const encryptKey = (key) => encryptSecret(key);
+const decryptKey = (stored) => decryptSecret(stored);
 
 async function callClaude({ apiKey, model, system, user, maxTokens = 400 }) {
   const ctrl = new AbortController();

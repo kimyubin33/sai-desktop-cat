@@ -76,6 +76,11 @@ const DEFAULT_SETTINGS = {
   apiKeyEnc: null,
   retentionDays: 30,
   position: null,
+  // 팀 연결 (3단계)
+  firebase: null, // { apiKey, projectId } — Firebase 콘솔의 웹 앱 설정 (공개돼도 되는 값)
+  firebaseSessionEnc: null, // 익명 로그인 refresh token (암호화)
+  team: null, // { teamId, name, joinCode, displayName }
+  localUid: null, // 로컬 시험 모드용
 };
 
 function createStores(userDataDir) {
@@ -85,6 +90,16 @@ function createStores(userDataDir) {
     privateConv: new JsonFile(path.join(userDataDir, 'private', 'conversations.json'), { sessions: [] }),
     // 공유 대기함: 일반화된 주제와 문안만 저장 (원문·이름·날짜 세부 없음)
     sharedOutbox: new JsonFile(path.join(userDataDir, 'shared', 'outbox.json'), { items: [] }),
+    // 팀 캐시: 팀원 이름, 받은 주제, 팀 약속 제안 (원문 없음)
+    teamCache: new JsonFile(path.join(userDataDir, 'shared', 'team-cache.json'), {
+      members: [],
+      inbox: [],
+      proposals: [],
+      lastSync: 0,
+      lastError: null,
+      myUid: null,
+      shownProposals: {},
+    }),
     adviceHistory: new JsonFile(path.join(userDataDir, 'advice-history.json'), { recent: [] }),
   };
 }

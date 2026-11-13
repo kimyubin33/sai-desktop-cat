@@ -7,6 +7,7 @@ const { ChatWindow } = require('./chatWindow');
 const { ChatService } = require('./chatService');
 const { AiHelper } = require('./ai');
 const { registerChatIpc } = require('./ipc');
+const { createTeamService } = require('./team');
 const { runSnapshots } = require('./devSnapshot');
 
 if (!app.requestSingleInstanceLock()) {
@@ -20,12 +21,13 @@ let tray;
 let chatWindow;
 let ai;
 let chat;
+let team;
 
 const FREQ_LABELS = { off: '먼저 말 걸지 않기', low: '가끔', normal: '보통', high: '자주' };
 
-function openChat(tab = 'chat') {
+function openChat(tab = 'chat', extra = {}) {
   cat.hideBubble();
-  chatWindow.open(tab);
+  chatWindow.open(tab, extra);
 }
 
 function onSettingsChanged() {
@@ -104,90 +106,34 @@ app.whenReady().then(() => {
   cat.bindIpc(ipcMain);
   cat.create();
 
-  advisor = new Advisor({ stores, cat, onChat: () => openChat() });
+  team = createTeamService({ stores, onChange: () => refreshTray() });
+  advisor = new Advisor({
+    stores,
+    cat,
+    team: team.sync,
+    onChat: () => openChat(),
+    onExplain: (topic) => openChat('chat', { explain: topic }),
+  });
 
   ai = new AiHelper(stores.settings);
   chat = new ChatService({ stores, ai });
   chatWindow = new ChatWindow();
-  registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged });
+  registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team });
 
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'tray.png')));
   tray.setToolTip('사이 — 고양이 협업 도우미');
   tray.on('click', () => openChat());
   refreshTray();
 
-  if (!runSnapshots(app, devSnapshotSteps())) advisor.start();
+  team.start();
+  if (!runSnapshots(app, { cat, advisor, chatWindow, openChat, team, stores })) advisor.start();
 });
-
-function devSnapshotSteps() {
-  const force = (state) => () => {
-    cat.hideBubble();
-    cat.behavior.enter(state);
-    cat.sendState(true);
-  };
-  return [
-    ...['sit', 'walk', 'loaf', 'sleep', 'drag'].map((state) => ({
-      name: `cat-${state}`,
-      wait: 1000,
-      action: force(state),
-      window: () => cat.win,
-    })),
-    {
-      name: 'cat-greet',
-      wait: 600,
-      action: () => {
-        force('sit')();
-        advisor.greet();
-      },
-      window: () => cat.win,
-    },
-    {
-      name: 'cat-advice',
-      wait: 600,
-      action: () => {
-        cat.hideBubble();
-        advisor.speakNow();
-      },
-      window: () => cat.win,
-    },
-    ...chatDemoSteps(),
-  ];
-}
-
-function chatDemoSteps() {
-  const js = (code) => () => chatWindow.win.webContents.executeJavaScript(code);
-  const w = () => chatWindow.win;
-  return [
-    { name: 'chat-start', wait: 300, action: () => openChat(), window: w, settle: 1500 },
-    { name: 'chat-mode', wait: 300, action: js("__saiDemo.startMode('complaint')"), window: w },
-    { name: 'chat-1', wait: 300, action: js("__saiDemo.send('시간도 안 지키고 맡은 일도 제대로 안 해서 너무 화나요. 진짜 무책임해요')"), window: w },
-    { name: 'chat-2', wait: 300, action: js("__saiDemo.send('어제 같이 검토하기로 했는데 연락이 없었어요')"), window: w },
-    { name: 'chat-3', wait: 300, action: js("__saiDemo.send('사정은 모르겠어요. 물어보진 않았어요')"), window: w },
-    { name: 'chat-4', wait: 300, action: js("__saiDemo.send('제 다음 작업이 하루 밀렸어요')"), window: w },
-    { name: 'chat-5', wait: 300, action: js("__saiDemo.send('미리 알려주기만 했어도 괜찮았을 것 같아요')"), window: w, settle: 800 },
-    {
-      name: 'chat-share',
-      wait: 300,
-      action: js("document.querySelector('.card .share').click()"),
-      window: w,
-      settle: 800,
-    },
-    {
-      name: 'chat-saved',
-      wait: 300,
-      action: js("document.querySelector('.share-panel .card-actions .primary').click()"),
-      window: w,
-      settle: 800,
-    },
-    { name: 'notes', wait: 300, action: js("__saiDemo.showTab('notes')"), window: w },
-    { name: 'settings', wait: 300, action: js("__saiDemo.showTab('settings')"), window: w },
-  ];
-}
 
 app.on('window-all-closed', (e) => e.preventDefault());
 
 app.on('before-quit', () => {
   if (advisor) advisor.stop();
+  if (team) team.stop();
   if (!stores) return;
   for (const s of Object.values(stores)) s.saveNow();
 });

@@ -3,8 +3,8 @@ const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 const { CatBehavior } = require('../core/behavior');
 
-const WIN_W = 260;
-const WIN_H = 240;
+const WIN_W = 280;
+const WIN_H = 280;
 const TICK_MS = 33;
 const BUBBLE_MS = 15000;
 

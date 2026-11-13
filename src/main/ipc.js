@@ -2,14 +2,14 @@
 const { TOPICS } = require('../core/topics');
 const { buildPreview, createOutboxItems, mergeIntoOutbox, leaksRawText } = require('../core/privacy');
 
-function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged }) {
+function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team }) {
   const handle = (ch, fn) =>
     ipcMain.handle(ch, (e, ...args) => {
       if (!chatWindow.isOwn(e)) throw new Error('허용되지 않은 요청이에요.');
       return fn(...args);
     });
 
-  handle('chat:start', (mode) => chat.start(mode));
+  handle('chat:start', (arg) => (typeof arg === 'string' ? chat.start(arg) : chat.start(arg.mode, arg.topic)));
   handle('chat:send', ({ id, text, skip }) => chat.send(id, String(text || '').slice(0, 4000), !!skip));
   handle('chat:summarize-now', (id) => chat.summarizeNow(id));
   handle('chat:update-summary', ({ id, patch }) => chat.updateSummary(id, patch || {}));
@@ -20,10 +20,23 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
 
   handle('topics:list', () => Object.entries(TOPICS).map(([id, t]) => ({ id, label: t.label })));
 
-  handle('share:preview', ({ id }) => {
+  handle('share:preview', async ({ id }) => {
     const s = chat.find(id);
     if (!s || !s.summary) return { items: [] };
-    return buildPreview(s.summary, { key: s.id });
+    // 받을 팀원 목록이 오래됐으면 먼저 새로 받아 온다
+    if (team.sync.isConnected() && Date.now() - (stores.teamCache.get().lastSync || 0) > 2 * 60 * 1000) {
+      await team.syncNow();
+    }
+    const preview = buildPreview(s.summary, { key: s.id });
+    const st = team.status();
+    const members = st.connected ? team.sync.members() : [];
+    return {
+      ...preview,
+      team: st.connected ? { name: st.team.name, memberCount: st.memberCount } : null,
+      members,
+      // 팀 규모와 상관없이 안내하되, 작은 팀이면 더 분명하게
+      smallTeamWarning: st.connected && st.memberCount > 3 ? null : preview.smallTeamWarning,
+    };
   });
 
   handle('share:save', ({ id, choices }) => {
@@ -31,6 +44,8 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
     if (!s || !s.summary || s.safetyHold) return { saved: 0 };
     const raw = s.turns.filter((t) => t.role === 'user').map((t) => t.text);
     let items = createOutboxItems(s.summary, choices, { key: s.id });
+    const recipients = new Map((choices || []).map((c) => [c.topic, c.toMember || null]));
+    items = items.map((it) => ({ ...it, toMember: it.target === 'person' ? recipients.get(it.topic) : null }));
     // 혹시라도 원문 조각이 섞였다면 다른 일반 문안으로 바꾸고, 그래도 겹치면 저장하지 않는다
     items = items
       .map((it) => {
@@ -39,10 +54,51 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
         return alt ? { ...it, advice: alt } : null;
       })
       .filter(Boolean);
+    items = team.sync.prepareItems(items);
     stores.sharedOutbox.update((d) => {
       d.items = mergeIntoOutbox(d.items, items);
     });
-    return { saved: items.length };
+    if (team.sync.isConnected()) team.syncNow();
+    return { saved: items.length, connected: team.sync.isConnected() };
+  });
+  handle('share:confirm', ({ itemId, toMember }) => {
+    team.sync.confirmReview(itemId, toMember || null);
+    team.syncNow();
+    return true;
+  });
+  handle('share:set-recipient', ({ itemId, toMember }) => {
+    team.sync.setRecipient(itemId, toMember);
+    team.syncNow();
+    return true;
+  });
+
+  // ---------- 팀 ----------
+  const teamView = () => ({
+    ...team.status(),
+    members: team.sync.members({ includeMe: true }).map((m) => ({ ...m, me: m.uid === stores.teamCache.get().myUid })),
+    proposals: team.sync.proposals(),
+    inboxCount: (stores.teamCache.get().inbox || []).length,
+  });
+  const teamCall = (fn) => async (...args) => {
+    await fn(...args);
+    onSettingsChanged();
+    return teamView();
+  };
+  handle('team:status', teamView);
+  handle('team:configure', teamCall((text) => team.configure(text)));
+  handle('team:create', teamCall(({ name, displayName }) => team.sync.createTeam(name, displayName)));
+  handle('team:join', teamCall(({ code, displayName }) => team.sync.joinTeam(code, displayName)));
+  handle('team:leave', teamCall(() => team.sync.leaveTeam()));
+  handle('team:sync', teamCall(() => team.syncNow()));
+  handle('team:respond', teamCall(({ proposalId, response }) => team.sync.respond(proposalId, response)));
+  handle('team:hold-topic', async (topic) => {
+    const n = await team.sync.holdTopic(topic);
+    return { held: n };
+  });
+  handle('team:propose', (topic) => {
+    const id = team.sync.proposeTeam(topic);
+    if (team.sync.isConnected()) team.syncNow();
+    return { queued: !!id, connected: team.sync.isConnected() };
   });
 
   handle('share:outbox', () => stores.sharedOutbox.get().items);

@@ -4,13 +4,20 @@ const { silenceReason, nextDelayMs, pickAdvice, rememberShown } = require('../co
 
 const LATER_MS = 20 * 60 * 1000;
 const BUSY_RETRY_MS = 60 * 1000;
+const PROPOSAL_REPEAT_MS = 6 * 60 * 60 * 1000;
 
 class Advisor {
-  constructor({ stores, cat, onChat, getBoosts = () => ({}) }) {
+  /**
+   * team: 팀 연결 (없으면 null)
+   *   { isConnected(), boosts(), pendingProposalsForMe(), respond(id, r) }
+   * onExplain(topic): "내 사정도 있어요" → 대화창의 내 사정 이야기로
+   */
+  constructor({ stores, cat, onChat, onExplain = () => {}, team = null }) {
     this.stores = stores;
     this.cat = cat;
     this.onChat = onChat;
-    this.getBoosts = getBoosts;
+    this.onExplain = onExplain;
+    this.team = team;
     this.timer = null;
     this.laterTimer = null;
     this.shown = new Map(); // bubble id → entry
@@ -36,7 +43,7 @@ class Advisor {
     const s = this.stores.settings.get();
     if (silenceReason(s)) return this.schedule();
     if (this.cat.isBusy() || !this.cat.isVisible()) return this.schedule(BUSY_RETRY_MS);
-    this.speakNow();
+    if (!this.maybeShowProposal()) this.speakNow();
     this.schedule();
   }
 
@@ -51,6 +58,10 @@ class Advisor {
     });
   }
 
+  teamConnected() {
+    return !!(this.team && this.team.isConnected());
+  }
+
   /** 사용자가 메뉴에서 직접 요청했을 때는 조용한 모드여도 말한다 */
   speakNow() {
     const s = this.stores.settings.get();
@@ -58,12 +69,55 @@ class Advisor {
     const entry = pickAdvice(LIBRARY, {
       recent: hist.get().recent,
       dampened: s.dampenedTopics,
-      boosts: this.getBoosts(),
+      boosts: this.teamConnected() ? this.team.boosts() : {},
     });
     hist.update((h) => {
       h.recent = rememberShown(h.recent, entry.id);
     });
     this.show(entry);
+  }
+
+  /** 아직 답하지 않은 팀 약속 제안이 있으면 (같은 제안은 6시간에 한 번만) 말풍선으로 묻는다 */
+  maybeShowProposal() {
+    if (!this.teamConnected()) return false;
+    const cache = this.stores.teamCache;
+    const shown = cache.get().shownProposals || {};
+    const now = Date.now();
+    const p = this.team.pendingProposalsForMe().find((x) => !shown[x.id] || now - shown[x.id] > PROPOSAL_REPEAT_MS);
+    if (!p) return false;
+    cache.update((c) => {
+      c.shownProposals = { ...(c.shownProposals || {}), [p.id]: now };
+    });
+    this.show({
+      id: `proposal-${p.id}`,
+      kind: 'proposal',
+      proposalId: p.id,
+      topic: null,
+      text: `팀에 이런 약속을 맞춰 보자는 제안이 있어요. "${p.text}"`,
+      source: { type: 'team', label: `팀 약속 제안 · 지금 ${p.agree}/${p.memberCount}명 동의` },
+    });
+    return true;
+  }
+
+  actionsFor(entry) {
+    if (entry.kind === 'proposal') {
+      return [
+        { id: 'later', label: '나중에' },
+        { id: 'agree', label: '좋아요', primary: true },
+      ];
+    }
+    if (entry.kind === 'system') {
+      return [
+        { id: 'later', label: '나중에' },
+        { id: 'chat', label: '이야기하기', primary: true },
+      ];
+    }
+    const actions = [{ id: 'later', label: '나중에' }];
+    if (entry.topic) actions.push({ id: 'less', label: '이런 말 줄이기' });
+    // 받은 조언인지 아닌지 드러나지 않도록, 팀에 연결되어 있으면 모든 협업 조언에 같은 버튼을 단다
+    if (entry.kind === 'teamwork' && this.teamConnected()) actions.push({ id: 'mine', label: '내 사정도 있어요' });
+    actions.push({ id: 'chat', label: '이야기하기', primary: true });
+    return actions;
   }
 
   show(entry, text) {
@@ -75,6 +129,7 @@ class Advisor {
       sourceLabel: entry.source ? sourceLabel(entry) : '',
       topic: entry.topic,
       kind: entry.kind,
+      actions: this.actionsFor(entry),
     });
   }
 
@@ -105,6 +160,12 @@ class Advisor {
             s.dampenedTopics[entry.topic] = (s.dampenedTopics[entry.topic] || 0) + 1;
           });
         }
+        break;
+      case 'mine':
+        if (entry.topic) this.onExplain(entry.topic);
+        break;
+      case 'agree':
+        if (entry.proposalId && this.team) this.team.respond(entry.proposalId, 'agree').catch(() => {});
         break;
       case 'chat':
         this.onChat();

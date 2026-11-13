@@ -471,3 +471,91 @@ h2 {
   padding: 6px 8px;
   margin-top: 6px;
 }
+
+/* 팀 */
+.team-status {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 4px 0 6px;
+}
+
+.team-status .err {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.team-status .code-big {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 16px;
+  letter-spacing: 3px;
+  background: var(--soft);
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+
+#teamBox textarea {
+  width: 100%;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+#teamBox .inline {
+  margin-top: 6px;
+}
+
+#teamBox input[type='text'] {
+  flex: 1;
+  min-width: 120px;
+}
+
+input.code {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.status-pill {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  background: var(--soft);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.status-pill.sent {
+  background: #e5f3e8;
+  color: #3a7a48;
+}
+
+.status-pill.held {
+  background: #eef4ff;
+  color: #4a6aa8;
+}
+
+.status-pill.review,
+.status-pill.needs-recipient {
+  background: #fff4e0;
+  color: #9a5a1a;
+}
+
+.item .controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.item select {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+
+.item.agreed {
+  border-color: #9fd0aa;
+  background: #f4fbf5;
+}

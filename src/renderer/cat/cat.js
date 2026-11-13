@@ -38,7 +38,15 @@
     currentBubble = b;
     textEl.textContent = b.text;
     sourceEl.textContent = b.sourceLabel || '';
-    bubble.querySelector('[data-action="less"]').hidden = !b.topic;
+    const actionsEl = bubble.querySelector('.actions');
+    actionsEl.textContent = '';
+    for (const a of b.actions || []) {
+      const btn = document.createElement('button');
+      btn.dataset.action = a.id;
+      btn.textContent = a.label;
+      if (a.primary) btn.className = 'primary';
+      actionsEl.append(btn);
+    }
     bubble.classList.remove('hidden');
   });
 

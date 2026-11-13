@@ -66,8 +66,9 @@ function newId(now) {
   return `s${now.toString(36)}${seq.toString(36)}`;
 }
 
-function createSession(mode = 'complaint', { now = Date.now() } = {}) {
+function createSession(mode = 'complaint', { now = Date.now(), topic = null } = {}) {
   if (!MODES[mode]) mode = 'complaint';
+  const related = mode === 'explain' && topic && TOPICS[topic] ? topic : null;
   const session = {
     id: newId(now),
     mode,
@@ -82,8 +83,13 @@ function createSession(mode = 'complaint', { now = Date.now() } = {}) {
     sensitive: [],
     safetyHold: null,
     summary: null,
+    relatedTopic: related,
   };
-  const reply = { role: 'cat', text: FALLBACK_TEXT[mode].open, intent: INTENTS[mode].open };
+  if (related) session.topics = [related];
+  const openText = related
+    ? `"${TOPICS[related].label}"에 관한 조언에 당신 사정도 있었군요. 어떤 상황이었는지 편하게 이야기해 주세요. 변명이라고 생각하지 않아요.`
+    : FALLBACK_TEXT[mode].open;
+  const reply = { role: 'cat', text: openText, intent: INTENTS[mode].open };
   session.turns.push({ role: 'cat', text: reply.text, at: now });
   return { session, replies: [reply] };
 }
@@ -188,13 +194,14 @@ function buildSummary(session) {
   if (session.mode === 'explain') {
     return {
       mode: 'explain',
+      relatedTopic: session.relatedTopic || null,
       situation: a.first || '',
       reason: a.reason || '',
       nextTime: a.next || '',
       emotions: session.emotions,
       topics,
       sensitive: session.sensitive.length > 0,
-      note: '내 사정 기록은 공유하지 않는 한 이 기기에만 남아요. 팀 연결 단계에서 상대의 고민과 함께 조율할 때 쓸 수 있어요.',
+      note: '내 사정 기록은 이 기기에만 남아요. 아래 버튼으로 이 주제의 조언을 잠시 멈추거나, 팀 약속으로 함께 맞춰 보자고 제안할 수 있어요. 어느 쪽도 내 이야기 원문은 보내지 않아요.',
     };
   }
   const agree = classifyAgreement(a.agreement);

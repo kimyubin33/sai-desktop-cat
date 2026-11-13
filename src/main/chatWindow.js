@@ -7,12 +7,14 @@ class ChatWindow {
     this.win = null;
   }
 
-  open(tab = 'chat') {
+  /** extra.explain: 주제 id — "내 사정도 있어요"에서 바로 내 사정 이야기를 시작 */
+  open(tab = 'chat', extra = {}) {
     if (this.win && !this.win.isDestroyed()) {
       if (this.win.isMinimized()) this.win.restore();
       this.win.show();
       this.win.focus();
       this.win.webContents.send('chat:show-tab', tab);
+      if (extra.explain) this.win.webContents.send('chat:start-explain', extra.explain);
       return this.win;
     }
     this.win = new BrowserWindow({
@@ -33,7 +35,7 @@ class ChatWindow {
       },
     });
     this.win.setMenu(null);
-    this.win.loadFile(path.join(__dirname, '..', 'renderer', 'chat', 'index.html'), { query: { tab } });
+    this.win.loadFile(path.join(__dirname, '..', 'renderer', 'chat', 'index.html'), { query: extra.explain ? { tab, explain: extra.explain } : { tab } });
     this.win.once('ready-to-show', () => this.win.show());
     this.win.on('closed', () => {
       this.win = null;

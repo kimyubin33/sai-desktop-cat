@@ -24,5 +24,19 @@ contextBridge.exposeInMainWorld('sai', {
   testAi: invoke('ai:test'),
   resetDampened: invoke('settings:reset-dampened'),
 
+  shareConfirm: invoke('share:confirm'),
+  shareSetRecipient: invoke('share:set-recipient'),
+
+  teamStatus: invoke('team:status'),
+  teamConfigure: invoke('team:configure'),
+  teamCreate: invoke('team:create'),
+  teamJoin: invoke('team:join'),
+  teamLeave: invoke('team:leave'),
+  teamSync: invoke('team:sync'),
+  teamRespond: invoke('team:respond'),
+  teamHoldTopic: invoke('team:hold-topic'),
+  teamPropose: invoke('team:propose'),
+
   onShowTab: (fn) => ipcRenderer.on('chat:show-tab', (_e, tab) => fn(tab)),
+  onStartExplain: (fn) => ipcRenderer.on('chat:start-explain', (_e, topic) => fn(topic)),
 });
