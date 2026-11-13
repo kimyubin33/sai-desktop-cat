@@ -23,7 +23,7 @@ let ai;
 let chat;
 let team;
 
-const FREQ_LABELS = { off: '먼저 말 걸지 않기', low: '가끔', normal: '보통', high: '자주' };
+const FREQ_LABELS = { low: '가끔', normal: '보통', high: '자주' };
 
 function openChat(tab = 'chat', extra = {}) {
   cat.hideBubble();
@@ -32,7 +32,7 @@ function openChat(tab = 'chat', extra = {}) {
 
 function onSettingsChanged() {
   const s = stores.settings.get();
-  cat.setCalm(!!s.quiet);
+  cat.setCalm(s.quietUntil > Date.now());
   advisor.schedule();
   refreshTray();
 }
@@ -40,6 +40,14 @@ function onSettingsChanged() {
 function setSetting(fn) {
   stores.settings.update(fn);
   onSettingsChanged();
+}
+
+/** 잠시 조용히: 최대 1시간, 지나면 저절로 다시 말을 건다 */
+function quietFor(minutes) {
+  setSetting((s) => {
+    s.quietUntil = minutes ? Date.now() + Math.min(minutes, 60) * 60 * 1000 : 0;
+  });
+  if (minutes) setTimeout(onSettingsChanged, Math.min(minutes, 60) * 60 * 1000 + 1000);
 }
 
 function focusFor(minutes) {
@@ -53,15 +61,15 @@ function buildMenu() {
   const s = stores.settings.get();
   const focusing = s.focusUntil > Date.now();
   const until = focusing ? new Date(s.focusUntil).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '';
+  const quieting = s.quietUntil > Date.now();
+  const quietUntil = quieting ? new Date(s.quietUntil).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '';
   return Menu.buildFromTemplate([
     { label: `${s.catName}와 이야기하기`, click: openChat },
     { label: '조언 한마디 듣기', click: () => advisor.speakNow() },
     { type: 'separator' },
     {
-      label: '조용한 모드 (먼저 말 걸지 않기)',
-      type: 'checkbox',
-      checked: !!s.quiet,
-      click: (i) => setSetting((x) => (x.quiet = i.checked)),
+      label: quieting ? `잠시 조용히 하는 중 (${quietUntil}까지)` : '잠시 조용히 (1시간)',
+      click: () => quietFor(quieting ? 0 : 60),
     },
     {
       label: focusing ? `집중 모드 중 (${until}까지)` : '집중 모드',
@@ -85,9 +93,21 @@ function buildMenu() {
     { label: '협업 (업무·일정)', click: () => openChat('collab') },
     { label: '설정', click: () => openChat('settings') },
     { type: 'separator' },
-    { label: `${s.catName} 보이기`, type: 'checkbox', checked: cat.isVisible(), click: (i) => cat.setVisible(i.checked) },
+    {
+      label: cat.isVisible() ? `${s.catName} 1시간 숨기기` : `${s.catName} 다시 보이기`,
+      click: () => hideFor(cat.isVisible() ? 60 : 0),
+    },
     { label: '종료', role: 'quit' },
   ]);
+}
+
+/** 숨기기도 1시간 뒤 저절로 다시 나타난다 */
+let hideTimer = null;
+function hideFor(minutes) {
+  clearTimeout(hideTimer);
+  cat.setVisible(!minutes);
+  if (minutes) hideTimer = setTimeout(() => (cat.setVisible(true), refreshTray()), minutes * 60 * 1000);
+  refreshTray();
 }
 
 function refreshTray() {
@@ -96,12 +116,18 @@ function refreshTray() {
 
 app.whenReady().then(() => {
   stores = createStores(app.getPath('userData'));
+  // 예전 버전에서 "먼저 말 걸지 않기"·"조용한 모드"를 켜 둔 경우: 끄는 기능을 없앴으므로 기본값으로 돌린다
+  stores.settings.update((s) => {
+    if (!['low', 'normal', 'high'].includes(s.frequency)) s.frequency = 'low';
+    if ('quiet' in s) delete s.quiet;
+    s.dampenedTopics = {};
+  });
   if (process.platform === 'win32') app.setAppUserModelId('com.kimyubin33.sai');
 
   cat = new CatController({
     settings: stores.settings,
     onClick: () => openChat(),
-    onContextMenu: (win) => buildMenu().popup({ window: win }),
+    onContextMenu: () => cat.popupMenu(buildMenu()),
     onBubbleAction: (id, action) => advisor.handleAction(id, action),
   });
   cat.bindIpc(ipcMain);

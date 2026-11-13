@@ -270,6 +270,44 @@ const SCENARIOS = {
     ];
   },
 
+  // 오른쪽 클릭 메뉴: 고양이 창에서 오른쪽 버튼을 눌렀을 때 메뉴가 열리고, 닫히면 원래대로 돌아오는지
+  menu(ctx) {
+    const { Menu } = require('electron');
+    let menu;
+    const orig = ctx.cat.popupMenu.bind(ctx.cat);
+    ctx.cat.popupMenu = (m) => {
+      menu = m;
+      orig(m);
+    };
+    const log = (tag) => console.log('MENU', tag, JSON.stringify({ open: !!ctx.cat.menuOpen, focusable: ctx.cat.win.isFocusable() }));
+    return [
+      {
+        name: 'right-click',
+        wait: 1500,
+        action: async () => {
+          await ctx.cat.win.webContents.executeJavaScript(
+            "document.getElementById('cat').dispatchEvent(new MouseEvent('mousedown', { button: 2, bubbles: true }))",
+          );
+          await new Promise((r) => setTimeout(r, 500));
+          log('after-right-click');
+          console.log('MENU items', JSON.stringify(menu ? menu.items.map((i) => i.label).filter(Boolean) : null));
+        },
+        capture: false,
+      },
+      {
+        name: 'close',
+        wait: 300,
+        action: async () => {
+          if (menu) menu.closePopup(ctx.cat.win);
+          await new Promise((r) => setTimeout(r, 500));
+          log('after-close');
+        },
+        capture: false,
+      },
+    ];
+    void Menu;
+  },
+
   // 5단계: 외부 연결 설정 화면
   'ext-settings'(ctx) {
     const h = helpers(ctx);

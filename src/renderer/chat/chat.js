@@ -715,8 +715,7 @@
   async function loadSettings() {
     const s = await window.sai.getSettings();
     state.settings = s;
-    form.frequency.value = s.frequency;
-    form.quiet.checked = !!s.quiet;
+    form.frequency.value = ['low', 'normal', 'high'].includes(s.frequency) ? s.frequency : 'low';
     form.dndOn.checked = !!s.dnd;
     if (s.dnd) {
       form.dndStart.value = s.dnd.start;
@@ -740,13 +739,18 @@
       await window.sai.setApiKey(form.apiKey.value.trim());
       form.apiKey.value = '';
     }
-    const s = await window.sai.setSettings({
-      frequency: form.frequency.value,
-      quiet: form.quiet.checked,
-      dnd: form.dndOn.checked ? { start: form.dndStart.value, end: form.dndEnd.value } : null,
-      retentionDays: Number(form.retentionDays.value),
-      ai: { enabled: form.aiEnabled.checked, model: form.model.value.trim() || 'claude-sonnet-5-5' },
-    });
+    let s;
+    try {
+      s = await window.sai.setSettings({
+        frequency: form.frequency.value,
+        dnd: form.dndOn.checked ? { start: form.dndStart.value, end: form.dndEnd.value } : null,
+        retentionDays: Number(form.retentionDays.value),
+        ai: { enabled: form.aiEnabled.checked, model: form.model.value.trim() || 'claude-sonnet-5-5' },
+      });
+    } catch (err) {
+      $('#saveStatus').textContent = errMsg(err);
+      return;
+    }
     state.settings = s;
     updateEngine(s);
     form.apiKey.placeholder = s.hasApiKey ? '저장된 키가 있어요 (바꿀 때만 입력)' : 'sk-ant-...';
@@ -770,10 +774,6 @@
     $('#saveStatus').textContent = '대화 기록을 모두 지웠어요.';
   });
 
-  $('#resetDampened').addEventListener('click', async () => {
-    await window.sai.resetDampened();
-    $('#saveStatus').textContent = '줄인 주제 기록을 초기화했어요.';
-  });
 
   // ---------- 시작 ----------
   (async function init() {

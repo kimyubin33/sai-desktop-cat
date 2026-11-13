@@ -29,17 +29,31 @@ function inDnd(dnd, date) {
   return start < end ? cur >= start && cur < end : cur >= start || cur < end;
 }
 
+// 사이는 업무 도우미라 아예 꺼 두면 쓸모가 없어진다. 그래서 "영구히 끄기"는 없고,
+// 쉬는 방법은 모두 정해진 시간이 지나면 저절로 끝난다.
+const MAX_QUIET_MS = 60 * 60 * 1000; // 잠시 조용히: 최대 1시간
+const MAX_FOCUS_MS = 2 * 60 * 60 * 1000; // 집중 모드: 최대 2시간
+const MAX_DND_MINUTES = 10 * 60; // 방해 금지(잠·휴식 시간): 하루 최대 10시간
+
+function dndSpanMinutes(dnd) {
+  const start = parseHM(dnd && dnd.start);
+  const end = parseHM(dnd && dnd.end);
+  if (start === null || end === null) return 0;
+  return (end - start + 24 * 60) % (24 * 60);
+}
+
 /** 지금 먼저 말을 걸면 안 되는 이유 (없으면 null) */
 function silenceReason(settings, now = new Date()) {
-  if (settings.frequency === 'off') return 'off';
-  if (settings.quiet) return 'quiet';
-  if (settings.focusUntil && settings.focusUntil > now.getTime()) return 'focus';
-  if (inDnd(settings.dnd, now)) return 'dnd';
+  const t = now.getTime();
+  // 예전 버전의 저장값(꺼 두기·계속 조용히)은 더 이상 말을 막지 않는다
+  if (settings.quietUntil && settings.quietUntil > t && settings.quietUntil - t <= MAX_QUIET_MS) return 'quiet';
+  if (settings.focusUntil && settings.focusUntil > t && settings.focusUntil - t <= MAX_FOCUS_MS) return 'focus';
+  if (dndSpanMinutes(settings.dnd) <= MAX_DND_MINUTES && inDnd(settings.dnd, now)) return 'dnd';
   return null;
 }
 
 function nextDelayMs(settings, rand = Math.random) {
-  const [a, b] = INTERVAL_MIN[settings.frequency] || INTERVAL_MIN.normal;
+  const [a, b] = INTERVAL_MIN[settings.frequency] || INTERVAL_MIN.low;
   return Math.round((a + rand() * (b - a)) * 60 * 1000);
 }
 
@@ -87,6 +101,10 @@ function rememberShown(recent, id) {
 }
 
 module.exports = {
+  MAX_QUIET_MS,
+  MAX_FOCUS_MS,
+  MAX_DND_MINUTES,
+  dndSpanMinutes,
   INTERVAL_MIN,
   RECENT_LIMIT,
   inDnd,

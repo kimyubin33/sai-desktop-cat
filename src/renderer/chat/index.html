@@ -112,19 +112,17 @@
         <legend>말 걸기</legend>
         <label>말 거는 빈도
           <select name="frequency">
-            <option value="off">먼저 말 걸지 않기</option>
             <option value="low">가끔 (25~45분)</option>
             <option value="normal">보통 (10~20분)</option>
             <option value="high">자주 (4~8분)</option>
           </select>
         </label>
-        <label class="check"><input type="checkbox" name="quiet" /> 조용한 모드 (먼저 말 걸지 않고 덜 돌아다녀요)</label>
-        <label class="check"><input type="checkbox" name="dndOn" /> 방해 금지 시간</label>
+        <p class="hint">사이는 업무 도우미라 아예 끄는 기능은 없어요. 회의·발표 중에는 고양이 오른쪽 클릭 → <b>잠시 조용히(1시간)</b>나 <b>집중 모드(최대 2시간)</b>를 쓰면 되고, 시간이 지나면 저절로 다시 말을 걸어요.</p>
+        <label class="check"><input type="checkbox" name="dndOn" /> 방해 금지 시간 (잠·휴식 시간, 하루 최대 10시간)</label>
         <div class="inline">
           <input type="time" name="dndStart" value="23:00" /> 부터
           <input type="time" name="dndEnd" value="08:00" /> 까지
         </div>
-        <button type="button" id="resetDampened" class="link">"이런 말 줄이기" 기록 초기화</button>
       </fieldset>
 
       <fieldset>

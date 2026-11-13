@@ -72,7 +72,7 @@ class Advisor {
     const hist = this.stores.adviceHistory;
     const entry = pickAdvice(LIBRARY, {
       recent: hist.get().recent,
-      dampened: s.dampenedTopics,
+      // 주제 줄이기는 없앴다 (업무 조언을 하나씩 꺼 버리면 결국 다 꺼지기 때문)
       boosts: this.teamConnected() ? this.team.boosts() : {},
     });
     hist.update((h) => {
@@ -147,7 +147,6 @@ class Advisor {
       ];
     }
     const actions = [{ id: 'later', label: '나중에' }];
-    if (entry.topic) actions.push({ id: 'less', label: '이런 말 줄이기' });
     // 받은 조언인지 아닌지 드러나지 않도록, 팀에 연결되어 있으면 모든 협업 조언에 같은 버튼을 단다
     if (entry.kind === 'teamwork' && this.teamConnected()) actions.push({ id: 'mine', label: '내 사정도 있어요' });
     actions.push({ id: 'chat', label: '이야기하기', primary: true });

@@ -1,5 +1,6 @@
 // 대화창과 메인 프로세스 사이의 통신
 const { TOPICS } = require('../core/topics');
+const { dndSpanMinutes, MAX_DND_MINUTES } = require('../core/advice-scheduler');
 const { buildPreview, createOutboxItems, mergeIntoOutbox, leaksRawText } = require('../core/privacy');
 
 function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team }) {
@@ -242,7 +243,7 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
     return {
       catName: s.catName,
       frequency: s.frequency,
-      quiet: s.quiet,
+      quietUntil: s.quietUntil,
       dnd: s.dnd,
       retentionDays: s.retentionDays,
       ai: s.ai,
@@ -253,9 +254,13 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
   handle('settings:get', publicSettings);
   handle('settings:set', (patch) => {
     stores.settings.update((s) => {
-      if (['off', 'low', 'normal', 'high'].includes(patch.frequency)) s.frequency = patch.frequency;
-      if ('quiet' in patch) s.quiet = !!patch.quiet;
-      if ('dnd' in patch) s.dnd = patch.dnd && patch.dnd.start && patch.dnd.end ? { start: patch.dnd.start, end: patch.dnd.end } : null;
+      if (['low', 'normal', 'high'].includes(patch.frequency)) s.frequency = patch.frequency;
+      if ('dnd' in patch) {
+        const d = patch.dnd && patch.dnd.start && patch.dnd.end ? { start: patch.dnd.start, end: patch.dnd.end } : null;
+        // 방해 금지는 잠·휴식 시간용: 하루 10시간까지만 (그 이상이면 사실상 끄기가 되므로)
+        if (d && dndSpanMinutes(d) > MAX_DND_MINUTES) throw new Error('방해 금지 시간은 하루 10시간까지 정할 수 있어요.');
+        s.dnd = d;
+      }
       if ([0, 7, 30, 90].includes(patch.retentionDays)) s.retentionDays = patch.retentionDays;
       if (patch.ai) s.ai = { enabled: !!patch.ai.enabled, model: String(patch.ai.model || s.ai.model).slice(0, 80) };
     });

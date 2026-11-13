@@ -44,14 +44,23 @@ test('말하는 중과 들려 있는 중에는 움직이지 않는다', () => {
 });
 
 // ---------- 말풍선 조언 ----------
-test('조용한 모드·집중 모드·방해 금지·끄기에서는 먼저 말 걸지 않는다', () => {
+test('잠시 조용히·집중 모드·방해 금지 동안에는 먼저 말 걸지 않는다', () => {
   const now = new Date(2026, 10, 13, 14, 0);
-  const base = { frequency: 'normal', quiet: false, focusUntil: 0, dnd: null };
+  const base = { frequency: 'normal', quietUntil: 0, focusUntil: 0, dnd: null };
   assert.equal(silenceReason(base, now), null);
-  assert.equal(silenceReason({ ...base, quiet: true }, now), 'quiet');
-  assert.equal(silenceReason({ ...base, frequency: 'off' }, now), 'off');
+  assert.equal(silenceReason({ ...base, quietUntil: now.getTime() + 30 * 60 * 1000 }, now), 'quiet');
   assert.equal(silenceReason({ ...base, focusUntil: now.getTime() + 1000 }, now), 'focus');
   assert.equal(silenceReason({ ...base, dnd: { start: '13:00', end: '15:00' } }, now), 'dnd');
+});
+
+test('영구히 끄는 길은 없다: 예전 끄기 값, 너무 긴 쉬기, 너무 긴 방해 금지는 말을 막지 못한다', () => {
+  const now = new Date(2026, 10, 13, 14, 0);
+  const base = { frequency: 'normal', quietUntil: 0, focusUntil: 0, dnd: null };
+  assert.equal(silenceReason({ ...base, frequency: 'off', quiet: true }, now), null, '예전 버전의 끄기 값');
+  assert.equal(silenceReason({ ...base, quietUntil: now.getTime() + 3 * 60 * 60 * 1000 }, now), null, '1시간 넘는 조용히');
+  assert.equal(silenceReason({ ...base, focusUntil: now.getTime() + 5 * 60 * 60 * 1000 }, now), null, '2시간 넘는 집중');
+  assert.equal(silenceReason({ ...base, dnd: { start: '08:00', end: '23:00' } }, now), null, '15시간짜리 방해 금지');
+  assert.equal(silenceReason({ ...base, dnd: { start: '13:00', end: '23:00' } }, now), 'dnd', '10시간은 허용');
 });
 
 test('방해 금지 시간은 자정을 넘겨도 동작한다', () => {

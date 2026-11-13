@@ -33,7 +33,7 @@ class CatController {
     const { minX, maxX } = this.bounds();
     const startX = saved ? Math.min(Math.max(saved.x, minX), maxX) : Math.round(minX + (maxX - minX) * 0.7);
     this.behavior = new CatBehavior({ minX, maxX, x: startX });
-    this.behavior.calm = !!this.settings.get().quiet;
+    this.behavior.calm = this.settings.get().quietUntil > Date.now();
 
     this.win = new BrowserWindow({
       width: WIN_W,
@@ -139,8 +139,32 @@ class CatController {
     if (this.win && !this.win.isDestroyed()) this.win.webContents.send(ch, payload);
   }
 
+  /**
+   * 고양이 창은 작업을 방해하지 않도록 포커스를 받지 않게 만들어져 있다 (focusable: false).
+   * Windows 에서는 포커스 없는 창에 띄운 메뉴가 바로 닫히거나 아예 뜨지 않아서,
+   * 메뉴를 띄우는 동안만 포커스를 받을 수 있게 했다가 닫히면 되돌린다.
+   */
+  popupMenu(menu) {
+    if (!this.win || this.win.isDestroyed() || this.menuOpen) return;
+    this.menuOpen = true;
+    this.win.setIgnoreMouseEvents(false);
+    this.win.setFocusable(true);
+    this.win.focus();
+    menu.popup({
+      window: this.win,
+      callback: () => {
+        this.menuOpen = false;
+        if (this.win && !this.win.isDestroyed()) {
+          this.win.setFocusable(false);
+          this.setInteractive(false);
+        }
+      },
+    });
+  }
+
   setInteractive(on) {
     if (this.drag && !on) return;
+    if (this.menuOpen && !on) return;
     this.win.setIgnoreMouseEvents(!on, { forward: true });
   }
 

@@ -69,6 +69,12 @@
   bubble.addEventListener('mouseleave', () => window.cat.bubbleHover(false));
 
   canvas.addEventListener('mousedown', (e) => {
+    // 오른쪽 버튼은 눌렀을 때 바로 메뉴 (contextmenu 이벤트는 투명 창에서 오지 않을 때가 있다)
+    if (e.button === 2) {
+      e.preventDefault();
+      window.cat.contextMenu();
+      return;
+    }
     if (e.button !== 0) return;
     e.preventDefault();
     window.cat.dragStart();
@@ -77,10 +83,7 @@
     if (e.button !== 0) return;
     window.cat.dragEnd();
   });
-  canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    window.cat.contextMenu();
-  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   bubble.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-action]');

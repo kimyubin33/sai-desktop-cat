@@ -65,8 +65,8 @@ const DEFAULT_SETTINGS = {
   catName: '사이',
   onboarded: false,
   // 말 거는 빈도: off / low / normal / high
-  frequency: 'normal',
-  quiet: false,
+  frequency: 'normal', // low / normal / high — 끄는 선택지는 없다
+  quietUntil: 0, // "잠시 조용히" 가 끝나는 시각 (최대 1시간)
   focusUntil: 0,
   // 방해 금지 시간 (예: { start: '23:00', end: '08:00' }) — null 이면 사용 안 함
   dnd: null,
