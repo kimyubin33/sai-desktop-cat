@@ -1,0 +1,39 @@
+{
+  "name": "sai-desktop-cat",
+  "version": "0.1.0",
+  "description": "사이 — 바탕화면을 돌아다니며 조언하고, 팀의 고민을 행동 조언으로 정리하는 고양이 협업 도우미",
+  "main": "src/main/main.js",
+  "author": "kimyubin33",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "icons": "node scripts/make-icons.js",
+    "dist:win": "electron-builder --win nsis portable"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.kimyubin33.sai",
+    "productName": "사이",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
