@@ -105,6 +105,8 @@ function createStores(userDataDir) {
       myUid: null,
       shownProposals: {},
     }),
+    // 내 작업 시간표와 일정 조정 대화: 이 기기에만 저장
+    schedule: new JsonFile(path.join(userDataDir, 'private', 'schedule.json'), {}),
     adviceHistory: new JsonFile(path.join(userDataDir, 'advice-history.json'), { recent: [] }),
   };
 }

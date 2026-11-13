@@ -54,6 +54,27 @@ async function callClaude({ apiKey, model, system, user, maxTokens = 400 }) {
   }
 }
 
+/** 도구(tool use)를 쓰는 호출. 응답 전체를 돌려준다 */
+async function callClaudeMessages({ apiKey, model, system, messages, tools, maxTokens = 1200, timeoutMs = 45000 }) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages, tools }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`API ${res.status}: ${body.slice(0, 200)}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function transcript(session, limit = 12) {
   return session.turns
     .filter((t) => !t.safety)
@@ -150,4 +171,4 @@ class AiHelper {
   }
 }
 
-module.exports = { AiHelper, encryptKey, decryptKey };
+module.exports = { AiHelper, encryptKey, decryptKey, callClaudeMessages };

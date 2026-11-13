@@ -82,4 +82,29 @@ async function createEvent(api, { summary, description, start, end, saiTaskId, t
   });
 }
 
-module.exports = { queryBusy, freeIntervals, freeHours, findSlot, createEvent, merge };
+async function patchEvent(api, eventId, { summary, description, start, end, timeZone = 'Asia/Seoul' }) {
+  const body = {
+    start: { dateTime: new Date(start).toISOString(), timeZone },
+    end: { dateTime: new Date(end).toISOString(), timeZone },
+  };
+  if (summary) body.summary = summary;
+  if (description != null) body.description = description;
+  const r = await api('PATCH', `${CAL}/calendars/primary/events/${encodeURIComponent(eventId)}`, body);
+  // 사용자가 캘린더에서 지운 일정(cancelled)은 고친 것으로 보지 않는다
+  if (r && r.status === 'cancelled') {
+    const e = new Error('지워진 일정이에요.');
+    e.status = 410;
+    throw e;
+  }
+  return r;
+}
+
+async function deleteEvent(api, eventId) {
+  try {
+    await api('DELETE', `${CAL}/calendars/primary/events/${encodeURIComponent(eventId)}`);
+  } catch (e) {
+    if (e.status !== 404 && e.status !== 410) throw e;
+  }
+}
+
+module.exports = { queryBusy, freeIntervals, freeHours, findSlot, createEvent, patchEvent, deleteEvent, merge };

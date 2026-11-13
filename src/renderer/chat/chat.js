@@ -68,7 +68,72 @@
     $('#summarizeBtn').disabled = on;
   }
 
+  // ---------- 일정 조정 ----------
+  let schedCard = null;
+  function showSchedCard(view) {
+    if (schedCard) schedCard.remove();
+    schedCard = el('div', { class: 'msg-card' });
+    window.SaiSchedule.render(schedCard, view, {
+      compact: true,
+      say: (t, bad) => addMsg('cat', t, bad ? 'safety' : ''),
+      onView: (v) => (state.schedView = v),
+    });
+    messages.append(schedCard);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  async function startSchedule() {
+    showTab('chat');
+    messages.textContent = '';
+    schedCard = null;
+    state.session = { id: 'schedule', mode: 'schedule', step: 'talk' };
+    $('#modePicker').classList.add('hidden');
+    $('#composer').classList.remove('hidden');
+    updateHelpers();
+    setBusy(true);
+    const typing = addMsg('cat', '…', 'typing');
+    try {
+      const v = await window.sai.schedView();
+      state.schedView = v;
+      typing.remove();
+      for (const m of v.chat.slice(-8)) addMsg(m.role === 'user' ? 'user' : 'cat', m.text);
+      if (!v.tasks.length) addMsg('cat', '아직 맡은 작업이 없어요. 협업 탭에서 작업을 맡으면 몇 시부터 몇 시까지 할지 짜 드릴게요.');
+      else
+        addMsg(
+          'cat',
+          `맡은 작업 ${v.tasks.length}개를 ${v.blocks.length}번에 나눠 잡아 봤어요. 틀린 곳이 있으면 편하게 말해 주세요. 예: "2번 목요일 3시로 옮겨줘", "수요일은 안 돼", "자료조사 3시간이면 돼". 괜찮으면 "캘린더에 넣어줘"라고 해 주세요.` +
+            (v.ai ? '' : ' (Claude API 키를 넣으면 더 자유롭게 말해도 알아들어요.)'),
+        );
+      showSchedCard(v);
+    } catch (e) {
+      typing.textContent = '시간표를 불러오지 못했어요: ' + errMsg(e);
+    } finally {
+      setBusy(false);
+      input.focus();
+    }
+  }
+
+  async function sendSchedule(text) {
+    addMsg('user', text);
+    setBusy(true);
+    const typing = addMsg('cat', '…', 'typing');
+    try {
+      const r = await window.sai.schedChat({ text });
+      typing.remove();
+      addMsg('cat', r.reply);
+      state.schedView = r.view;
+      showSchedCard(r.view);
+    } catch (e) {
+      typing.textContent = '고치지 못했어요: ' + errMsg(e);
+    } finally {
+      setBusy(false);
+      input.focus();
+    }
+  }
+  window.SaiChat = { startSchedule };
+
   async function startMode(mode, topic = null) {
+    if (mode === 'schedule') return startSchedule();
     messages.textContent = '';
     $('#modePicker').classList.add('hidden');
     $('#composer').classList.remove('hidden');
@@ -90,7 +155,7 @@
 
   function updateHelpers() {
     const s = state.session;
-    const guided = s && s.mode !== 'free' && s.step !== 'done';
+    const guided = s && s.mode !== 'free' && s.mode !== 'schedule' && s.step !== 'done';
     $('#skipBtn').classList.toggle('hidden', !guided);
     $('#summarizeBtn').classList.toggle('hidden', !guided);
   }
@@ -100,6 +165,7 @@
     const text = input.value.trim();
     if (!text && !skip) return;
     input.value = '';
+    if (state.session.mode === 'schedule') return sendSchedule(text);
     if (text) addMsg('user', text);
     setBusy(true);
     const typing = addMsg('cat', '…', 'typing');
@@ -827,5 +893,5 @@
   });
 
   // 개발용 스냅숏에서 대화 흐름을 재현할 때 사용
-  window.__saiDemo = { startMode, send: (text) => ((input.value = text), send()), showTab, renderTeam };
+  window.__saiDemo = { startMode, startSchedule, send: (text) => ((input.value = text), send()), showTab, renderTeam };
 })();

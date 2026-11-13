@@ -69,6 +69,12 @@ contextBridge.exposeInMainWorld('sai', {
   gSync: invoke('g:sync'),
   gAvailability: invoke('g:availability'),
   gScheduleTask: invoke('g:schedule-task'),
+  schedView: invoke('sched:view'),
+  schedReplan: invoke('sched:replan'),
+  schedApply: invoke('sched:apply'),
+  schedEdit: invoke('sched:edit'),
+  schedChat: invoke('sched:chat'),
+  schedClearChat: invoke('sched:clear-chat'),
   onFocusTask: (fn) => ipcRenderer.on('chat:focus-task', (_e, id) => fn(id)),
 
   onShowTab: (fn) => ipcRenderer.on('chat:show-tab', (_e, tab) => fn(tab)),

@@ -1,6 +1,6 @@
 {
   "name": "sai-desktop-cat",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "사이 — 바탕화면을 돌아다니며 조언하고, 팀의 고민을 행동 조언으로 정리하는 고양이 협업 도우미",
   "main": "src/main/main.js",
   "author": "kimyubin33",

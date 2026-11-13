@@ -3,7 +3,7 @@ const { TOPICS } = require('../core/topics');
 const { dndSpanMinutes, MAX_DND_MINUTES } = require('../core/advice-scheduler');
 const { buildPreview, createOutboxItems, mergeIntoOutbox, leaksRawText } = require('../core/privacy');
 
-function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team, getUpdater = () => null }) {
+function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team, schedule, getUpdater = () => null }) {
   const handle = (ch, fn) =>
     ipcMain.handle(ch, (e, ...args) => {
       if (!chatWindow.isOwn(e)) throw new Error('허용되지 않은 요청이에요.');
@@ -17,7 +17,10 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
   handle('chat:list', () => chat.list());
   handle('chat:get', (id) => chat.get(id));
   handle('chat:delete', (id) => chat.delete(id));
-  handle('chat:delete-all', () => chat.deleteAll());
+  handle('chat:delete-all', () => {
+    chat.deleteAll();
+    if (schedule) schedule.clearChat();
+  });
 
   handle('topics:list', () => Object.entries(TOPICS).map(([id, t]) => ({ id, label: t.label })));
 
@@ -182,9 +185,17 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
   handle('collab:add-task', collabCall(({ projectId, ...t }) => C().addTask(projectId, t)));
   handle('collab:edit-task', collabCall(({ projectId, id, ...t }) => C().editTask(projectId, id, t)));
   handle('collab:delete-task', collabCall(({ projectId, id }) => C().deleteTask(projectId, id)));
-  handle('collab:accept', collabCall(({ id }) => C().accept(id)));
+  // 작업을 맡거나 상태가 바뀌면 내 시간표를 다시 짠다 (맡은 작업이 바뀐 경우에만 실제로 계산)
+  const replanSoon = () => schedule && schedule.view().catch(() => {});
+  handle('collab:accept', collabCall(async ({ id }) => {
+    await C().accept(id);
+    await replanSoon();
+  }));
   handle('collab:object', collabCall(({ id, reason }) => C().object(id, reason)));
-  handle('collab:status', collabCall(({ id, status }) => C().setStatus(id, status)));
+  handle('collab:status', collabCall(async ({ id, status }) => {
+    await C().setStatus(id, status);
+    replanSoon();
+  }));
   handle('collab:toggle-prep', collabCall(({ id, index }) => C().togglePrep(id, index)));
   handle('collab:plan', async ({ projectId }) => {
     if (team.sync.isConnected()) await team.syncNow();
@@ -237,6 +248,17 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
   handle('g:sync', async () => ({ result: await team.google.syncTodo(), view: extView() }));
   handle('g:availability', ({ projectId } = {}) => team.google.availability(projectId));
   handle('g:schedule-task', ({ id }) => team.google.scheduleTask(id));
+
+  // ---------- 내 작업 시간표 ----------
+  handle('sched:view', ({ refresh } = {}) => schedule.view({ refresh: !!refresh }));
+  handle('sched:replan', () => schedule.replan());
+  handle('sched:apply', () => schedule.apply());
+  handle('sched:edit', (op) => schedule.edit(op || {}));
+  handle('sched:chat', ({ text }) => schedule.chat(text));
+  handle('sched:clear-chat', () => {
+    schedule.clearChat();
+    return schedule.view();
+  });
 
   // ---------- 업데이트 ----------
   handle('update:status', () => ({ ...(getUpdater() ? getUpdater().state : {}), version: require('electron').app.getVersion() }));

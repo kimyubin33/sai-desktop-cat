@@ -7,6 +7,7 @@ const { ChatWindow } = require('./chatWindow');
 const { ChatService } = require('./chatService');
 const { AiHelper } = require('./ai');
 const { registerChatIpc } = require('./ipc');
+const { createScheduleService } = require('./schedule');
 const { createTeamService } = require('./team');
 const { createUpdater } = require('./updater');
 const { ensureAutoStart } = require('./autostart');
@@ -160,7 +161,8 @@ app.whenReady().then(() => {
   ai = new AiHelper(stores.settings);
   chat = new ChatService({ stores, ai });
   chatWindow = new ChatWindow();
-  registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team, getUpdater: () => updater });
+  const schedule = createScheduleService({ stores, team, ai });
+  registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team, schedule, getUpdater: () => updater });
 
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'tray.png')));
   tray.setToolTip('사이 — 고양이 협업 도우미');
@@ -177,7 +179,7 @@ app.whenReady().then(() => {
   advisor.onUpdateInstall = () => updater.install();
 
   team.start();
-  if (!runSnapshots(app, { cat, advisor, chatWindow, openChat, team, stores, updater })) {
+  if (!runSnapshots(app, { cat, advisor, chatWindow, openChat, team, stores, updater, schedule })) {
     advisor.start();
     updater.start();
   }

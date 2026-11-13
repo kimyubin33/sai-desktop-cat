@@ -89,7 +89,7 @@
     if ((view.teams || []).length > 1) {
       add(root, el('div', { class: 'team-banner', text: `${view.teamName} 팀의 협업이에요. 다른 팀은 위쪽 이름 아래에서 바꿀 수 있어요.` }));
     }
-    add(root, profileSection(), projectSection());
+    add(root, scheduleSection(), profileSection(), projectSection());
     if (view.project) add(root, planSection(), taskSection(), taskForm());
     if (focusTaskId) {
       const card = root.querySelector(`[data-task="${focusTaskId}"]`);
@@ -327,6 +327,29 @@
     return box;
   }
 
+  // ---------- 내 작업 시간표 ----------
+  let schedView = null;
+  function scheduleSection() {
+    const box = el('div', { class: 'block', id: 'schedBox' });
+    const draw_ = (v) => {
+      schedView = v;
+      window.SaiSchedule.render(box, v, {
+        say: flash,
+        onChat: () => window.SaiChat && window.SaiChat.startSchedule(),
+      });
+    };
+    if (schedView) draw_(schedView);
+    else box.append(el('p', { class: 'hint', text: '내 작업 시간표를 짜는 중…' }));
+    api
+      .schedView()
+      .then(draw_)
+      .catch((e) => {
+        box.textContent = '';
+        box.append(el('p', { class: 'hint warn', text: `시간표를 짜지 못했어요: ${errMsg(e)}` }));
+      });
+    return box;
+  }
+
   // ---------- 작업 ----------
   function taskSection() {
     const box = el('div', { class: 'block' }, el('strong', { text: '작업' }));
@@ -386,16 +409,10 @@
         actions.append(
           el('button', {
             class: 'link',
-            text: '캘린더에 작업 시간 잡기',
-            onclick: async () => {
-              try {
-                const r = await api.gScheduleTask({ id: t.id });
-                const s = new Date(r.start);
-                const fmt = s.toLocaleString('ko-KR', { month: 'short', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
-                flash(`${fmt}부터 ${r.hours}시간을 캘린더에 잡았어요.${r.totalHours > r.hours ? ` 남은 ${Math.round((r.totalHours - r.hours) * 10) / 10}시간은 한 번 더 누르면 다음 빈 시간에 잡아요.` : ''}`);
-              } catch (e) {
-                flash(`${errMsg(e)} (설정 → 외부 연결에서 Google 로그인)`, true);
-              }
+            text: '내 시간표에서 보기',
+            onclick: () => {
+              const box = document.getElementById('schedBox');
+              if (box) box.scrollIntoView({ behavior: 'smooth' });
             },
           }),
         );

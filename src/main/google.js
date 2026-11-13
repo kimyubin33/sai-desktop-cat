@@ -3,7 +3,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { shell } = require('electron');
 const { GoogleAuth, pkce, authUrl, parseGoogleClient } = require('../core/google/oauth');
-const { queryBusy, freeHours, findSlot, createEvent } = require('../core/google/calendar');
+const { queryBusy, freeHours, findSlot, createEvent, patchEvent, deleteEvent } = require('../core/google/calendar');
 const { ensureList, syncTasks } = require('../core/google/tasks');
 const { encryptSecret, decryptJson } = require('./secret');
 const { BUILTIN_GOOGLE } = require('./firebase-config');
@@ -208,7 +208,38 @@ function createGoogleService({ stores, collabs, activeCollab }) {
     return c;
   }
 
-  return { login, logout, availability, scheduleTask, syncTodo, status, configure };
+  // ---------- 시간표용 ----------
+  function isReady() {
+    try {
+      return !!client() && getAuth().isSignedIn();
+    } catch {
+      return false;
+    }
+  }
+
+  async function busyBetween({ from, to }) {
+    if (!isReady()) return { busy: [], ok: false, error: 'Google 캘린더에 로그인하지 않았어요' };
+    try {
+      const busy = await queryBusy(api, { from, to });
+      record({ lastCalendar: Date.now(), lastError: null });
+      return { busy, ok: true };
+    } catch (e) {
+      record({ lastError: String(e.message || e), lastErrorAt: Date.now() });
+      return { busy: [], ok: false, error: String(e.message || e) };
+    }
+  }
+
+  const describe = (b) => {
+    const found = findProject(b.projectId);
+    return [`사이가 잡은 작업 시간이에요.`, found && `프로젝트: ${found.p.title}`, '시간을 바꾸려면 사이의 협업 탭이나 대화에서 고쳐 주세요.'].filter(Boolean).join('\n');
+  };
+  const calendarOps = {
+    create: async (b) => (await createEvent(api, { summary: `사이: ${b.title}`, description: describe(b), start: b.start, end: b.end, saiTaskId: b.taskId })).id,
+    patch: (eventId, b) => patchEvent(api, eventId, { summary: `사이: ${b.title}`, start: b.start, end: b.end }),
+    remove: (eventId) => deleteEvent(api, eventId),
+  };
+
+  return { login, logout, availability, scheduleTask, syncTodo, status, configure, isReady, busyBetween, calendarOps };
 }
 
 module.exports = { createGoogleService };

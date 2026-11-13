@@ -270,6 +270,71 @@ const SCENARIOS = {
     ];
   },
 
+  // 내 작업 시간표: 맡은 작업을 캘린더 빈 시간에 배치하고, 대화로 고친다 (Google 대신 가짜 캘린더)
+  schedule(ctx) {
+    const h = helpers(ctx);
+    const H = 3600000;
+    const day0 = new Date();
+    day0.setHours(0, 0, 0, 0);
+    const at = (d, hh) => day0.getTime() + d * 24 * H + hh * H;
+    // 가짜 캘린더: 내일 10~13시 수업, 모레 14~18시 알바
+    const busy = [{ start: at(1, 10), end: at(1, 13) }, { start: at(2, 14), end: at(2, 18) }];
+    const events = new Map();
+    let n = 0;
+    Object.assign(ctx.team.google, {
+      isReady: () => true,
+      busyBetween: async () => ({ busy, ok: true }),
+      syncTodo: async () => '할 일 2개 추가',
+      calendarOps: {
+        create: async (b) => (events.set(`e${++n}`, b), `e${n}`),
+        patch: async (id, b) => events.set(id, b),
+        remove: async (id) => events.delete(id),
+      },
+    });
+    const ymd = (t) => new Date(t).toISOString().slice(0, 10);
+    return [
+      {
+        name: 'setup',
+        wait: 300,
+        capture: false,
+        action: async () => {
+          await ctx.team.createTeam('BION 홍보팀', '유빈');
+          const c = ctx.team.collab;
+          await c.saveProfile({ pr: '', skills: [{ name: '영상편집', level: 3 }], learn: '', weeklyHours: 12 });
+          const pid = await c.createProject({ title: '학생회 홍보 영상', goal: '', deliverable: '', deadline: ymd(at(6, 12)) });
+          const a = await c.addTask(pid, { title: '자료조사', estimateHours: 3, difficulty: 2 });
+          const b = await c.addTask(pid, { title: '컷 편집', estimateHours: 5, difficulty: 3, skills: '영상편집', dependsOn: [a] });
+          for (const id of [a, b]) {
+            await c.patchTask(pid, id, { assignee: c.myUid(), accepted: false });
+            await c.accept(id);
+          }
+        },
+      },
+      { name: 'collab', wait: 300, action: () => ctx.openChat('collab'), window: h.w, settle: 2500 },
+      {
+        name: 'collab-more',
+        wait: 300,
+        action: h.js("document.querySelector('.sched-more').open = true; document.querySelector('.sched-more').scrollIntoView()"),
+        window: h.w,
+        settle: 800,
+      },
+      { name: 'chat', wait: 300, action: h.js('__saiDemo.startSchedule()'), window: h.w, settle: 1500 },
+      { name: 'chat-move', wait: 300, action: h.js("__saiDemo.send('2번 금요일 오후 3시로 옮겨줘')"), window: h.w, settle: 1500 },
+      { name: 'chat-unavail', wait: 300, action: h.js("__saiDemo.send('내일은 안 돼')"), window: h.w, settle: 1500 },
+      { name: 'chat-hours', wait: 300, action: h.js("__saiDemo.send('자료조사는 2시간이면 돼')"), window: h.w, settle: 1500 },
+      { name: 'chat-apply', wait: 300, action: h.js("__saiDemo.send('좋아요 캘린더에 넣어줘')"), window: h.w, settle: 1500 },
+      {
+        name: 'check',
+        wait: 300,
+        capture: false,
+        action: async () => {
+          const v = await ctx.schedule.view();
+          console.log('SCHED', JSON.stringify({ events: [...events.values()].map((e) => [new Date(e.start).toString().slice(0, 21), new Date(e.end).toTimeString().slice(0, 5), e.title]), pending: v.pending, warnings: v.warnings.map((w) => w.text) }));
+        },
+      },
+    ];
+  },
+
   // 오른쪽 클릭 메뉴: 고양이 창에서 오른쪽 버튼을 눌렀을 때 메뉴가 열리고, 닫히면 원래대로 돌아오는지
   menu(ctx) {
     const { Menu } = require('electron');
