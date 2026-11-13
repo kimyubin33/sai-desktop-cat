@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>사이와 이야기</title>
+  <link rel="stylesheet" href="chat.css" />
+</head>
+<body>
+  <header class="top">
+    <canvas id="avatar" width="48" height="48" aria-hidden="true"></canvas>
+    <div class="who">
+      <strong id="catName">사이</strong>
+      <span id="engine" class="engine"></span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="chat" class="active">대화</button>
+      <button role="tab" data-tab="notes">정리함</button>
+      <button role="tab" data-tab="settings">설정</button>
+    </nav>
+  </header>
+
+  <!-- 대화 -->
+  <section id="tab-chat" class="tab active">
+    <div class="privacy-note">
+      여기서 한 말은 이 컴퓨터에만 저장되고, 원문과 이름은 다른 팀원에게 가지 않아요.
+    </div>
+    <div id="messages" class="messages" aria-live="polite"></div>
+    <div id="modePicker" class="mode-picker">
+      <p>어떤 이야기를 해 볼까요?</p>
+      <button data-mode="complaint">팀원 일로 속상해요</button>
+      <button data-mode="explain">내 사정을 이야기하고 싶어요</button>
+      <button data-mode="free">그냥 이야기할래요</button>
+    </div>
+    <footer id="composer" class="composer hidden">
+      <div class="helpers">
+        <button id="skipBtn" class="link">이 질문 건너뛰기</button>
+        <button id="summarizeBtn" class="link">지금까지 정리하기</button>
+        <button id="newBtn" class="link">새 대화</button>
+      </div>
+      <div class="row">
+        <textarea id="input" rows="2" placeholder="편하게 적어 주세요 (Enter 보내기, Shift+Enter 줄바꿈)"></textarea>
+        <button id="sendBtn" class="primary">보내기</button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- 정리함 -->
+  <section id="tab-notes" class="tab">
+    <h2>공유 대기함</h2>
+    <p class="hint">다른 팀원의 고양이 조언에 반영될 수 있는 일반 주제예요. 원문·이름·날짜는 들어 있지 않아요. 팀 연결은 다음 단계에서 열려요.</p>
+    <div id="outbox" class="list"></div>
+    <h2>나의 대화 기록</h2>
+    <p class="hint">이 컴퓨터에만 저장돼요. 보관 기간이 지나면 자동으로 지워져요.</p>
+    <div id="sessions" class="list"></div>
+    <div id="sessionView" class="session-view hidden"></div>
+  </section>
+
+  <!-- 설정 -->
+  <section id="tab-settings" class="tab">
+    <form id="settingsForm" class="settings">
+      <fieldset>
+        <legend>말 걸기</legend>
+        <label>말 거는 빈도
+          <select name="frequency">
+            <option value="off">먼저 말 걸지 않기</option>
+            <option value="low">가끔 (25~45분)</option>
+            <option value="normal">보통 (10~20분)</option>
+            <option value="high">자주 (4~8분)</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="quiet" /> 조용한 모드 (먼저 말 걸지 않고 덜 돌아다녀요)</label>
+        <label class="check"><input type="checkbox" name="dndOn" /> 방해 금지 시간</label>
+        <div class="inline">
+          <input type="time" name="dndStart" value="23:00" /> 부터
+          <input type="time" name="dndEnd" value="08:00" /> 까지
+        </div>
+        <button type="button" id="resetDampened" class="link">"이런 말 줄이기" 기록 초기화</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>대화 기록</legend>
+        <label>보관 기간
+          <select name="retentionDays">
+            <option value="7">7일</option>
+            <option value="30">30일</option>
+            <option value="90">90일</option>
+            <option value="0">직접 지울 때까지</option>
+          </select>
+        </label>
+        <button type="button" id="deleteAll" class="danger">대화 기록 모두 지우기</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>AI 대화 (선택)</legend>
+        <p class="hint">Claude API 키를 넣으면 사이의 말과 정리 카드가 더 자연스러워져요. 키가 없어도 기본 상담 흐름으로 동작해요. 키를 쓰면 대화 내용이 Anthropic API로 전송돼요.</p>
+        <label class="check"><input type="checkbox" name="aiEnabled" /> AI로 대화 다듬기</label>
+        <label>API 키
+          <input type="password" name="apiKey" placeholder="저장된 키가 있으면 비워 두세요" autocomplete="off" />
+        </label>
+        <label>모델
+          <input type="text" name="model" />
+        </label>
+        <div class="inline">
+          <button type="button" id="testAi">연결 확인</button>
+          <span id="aiStatus" class="status"></span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>사이가 하는 일</legend>
+        <p class="hint">
+          사이의 조언에는 일반적인 협업 원칙과, 팀원들이 공유를 허용한 고민에서 정리한 일반적인 주제가 반영될 수 있어요.
+          개인 대화 원문과 발언자 이름은 다른 팀원에게 보여 주지 않아요. 다만 두 명뿐인 팀처럼 상황만으로 짐작될 수 있는 경우도 있어서, 완전한 익명을 약속하지는 않아요.
+          화면 감시, 키 입력 수집, 다른 메신저 내용 열람은 하지 않아요.
+        </p>
+      </fieldset>
+      <div class="inline">
+        <button type="submit" class="primary">저장</button>
+        <span id="saveStatus" class="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <template id="summaryTpl">
+    <div class="card summary">
+      <div class="card-head">
+        <strong>정리 카드</strong>
+        <span class="badge">나만 볼 수 있어요</span>
+      </div>
+      <dl class="fields"></dl>
+      <div class="topics-block">
+        <div class="label">반영할 수 있는 일반 주제 <span class="hint">(눌러서 고르기)</span></div>
+        <div class="chips"></div>
+      </div>
+      <div class="card-actions">
+        <button class="edit link">내용 고치기</button>
+        <button class="share primary">공유 범위 정하기</button>
+      </div>
+    </div>
+  </template>
+
+  <script src="../cat/sprite.js"></script>
+  <script src="chat.js"></script>
+</body>
+</html>
