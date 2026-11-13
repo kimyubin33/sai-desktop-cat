@@ -161,6 +161,79 @@ class MemoryBackend {
       p.responses[this.uidValue] = response;
     });
   }
+
+  // ---------- 협업 ----------
+  coll(t, name) {
+    if (!t[name]) t[name] = {};
+    return t[name];
+  }
+
+  async setProfile(teamId, data) {
+    this.tx((hub) => {
+      const profiles = this.coll(this.member(hub, teamId), 'profiles');
+      profiles[this.uidValue] = { ...(profiles[this.uidValue] || {}), ...structuredClone(data) };
+    });
+  }
+
+  async listProfiles(teamId) {
+    const t = this.member(this.load(), teamId);
+    return Object.entries(t.profiles || {}).map(([uid, p]) => ({ uid, ...p }));
+  }
+
+  async createProject(teamId, data) {
+    return this.tx((hub) => {
+      const id = this.nextId(hub);
+      this.coll(this.member(hub, teamId), 'projects')[id] = { ...structuredClone(data), tasks: {} };
+      return id;
+    });
+  }
+
+  async listProjects(teamId) {
+    const t = this.member(this.load(), teamId);
+    return Object.entries(t.projects || {}).map(([id, { tasks, ...p }]) => ({ id, ...p }));
+  }
+
+  project(hub, teamId, projectId) {
+    const p = (this.member(hub, teamId).projects || {})[projectId];
+    if (!p) throw new Error('프로젝트를 찾을 수 없어요.');
+    return p;
+  }
+
+  async updateProject(teamId, projectId, patch) {
+    this.tx((hub) => Object.assign(this.project(hub, teamId, projectId), structuredClone(patch)));
+  }
+
+  async createTask(teamId, projectId, data) {
+    return this.tx((hub) => {
+      const id = this.nextId(hub);
+      this.project(hub, teamId, projectId).tasks[id] = structuredClone(data);
+      return id;
+    });
+  }
+
+  async listTasks(teamId, projectId) {
+    const p = this.project(this.load(), teamId, projectId);
+    return Object.entries(p.tasks).map(([id, t]) => ({ id, ...t }));
+  }
+
+  async updateTask(teamId, projectId, taskId, patch) {
+    this.tx((hub) => {
+      const t = this.project(hub, teamId, projectId).tasks[taskId];
+      if (!t) throw new Error('작업을 찾을 수 없어요.');
+      const next = { ...t, ...patch };
+      // firestore.rules 와 같은 규칙: 배정 수락은 맡은 사람 본인만
+      if (next.accepted === true && next.assignee !== this.uidValue && !(t.accepted === true && t.assignee === next.assignee)) {
+        throw Object.assign(new Error('배정 수락은 맡은 사람만 할 수 있어요.'), { status: 403 });
+      }
+      Object.assign(t, structuredClone(patch));
+    });
+  }
+
+  async deleteTask(teamId, projectId, taskId) {
+    this.tx((hub) => {
+      delete this.project(hub, teamId, projectId).tasks[taskId];
+    });
+  }
 }
 
 module.exports = { MemoryBackend, emptyHub };

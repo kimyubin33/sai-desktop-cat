@@ -77,6 +77,41 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // ---------- 협업 (4단계) ----------
+      // 자기소개·역량·가능 시간: 팀원 모두 볼 수 있고, 본인만 고친다
+      match /profiles/{memberId} {
+        allow read: if isMember(teamId);
+        allow create, update: if isMember(teamId) && request.auth.uid == memberId
+          && request.resource.data.keys().hasOnly(['pr', 'skills', 'learn', 'weeklyHours', 'days'])
+          && (!('pr' in request.resource.data) || request.resource.data.pr.size() <= 500)
+          && (!('weeklyHours' in request.resource.data) || (request.resource.data.weeklyHours is number
+              && request.resource.data.weeklyHours >= 0 && request.resource.data.weeklyHours <= 80));
+        allow delete: if signedIn() && request.auth.uid == memberId;
+      }
+
+      match /projects/{projectId} {
+        allow read: if isMember(teamId);
+        allow create, update: if isMember(teamId)
+          && request.resource.data.keys().hasOnly(['title', 'goal', 'deliverable', 'deadline'])
+          && request.resource.data.title is string && request.resource.data.title.size() <= 80;
+        allow delete: if false;
+
+        match /tasks/{taskId} {
+          allow read: if isMember(teamId);
+          allow create, update: if isMember(teamId)
+            && request.resource.data.keys().hasOnly(['title', 'estimateHours', 'difficulty', 'skills', 'dependsOn',
+                 'doneCriteria', 'prep', 'reviewer', 'assignee', 'accepted', 'status', 'startedAt', 'doneAt', 'objections'])
+            && request.resource.data.title is string && request.resource.data.title.size() <= 80
+            && request.resource.data.status in ['todo', 'doing', 'blocked', 'done']
+            // 배정 수락은 맡은 사람 본인만
+            && (!('accepted' in request.resource.data) || request.resource.data.accepted == false
+                || request.resource.data.assignee == request.auth.uid
+                || (resource != null && resource.data.get('accepted', false) == true
+                    && resource.data.assignee == request.resource.data.assignee));
+          allow delete: if isMember(teamId);
+        }
+      }
+
       match /proposals/{proposalId} {
         allow create: if isMember(teamId)
           && request.resource.data.keys().hasOnly(['topic', 'week', 'responses'])

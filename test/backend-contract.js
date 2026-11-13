@@ -79,6 +79,37 @@ function defineContract(test, makeUsers) {
     await assert.rejects(() => b.listMembers(t.teamId));
     assert.equal((await a.listMembers(t.teamId)).length, 1);
   });
+
+  test('협업: 자기소개는 팀원끼리 보이고, 작업 수락은 맡은 사람만 한다', async () => {
+    const [a, b, outsider] = await makeUsers(3);
+    const t = await a.createTeam({ name: '팀', displayName: 'A' });
+    await b.joinTeam({ joinCode: t.joinCode, displayName: 'B' });
+    const bUid = await b.signIn();
+
+    await b.setProfile(t.teamId, { pr: '디자인 좋아해요', skills: { 디자인: 3 }, learn: ['영상편집'], weeklyHours: 6, days: ['mon'] });
+    await b.setProfile(t.teamId, { weeklyHours: 8 });
+    const profiles = await a.listProfiles(t.teamId);
+    const pb = profiles.find((p) => p.uid === bUid);
+    assert.equal(pb.weeklyHours, 8);
+    assert.deepEqual(pb.skills, { 디자인: 3 });
+    await assert.rejects(() => outsider.listProfiles(t.teamId));
+
+    const pid = await a.createProject(t.teamId, { title: '홍보 영상', goal: '1분 영상', deliverable: 'mp4', deadline: '2026-11-28' });
+    const tid = await a.createTask(t.teamId, pid, {
+      title: '포스터', estimateHours: 4, difficulty: 2, skills: ['디자인'], dependsOn: [], doneCriteria: 'A2 인쇄본',
+      prep: [{ text: '로고 파일', done: false }], status: 'todo', assignee: bUid, accepted: false, objections: {},
+    });
+    // 다른 사람이 대신 수락할 수 없다
+    await assert.rejects(() => a.updateTask(t.teamId, pid, tid, { accepted: true }));
+    await b.updateTask(t.teamId, pid, tid, { accepted: true });
+    // 수락된 작업의 상태는 팀원 누구나 바꿀 수 있다 (예: 검토자가 완료 처리)
+    await a.updateTask(t.teamId, pid, tid, { status: 'done' });
+    const [task] = await b.listTasks(t.teamId, pid);
+    assert.equal(task.status, 'done');
+    assert.equal(task.accepted, true);
+    assert.deepEqual(task.prep, [{ text: '로고 파일', done: false }]);
+    await assert.rejects(() => outsider.listTasks(t.teamId, pid));
+  });
 }
 
 module.exports = { defineContract };

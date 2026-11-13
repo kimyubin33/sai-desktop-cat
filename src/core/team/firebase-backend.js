@@ -216,6 +216,47 @@ class FirebaseBackend {
     const path = `responses.\`${uid}\``;
     await this.patchDoc(`teams/${teamId}/proposals/${id}`, { responses: { [uid]: response } }, [path]);
   }
+
+  // ---------- 협업 (4단계): 자기소개·프로젝트·작업 ----------
+  async setProfile(teamId, data) {
+    const uid = await this.signIn();
+    const path = `teams/${teamId}/profiles/${uid}`;
+    const existing = await this.getDoc(path).catch(() => null);
+    if (existing) await this.patchDoc(path, data, Object.keys(data));
+    else await this.createDoc(`teams/${teamId}/profiles`, uid, data);
+  }
+
+  async listProfiles(teamId) {
+    return (await this.listDocs(`teams/${teamId}/profiles`)).map(({ id, ...d }) => ({ uid: id, ...d }));
+  }
+
+  async createProject(teamId, data) {
+    return (await this.createDoc(`teams/${teamId}/projects`, null, data)).id;
+  }
+
+  async listProjects(teamId) {
+    return this.listDocs(`teams/${teamId}/projects`);
+  }
+
+  async updateProject(teamId, projectId, patch) {
+    await this.patchDoc(`teams/${teamId}/projects/${projectId}`, patch, Object.keys(patch));
+  }
+
+  async createTask(teamId, projectId, data) {
+    return (await this.createDoc(`teams/${teamId}/projects/${projectId}/tasks`, null, data)).id;
+  }
+
+  async listTasks(teamId, projectId) {
+    return this.listDocs(`teams/${teamId}/projects/${projectId}/tasks`);
+  }
+
+  async updateTask(teamId, projectId, taskId, patch) {
+    await this.patchDoc(`teams/${teamId}/projects/${projectId}/tasks/${taskId}`, patch, Object.keys(patch));
+  }
+
+  async deleteTask(teamId, projectId, taskId) {
+    await this.deleteDoc(`teams/${teamId}/projects/${projectId}/tasks/${taskId}`);
+  }
 }
 
 async function safeText(res) {
