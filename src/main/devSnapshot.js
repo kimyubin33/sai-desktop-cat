@@ -270,6 +270,24 @@ const SCENARIOS = {
     ];
   },
 
+  // 5단계: 외부 연결 설정 화면
+  'ext-settings'(ctx) {
+    const h = helpers(ctx);
+    return [
+      {
+        name: 'settings',
+        wait: 800,
+        action: async () => {
+          await ctx.team.syncNow();
+          ctx.openChat('settings');
+        },
+        window: h.w,
+        settle: 2500,
+      },
+      { name: 'ext', wait: 300, action: h.js("document.getElementById('extBox').scrollIntoView()"), window: h.w, settle: 800 },
+    ];
+  },
+
   // A: 다시 동기화 → 보류됨 표시, 팀 약속 현황
   'team-review'(ctx) {
     const h = helpers(ctx);

@@ -1,4 +1,4 @@
-const { app, ipcMain, Menu, Tray, nativeImage } = require('electron');
+const { app, ipcMain, Menu, Tray, nativeImage, powerMonitor } = require('electron');
 const path = require('path');
 const { createStores } = require('./store');
 const { CatController } = require('./catWindow');
@@ -113,6 +113,9 @@ app.whenReady().then(() => {
     cat,
     team: team.sync,
     collab: team.collab,
+    notifier: team.notifier,
+    // 10분 넘게 입력이 없거나 화면이 잠겨 있으면 자리를 비운 것으로 본다
+    isAway: () => powerMonitor.getSystemIdleState(600) !== 'active',
     onCollab: (taskId) => openChat('collab', taskId ? { task: taskId } : {}),
     onChat: () => openChat(),
     onExplain: (topic) => openChat('chat', { explain: topic }),

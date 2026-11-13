@@ -1,6 +1,9 @@
 // 팀 연결을 앱에 붙인다: 백엔드 선택, 주기적 동기화, 설정 저장.
 const { TeamSync } = require('../core/team/team-sync');
 const { CollabSync } = require('../core/collab/collab-sync');
+const { Notifier } = require('../core/notify/notifier');
+const { TOPICS } = require('../core/topics');
+const { createGoogleService } = require('./google');
 const { FirebaseBackend, parseFirebaseConfig } = require('../core/team/firebase-backend');
 const { MemoryBackend } = require('../core/team/memory-backend');
 const { randomCode } = require('../core/team/firebase-backend');
@@ -39,9 +42,21 @@ function createTeamService({ stores, onChange = () => {} }) {
     outbox: stores.sharedOutbox,
     cache: stores.teamCache,
     delayMs: process.env.SAI_SEND_DELAY_MS != null ? Number(process.env.SAI_SEND_DELAY_MS) : null,
+    onProposal: (topic) => notifier.proposal(TOPICS[topic] ? TOPICS[topic].teamProposal : ''),
   });
 
-  const collab = new CollabSync({ team: sync, cache: stores.teamCache });
+  // Telegram: 업무 알림만 (배정·막힘·팀 약속·내 진행 확인)
+  const notifier = new Notifier({ team: sync, cache: stores.teamCache });
+  const collab = new CollabSync({
+    team: sync,
+    cache: stores.teamCache,
+    onEvent: (e) => {
+      if (e.type === 'assigned') return notifier.assigned(e.list, e.project);
+      if (e.type === 'blocked') return notifier.blocked(e.task, e.project, e.who);
+      return null;
+    },
+  });
+  const google = createGoogleService({ stores, collab });
 
   let timer = null;
   async function syncNow() {
@@ -53,6 +68,9 @@ function createTeamService({ stores, onChange = () => {} }) {
       } catch (e) {
         stores.teamCache.update((c) => (c.lastError = String(e.message || e)));
       }
+      // 외부 연결은 실패해도 팀 동기화 결과를 막지 않는다 (각자 상태에 오류를 남김)
+      await notifier.sync().catch((e) => notifier.record(false, String(e.message || e)));
+      await google.syncTodo().catch(() => {});
     }
     onChange();
     return r;
@@ -95,7 +113,7 @@ function createTeamService({ stores, onChange = () => {} }) {
     };
   }
 
-  return { sync, collab, syncNow, start, stop, configure, status };
+  return { sync, collab, notifier, google, syncNow, start, stop, configure, status };
 }
 
 module.exports = { createTeamService };

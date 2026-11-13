@@ -12,7 +12,9 @@ class Advisor {
    *   { isConnected(), boosts(), pendingProposalsForMe(), respond(id, r) }
    * onExplain(topic): "내 사정도 있어요" → 대화창의 내 사정 이야기로
    */
-  constructor({ stores, cat, onChat, onExplain = () => {}, team = null, collab = null, onCollab = () => {} }) {
+  constructor({ stores, cat, onChat, onExplain = () => {}, team = null, collab = null, onCollab = () => {}, notifier = null, isAway = () => false }) {
+    this.notifier = notifier;
+    this.isAway = isAway;
     this.collab = collab;
     this.onCollab = onCollab;
     this.stores = stores;
@@ -112,6 +114,12 @@ class Advisor {
     }
     if (!n) return false;
     this.collab.markNudged(n.key);
+    // 자리를 비웠으면 말풍선 대신 Telegram 으로 (연결했고, 설정에서 켜 둔 경우)
+    if (this.isAway() && this.notifier && this.notifier.isLinked() && this.stores.settings.get().telegramAway) {
+      const project = this.collab.active();
+      this.notifier.nudgeMe(n.text, project ? project.title : '').catch(() => {});
+      return true;
+    }
     this.show({
       id: `progress-${n.key}`,
       kind: 'progress',

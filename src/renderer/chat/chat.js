@@ -42,6 +42,7 @@
     if (tab === 'settings') {
       loadSettings();
       renderTeam();
+      if (window.SaiExt) window.SaiExt.render();
     }
   }
   document.querySelector('.tabs').addEventListener('click', (e) => {

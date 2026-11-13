@@ -63,6 +63,21 @@ function emailFromIdToken(idToken) {
   }
 }
 
+/** Google Cloud 콘솔에서 받은 클라이언트 JSON 또는 "ID / 비밀번호" 텍스트에서 값을 뽑는다 */
+function parseGoogleClient(text) {
+  const t = String(text || '');
+  try {
+    const j = JSON.parse(t);
+    const c = j.installed || j.web || j;
+    if (c.client_id && c.client_secret) return { clientId: c.client_id, clientSecret: c.client_secret };
+  } catch {
+    /* JSON 이 아니면 아래에서 */
+  }
+  const id = /([0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com)/.exec(t);
+  const secret = /(GOCSPX-[A-Za-z0-9_-]+)/.exec(t);
+  return id && secret ? { clientId: id[1], clientSecret: secret[1] } : null;
+}
+
 class GoogleAuth {
   /**
    * client: { clientId, clientSecret }
@@ -153,4 +168,4 @@ class GoogleAuth {
   }
 }
 
-module.exports = { GoogleAuth, pkce, authUrl, emailFromIdToken, SCOPES };
+module.exports = { GoogleAuth, pkce, authUrl, emailFromIdToken, parseGoogleClient, SCOPES };

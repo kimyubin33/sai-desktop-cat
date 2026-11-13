@@ -49,10 +49,12 @@ function cleanTask(t) {
 }
 
 class CollabSync {
-  constructor({ team, cache, now = () => Date.now() }) {
+  /** onEvent({ type: 'assigned' | 'blocked', ... }) — Telegram 알림 등 바깥으로 알릴 때 */
+  constructor({ team, cache, now = () => Date.now(), onEvent = () => {} }) {
     this.team = team;
     this.cache = cache;
     this.now = now;
+    this.onEvent = onEvent;
   }
 
   data() {
@@ -190,6 +192,11 @@ class CollabSync {
     if (status === 'doing' && !f.task.startedAt) patch.startedAt = this.now();
     if (status === 'done') patch.doneAt = this.now();
     await this.patchTask(f.projectId, taskId, patch);
+    if (status === 'blocked' && f.task.status !== 'blocked') {
+      const project = this.data().projects.find((p) => p.id === f.projectId);
+      const me = this.members().find((m) => m.uid === this.myUid());
+      this.emit({ type: 'blocked', task: f.task.title, project: project ? project.title : '', who: me ? me.name : '팀원' });
+    }
   }
 
   async accept(taskId) {
@@ -231,17 +238,30 @@ class CollabSync {
     return plan({ members: this.members(), tasks: this.tasksOf(projectId), deadline: project.deadline, now: this.now() });
   }
 
-  /** 제안을 실제 배정으로 옮긴다. 수락된 배정은 건드리지 않는다. 각자 수락하거나 이의를 제기할 수 있다. */
+  /** 제안을 실제 배정으로 옮긴다. 수락된 배정은 건드리지 않는다. 각자 수락하거나 이의를 제기할 수 있다.
+   *  돌려주는 값: 새로 배정한 목록 [{ taskId, uid, title, hours }] */
   async applyPlan(projectId, assignments) {
-    let n = 0;
+    const applied = [];
     for (const a of assignments) {
       if (a.fixed || !a.uid) continue;
       const t = this.tasksOf(projectId).find((x) => x.id === a.taskId);
       if (!t || t.accepted || t.status === 'done' || t.assignee === a.uid) continue;
       await this.patchTask(projectId, a.taskId, { assignee: a.uid, accepted: false });
-      n++;
+      applied.push({ taskId: a.taskId, uid: a.uid, title: t.title, hours: a.effectiveHours || t.estimateHours });
     }
-    return n;
+    if (applied.length) {
+      const project = this.data().projects.find((p) => p.id === projectId);
+      this.emit({ type: 'assigned', list: applied, project: project ? project.title : '' });
+    }
+    return applied;
+  }
+
+  emit(evt) {
+    try {
+      Promise.resolve(this.onEvent(evt)).catch(() => {});
+    } catch {
+      /* 알림 실패가 작업 자체를 막지 않도록 */
+    }
   }
 
   // ---------- 진행 확인 ----------

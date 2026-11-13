@@ -40,7 +40,7 @@ test('자기소개 → 작업 입력 → 배분 제안 → 적용 → 수락·�
   const who = Object.fromEntries(p.assignments.map((x) => [x.taskId, x.uid]));
   const bUid = await b.team.getBackend().signIn();
   assert.equal(who[poster], bUid);
-  assert.equal(await a.collab.applyPlan(pid, p.assignments), 3);
+  assert.equal((await a.collab.applyPlan(pid, p.assignments)).length, 3);
 
   await b.sync();
   // 민지: 배정 확인부터

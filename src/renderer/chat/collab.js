@@ -133,6 +133,7 @@
       el('button', { type: 'button', class: 'link', text: '+ 역량 추가', onclick: () => addRow({ name: '', level: 2 }) }),
       el('label', {}, '배우고 싶은 일 (쉼표로 구분)', el('input', { type: 'text', name: 'learn', value: (p.learn || []).join(', ') })),
       el('label', {}, '이번 주에 이 프로젝트에 쓸 수 있는 시간', el('div', { class: 'inline' }, el('input', { type: 'number', name: 'weeklyHours', min: 0, max: 80, step: 0.5, value: p.weeklyHours ?? '' }), '시간 / 주')),
+      calendarHelper(),
       el('div', { class: 'inline' }, el('button', { type: 'submit', class: 'primary', text: '자기소개 저장' })),
     );
 
@@ -167,6 +168,41 @@
       el('div', { class: 'label', text: '팀원' }),
       team,
     );
+  }
+
+  // Google 캘린더의 바쁜 시간으로 빈 시간을 계산해 참고로 보여 준다 (자동 저장하지 않음 — 본인이 정한다)
+  function calendarHelper() {
+    const out = el('div', { class: 'hint cal-help' });
+    const btn = el('button', {
+      type: 'button',
+      class: 'link',
+      text: 'Google 캘린더로 빈 시간 보기',
+      onclick: async () => {
+        out.textContent = '캘린더를 확인하는 중…';
+        try {
+          const r = await api.gAvailability({ projectId: view.project && view.project.id });
+          const suggest = Math.max(0, Math.round(r.week * 0.4 * 2) / 2);
+          out.textContent = '';
+          add(
+            out,
+            `앞으로 7일 동안 ${r.window} 중 빈 시간은 ${r.week}시간${r.toDeadline != null ? `, 마감까지는 ${r.toDeadline}시간` : ''}이에요. 빈 시간을 전부 쓰긴 어려우니 그중 일부만 적는 걸 권해요. `,
+            el('button', {
+              type: 'button',
+              class: 'link',
+              text: `${suggest}시간으로 적기 (빈 시간의 40%)`,
+              onclick: () => {
+                const input = root.querySelector('input[name="weeklyHours"]');
+                input.value = suggest;
+                input.focus();
+              },
+            }),
+          );
+        } catch (e) {
+          out.textContent = `${errMsg(e)} (설정 → 외부 연결에서 Google 로그인)`;
+        }
+      },
+    });
+    return el('div', {}, btn, out);
   }
 
   // ---------- 프로젝트 ----------
@@ -341,6 +377,24 @@
         const reason = el('select', {}, view.objectionReasons.map((r) => el('option', { value: r, text: r })));
         actions.append(
           el('details', { class: 'inline-details' }, el('summary', { text: '못 하게 됐어요' }), reason, el('button', { text: '배정 풀기', onclick: () => act(() => api.collabObject({ id: t.id, reason: reason.value }), '배정을 풀었어요. 팀이 다시 나눌 수 있어요.') })),
+        );
+      }
+      if (mine && t.accepted && t.status !== 'done') {
+        actions.append(
+          el('button', {
+            class: 'link',
+            text: '캘린더에 작업 시간 잡기',
+            onclick: async () => {
+              try {
+                const r = await api.gScheduleTask({ id: t.id });
+                const s = new Date(r.start);
+                const fmt = s.toLocaleString('ko-KR', { month: 'short', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+                flash(`${fmt}부터 ${r.hours}시간을 캘린더에 잡았어요.${r.totalHours > r.hours ? ` 남은 ${Math.round((r.totalHours - r.hours) * 10) / 10}시간은 한 번 더 누르면 다음 빈 시간에 잡아요.` : ''}`);
+              } catch (e) {
+                flash(`${errMsg(e)} (설정 → 외부 연결에서 Google 로그인)`, true);
+              }
+            },
+          }),
         );
       }
       actions.append(

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
-const { GoogleAuth, pkce, authUrl, emailFromIdToken } = require('../src/core/google/oauth');
+const { GoogleAuth, pkce, authUrl, emailFromIdToken, parseGoogleClient } = require('../src/core/google/oauth');
 const { freeIntervals, freeHours, findSlot, queryBusy } = require('../src/core/google/calendar');
 const { ensureList, syncTasks } = require('../src/core/google/tasks');
 
@@ -48,6 +48,16 @@ test('코드 교환·토큰 갱신·만료 처리', async () => {
   await assert.rejects(() => g.accessToken(), /만료/);
   assert.equal(saved, null);
   assert.equal(emailFromIdToken('bad'), null);
+});
+
+test('콘솔에서 받은 클라이언트 정보를 읽는다', () => {
+  const json = '{"installed":{"client_id":"123-abc.apps.googleusercontent.com","client_secret":"GOCSPX-xyz_1"}}';
+  assert.deepEqual(parseGoogleClient(json), { clientId: '123-abc.apps.googleusercontent.com', clientSecret: 'GOCSPX-xyz_1' });
+  assert.deepEqual(parseGoogleClient('클라이언트 ID 123-abc.apps.googleusercontent.com\n보안 비밀번호 GOCSPX-xyz_1'), {
+    clientId: '123-abc.apps.googleusercontent.com',
+    clientSecret: 'GOCSPX-xyz_1',
+  });
+  assert.equal(parseGoogleClient('없음'), null);
 });
 
 // ---------- 캘린더 ----------

@@ -166,10 +166,44 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
     };
   });
   handle('collab:apply-plan', async ({ projectId, assignments }) => {
-    const n = await collab.applyPlan(projectId, assignments || []);
+    const applied = await collab.applyPlan(projectId, assignments || []);
     team.syncNow();
-    return { applied: n, view: collabView() };
+    return { applied: applied.length, view: collabView() };
   });
+
+  // ---------- 외부 연결 (5단계) ----------
+  const { shell } = require('electron');
+  const extView = () => ({
+    teamConnected: team.sync.isConnected(),
+    telegram: team.notifier.status(),
+    telegramAway: !!stores.settings.get().telegramAway,
+    google: team.google.status(),
+  });
+  const extCall = (fn) => async (arg) => {
+    await fn(arg);
+    return extView();
+  };
+  handle('ext:status', extView);
+  handle('tg:set-bot', extCall(async (token) => {
+    await team.notifier.setBot(token);
+    await team.notifier.sync();
+  }));
+  handle('tg:start-link', async () => {
+    const { url } = team.notifier.startLink();
+    shell.openExternal(url);
+    return { url, view: extView() };
+  });
+  handle('tg:check-link', async () => ({ ...(await team.notifier.checkLink()), view: extView() }));
+  handle('tg:team-alerts', extCall((on) => team.notifier.setTeamAlerts(on)));
+  handle('tg:away', extCall((on) => stores.settings.update((s) => (s.telegramAway = !!on))));
+  handle('tg:unlink', extCall(() => team.notifier.unlink()));
+  handle('tg:test', extCall(() => team.notifier.test()));
+  handle('g:configure', extCall((text) => team.google.configure(text)));
+  handle('g:login', extCall(() => team.google.login()));
+  handle('g:logout', extCall(() => team.google.logout()));
+  handle('g:sync', async () => ({ result: await team.google.syncTodo(), view: extView() }));
+  handle('g:availability', ({ projectId } = {}) => team.google.availability(projectId));
+  handle('g:schedule-task', ({ id }) => team.google.scheduleTask(id));
 
   const publicSettings = () => {
     const s = stores.settings.get();

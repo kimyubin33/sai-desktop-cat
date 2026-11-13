@@ -81,6 +81,11 @@ const DEFAULT_SETTINGS = {
   firebaseSessionEnc: null, // 익명 로그인 refresh token (암호화)
   team: null, // { teamId, name, joinCode, displayName }
   localUid: null, // 로컬 시험 모드용
+  // 외부 연결 (5단계) — 모두 이 기기에만 저장
+  googleClient: null, // 설정에서 넣은 OAuth 클라이언트 (없으면 내장값)
+  googleTokensEnc: null, // Google refresh token (암호화)
+  googleTaskLinks: {}, // { projectId: { saiTaskId: googleTaskId } }
+  telegramAway: true, // 자리 비웠을 때 진행 확인을 Telegram 으로
 };
 
 function createStores(userDataDir) {

@@ -22,7 +22,8 @@ class TeamSync {
    * outbox: { get(), update(fn) } — { items: [] }
    * cache:  { get(), update(fn) } — 팀원·받은 신호·제안 캐시
    */
-  constructor({ makeBackend, state, outbox, cache, now = () => Date.now(), rand = Math.random, delayMin = DEFAULT_DELAY_MIN, delayMs = null }) {
+  constructor({ makeBackend, state, outbox, cache, now = () => Date.now(), rand = Math.random, delayMin = DEFAULT_DELAY_MIN, delayMs = null, onProposal = () => {} }) {
+    this.onProposal = onProposal;
     this.makeBackend = makeBackend;
     this.state = state;
     this.outbox = outbox;
@@ -192,6 +193,10 @@ class TeamSync {
           } else {
             remoteId = await b.createProposal(t.teamId, { topic: it.topic, week });
             await b.respondProposal(t.teamId, remoteId, 'agree');
+            // 새 팀 약속 제안을 팀원에게 알림 (제안한 사람은 드러내지 않음)
+            Promise.resolve()
+              .then(() => this.onProposal(it.topic))
+              .catch(() => {});
           }
         } else {
           if (memberIds.size && !memberIds.has(it.toMember)) {
