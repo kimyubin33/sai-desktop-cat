@@ -1,10 +1,11 @@
 # Windows 설치 파일 만들기 · 새 버전 배포
 #
 # 새 버전을 배포하는 방법 (설치된 사이가 자동으로 업데이트됨)
-#   1) package.json 의 "version" 을 올린다 (예: 0.5.1 → 0.6.0)
-#   2) 같은 번호로 태그를 올린다:  git tag v0.6.0 && git push origin v0.6.0
-#   3) 이 작업이 Windows 에서 설치 파일을 만들어 GitHub Releases 에 올린다 (약 10분)
-#   4) 설치된 사이는 3시간마다(켤 때도) 확인해서 받아 두고, 고양이가 적용할지 묻는다
+#   1) package.json 의 "version" 을 올려서 main 에 push 한다 (예: 0.6.0 → 0.6.1)
+#      (또는 같은 번호의 태그 v0.6.1 을 push 해도 된다)
+#   2) 이 작업이 그 버전이 아직 Releases 에 없으면 Windows 에서 설치 파일을 만들어 올린다 (약 10분)
+#      이미 있는 버전이면 아무것도 하지 않는다
+#   3) 설치된 사이는 켤 때와 3시간마다 확인해서 받아 두고, 고양이가 적용할지 묻는다
 #
 # Actions 탭 → "Windows 설치 파일" → Run workflow 로 직접 실행하면 배포 없이 파일만 만든다 (Artifacts 에서 받기).
 #
@@ -15,6 +16,8 @@ name: Windows 설치 파일
 on:
   workflow_dispatch:
   push:
+    branches: [main]
+    paths: ['package.json', '.github/workflows/build-windows.yml']
     tags: ['v*']
 
 permissions:
@@ -26,17 +29,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # main 에 push 된 경우: 이 버전이 이미 Releases 에 있으면 만들지 않는다
+      - name: 배포할 버전인지 확인
+        id: ver
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then echo "publish=never" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$v 은 이미 배포됐어요. 건너뜁니다."
+            echo "publish=skip" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=always" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.ver.outputs.publish != 'skip'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - if: steps.ver.outputs.publish != 'skip'
+        run: npm ci
 
-      - run: npm test
+      - if: steps.ver.outputs.publish != 'skip'
+        run: npm test
 
       - name: 태그와 package.json 버전이 같은지 확인
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.ver.outputs.publish != 'skip'
         shell: bash
         run: |
           v=$(node -p "require('./package.json').version")
@@ -46,6 +69,7 @@ jobs:
           fi
 
       - name: Google 연결 정보 넣기 (있을 때만)
+        if: steps.ver.outputs.publish != 'skip'
         shell: bash
         env:
           GOOGLE_CLIENT_JSON: ${{ secrets.GOOGLE_CLIENT_JSON }}
@@ -61,14 +85,14 @@ jobs:
       # Windows 에서는 exe 아이콘·정보 편집을 켠다 (Linux 빌드에서는 Wine 이 없어 꺼 둠)
       # 태그면 GitHub Releases 에 올리고(자동 업데이트용 latest.yml 포함), 직접 실행이면 파일만 만든다
       - name: 만들기
+        if: steps.ver.outputs.publish != 'skip'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then PUBLISH=always; else PUBLISH=never; fi
-          npx electron-builder --win nsis portable zip --x64 -c.win.signAndEditExecutable=true --publish $PUBLISH
+        run: npx electron-builder --win nsis portable zip --x64 -c.win.signAndEditExecutable=true --publish ${{ steps.ver.outputs.publish }}
 
-      - uses: actions/upload-artifact@v4
+      - if: steps.ver.outputs.publish != 'skip'
+        uses: actions/upload-artifact@v4
         with:
           name: sai-windows
           path: |

@@ -22,14 +22,10 @@ npm run dist:win # Windows 설치 파일·포터블 exe 만들기 (Windows에서
 
 새 버전을 배포하는 방법:
 
-```bash
-# 1) package.json 의 "version" 을 올린다 (예: 0.6.0 → 0.6.1)
-# 2) 커밋하고, 같은 번호로 태그를 올린다
-git tag v0.6.1
-git push origin main v0.6.1
-```
+1. `package.json`의 `"version"`을 올립니다 (예: 0.6.0 → 0.6.1).
+2. 커밋해서 `main`에 push 합니다.
 
-태그가 올라가면 GitHub Actions가 Windows에서 설치 파일을 만들어 Releases에 올립니다 (약 10분). 태그와 package.json 버전이 다르면 멈춥니다.
+그러면 GitHub Actions가 그 버전이 아직 Releases에 없는지 확인합니다. 없으면 Windows에서 설치 파일을 만들어 Releases에 올립니다 (약 10분). 이미 배포된 버전이면 아무것도 하지 않습니다. 같은 번호의 태그(`v0.6.1`)를 올려도 됩니다.
 Google 연결 정보가 설치 파일에 들어가도록 저장소 **Settings → Secrets and variables → Actions**에 `GOOGLE_CLIENT_JSON` 시크릿을 넣어 두세요 (형식은 `config/README.md`).
 
 Windows를 우선 대상으로 만들었고, macOS·Linux에서도 실행됩니다 (Linux는 투명 부분 클릭 통과가 제한될 수 있음).
