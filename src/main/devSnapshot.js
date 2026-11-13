@@ -308,6 +308,24 @@ const SCENARIOS = {
     void Menu;
   },
 
+  // 업데이트: 개발 실행에서는 꺼져 있고, 설정 화면에 버전·상태가 보이는지
+  update(ctx) {
+    const h = helpers(ctx);
+    return [
+      {
+        name: 'state',
+        wait: 800,
+        action: async () => {
+          console.log('UPDATE', JSON.stringify(await ctx.updater.check({ manual: true })));
+          ctx.advisor.notifyUpdate('9.9.9');
+        },
+        window: h.c,
+        settle: 800,
+      },
+      { name: 'settings', wait: 300, action: () => ctx.openChat('settings'), window: h.w, settle: 2000 },
+    ];
+  },
+
   // 5단계: 외부 연결 설정 화면
   'ext-settings'(ctx) {
     const h = helpers(ctx);

@@ -8,6 +8,7 @@ const { ChatService } = require('./chatService');
 const { AiHelper } = require('./ai');
 const { registerChatIpc } = require('./ipc');
 const { createTeamService } = require('./team');
+const { createUpdater } = require('./updater');
 const { runSnapshots } = require('./devSnapshot');
 
 if (!app.requestSingleInstanceLock()) {
@@ -22,6 +23,7 @@ let chatWindow;
 let ai;
 let chat;
 let team;
+let updater;
 
 const FREQ_LABELS = { low: '가끔', normal: '보통', high: '자주' };
 
@@ -92,6 +94,10 @@ function buildMenu() {
     { label: '정리함', click: () => openChat('notes') },
     { label: '협업 (업무·일정)', click: () => openChat('collab') },
     { label: '설정', click: () => openChat('settings') },
+    {
+      label: updater && updater.state.status === 'ready' ? `새 버전 ${updater.state.latest} 적용하기` : `업데이트 확인 (지금 ${app.getVersion()})`,
+      click: () => (updater.state.status === 'ready' ? updater.install() : updater.check({ manual: true })),
+    },
     { type: 'separator' },
     {
       label: cat.isVisible() ? `${s.catName} 1시간 숨기기` : `${s.catName} 다시 보이기`,
@@ -151,15 +157,27 @@ app.whenReady().then(() => {
   ai = new AiHelper(stores.settings);
   chat = new ChatService({ stores, ai });
   chatWindow = new ChatWindow();
-  registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team });
+  registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team, getUpdater: () => updater });
 
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'tray.png')));
   tray.setToolTip('사이 — 고양이 협업 도우미');
   tray.on('click', () => openChat());
   refreshTray();
 
+  updater = createUpdater({
+    onReady: (version) => {
+      advisor.notifyUpdate(version);
+      refreshTray();
+    },
+    onInfo: (text) => advisor.info(text),
+  });
+  advisor.onUpdateInstall = () => updater.install();
+
   team.start();
-  if (!runSnapshots(app, { cat, advisor, chatWindow, openChat, team, stores })) advisor.start();
+  if (!runSnapshots(app, { cat, advisor, chatWindow, openChat, team, stores, updater })) {
+    advisor.start();
+    updater.start();
+  }
 });
 
 app.on('window-all-closed', (e) => e.preventDefault());
@@ -167,6 +185,7 @@ app.on('window-all-closed', (e) => e.preventDefault());
 app.on('before-quit', () => {
   if (advisor) advisor.stop();
   if (team) team.stop();
+  if (updater) updater.stop();
   if (!stores) return;
   for (const s of Object.values(stores)) s.saveNow();
 });

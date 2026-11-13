@@ -1,10 +1,15 @@
-# Windows 설치 파일 만들기
-# - Actions 탭 → "Windows 설치 파일" → Run workflow 로 직접 실행하거나, v0.6.0 같은 태그를 올리면 실행된다.
-# - 결과: 설치 파일(Sai-Setup-*.exe), 포터블(Sai-Portable-*.exe), zip
-#   · 직접 실행: 실행 화면 아래 Artifacts 에서 내려받기
-#   · 태그: Releases 에 자동으로 올라감
-# - Google 캘린더·할 일 연결 정보는 저장소에 없으므로, 저장소 Settings → Secrets and variables → Actions 에
-#   GOOGLE_CLIENT_JSON 이름으로 {"clientId":"...","clientSecret":"..."} 를 넣어 두면 설치 파일에 함께 들어간다.
+# Windows 설치 파일 만들기 · 새 버전 배포
+#
+# 새 버전을 배포하는 방법 (설치된 사이가 자동으로 업데이트됨)
+#   1) package.json 의 "version" 을 올린다 (예: 0.5.1 → 0.6.0)
+#   2) 같은 번호로 태그를 올린다:  git tag v0.6.0 && git push origin v0.6.0
+#   3) 이 작업이 Windows 에서 설치 파일을 만들어 GitHub Releases 에 올린다 (약 10분)
+#   4) 설치된 사이는 3시간마다(켤 때도) 확인해서 받아 두고, 고양이가 적용할지 묻는다
+#
+# Actions 탭 → "Windows 설치 파일" → Run workflow 로 직접 실행하면 배포 없이 파일만 만든다 (Artifacts 에서 받기).
+#
+# Google 캘린더·할 일 연결 정보는 저장소에 없으므로 Settings → Secrets and variables → Actions 에
+# GOOGLE_CLIENT_JSON 이름으로 {"clientId":"...","clientSecret":"..."} 를 넣어 두면 설치 파일에 함께 들어간다.
 name: Windows 설치 파일
 
 on:
@@ -30,6 +35,16 @@ jobs:
 
       - run: npm test
 
+      - name: 태그와 package.json 버전이 같은지 확인
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then
+            echo "태그(${GITHUB_REF_NAME})와 package.json 버전(v$v)이 달라요. 버전을 맞춘 뒤 다시 태그를 올려 주세요."
+            exit 1
+          fi
+
       - name: Google 연결 정보 넣기 (있을 때만)
         shell: bash
         env:
@@ -40,11 +55,18 @@ jobs:
             printf '%s' "$GOOGLE_CLIENT_JSON" > config/google-client.json
             echo "Google 연결 정보를 넣었어요."
           else
-            echo "GOOGLE_CLIENT_JSON 시크릿이 없어요. 설치 후 설정에서 직접 넣어야 해요."
+            echo "::warning::GOOGLE_CLIENT_JSON 시크릿이 없어요. 설치 후 설정에서 직접 넣어야 해요."
           fi
 
       # Windows 에서는 exe 아이콘·정보 편집을 켠다 (Linux 빌드에서는 Wine 이 없어 꺼 둠)
-      - run: npx electron-builder --win nsis portable zip --x64 -c.win.signAndEditExecutable=true --publish never
+      # 태그면 GitHub Releases 에 올리고(자동 업데이트용 latest.yml 포함), 직접 실행이면 파일만 만든다
+      - name: 만들기
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then PUBLISH=always; else PUBLISH=never; fi
+          npx electron-builder --win nsis portable zip --x64 -c.win.signAndEditExecutable=true --publish $PUBLISH
 
       - uses: actions/upload-artifact@v4
         with:
@@ -52,10 +74,4 @@ jobs:
           path: |
             dist/*.exe
             dist/*.zip
-
-      - if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.exe
-            dist/*.zip
+            dist/latest.yml

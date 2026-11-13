@@ -15,6 +15,8 @@ class Advisor {
   constructor({ stores, cat, onChat, onExplain = () => {}, team = null, collab = null, onCollab = () => {}, notifier = null, isAway = () => false }) {
     this.notifier = notifier;
     this.isAway = isAway;
+    this.pendingUpdate = null;
+    this.onUpdateInstall = () => {};
     this.collab = collab;
     this.onCollab = onCollab;
     this.stores = stores;
@@ -47,7 +49,7 @@ class Advisor {
     const s = this.stores.settings.get();
     if (silenceReason(s)) return this.schedule();
     if (this.cat.isBusy() || !this.cat.isVisible()) return this.schedule(BUSY_RETRY_MS);
-    if (!this.maybeShowProposal() && !this.maybeShowProgress()) this.speakNow();
+    if (!this.maybeShowUpdate() && !this.maybeShowProposal() && !this.maybeShowProgress()) this.speakNow();
     this.schedule();
   }
 
@@ -132,7 +134,38 @@ class Advisor {
     return true;
   }
 
+  // ---------- 업데이트 ----------
+  /** 새 버전을 다 받았을 때. 조용한 시간이 아니면 바로, 아니면 다음 말할 때 묻는다 */
+  notifyUpdate(version) {
+    this.pendingUpdate = version;
+    if (!silenceReason(this.stores.settings.get()) && !this.cat.isBusy() && this.cat.isVisible()) this.maybeShowUpdate();
+  }
+
+  maybeShowUpdate() {
+    if (!this.pendingUpdate) return false;
+    const v = this.pendingUpdate;
+    this.show({
+      id: 'update',
+      kind: 'update',
+      topic: null,
+      text: `새 버전 ${v}이 준비됐어요. 지금 다시 시작해서 적용할까요? 나중에 하면 프로그램을 끌 때 적용돼요.`,
+      source: { type: 'system', label: '사이 업데이트' },
+      actions: [
+        { id: 'update-later', label: '나중에' },
+        { id: 'update-install', label: '지금 적용', primary: true },
+      ],
+    });
+    return true;
+  }
+
+  /** 업데이트 확인 결과 같은 짧은 안내 */
+  info(text) {
+    if (this.cat.isBusy()) this.cat.hideBubble();
+    this.show({ id: 'info', kind: 'info', topic: null, text, source: { type: 'system', label: '사이 업데이트' }, actions: [{ id: 'close', label: '확인' }] });
+  }
+
   actionsFor(entry) {
+    if (entry.actions) return entry.actions;
     if (entry.kind === 'progress') return entry.actions;
     if (entry.kind === 'proposal') {
       return [
@@ -202,6 +235,14 @@ class Advisor {
         break;
       case 'chat':
         this.onChat();
+        break;
+      case 'update-install':
+        this.pendingUpdate = null;
+        this.onUpdateInstall();
+        break;
+      case 'update-later':
+        // 다시 묻지 않는다. 프로그램을 끌 때 적용된다
+        this.pendingUpdate = null;
         break;
       case 'open-collab':
       case 'task-object':

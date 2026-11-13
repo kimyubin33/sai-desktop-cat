@@ -14,6 +14,24 @@ npm run test:emulator  # Firebase 에뮬레이터에서 REST 호출과 보안 �
 npm run dist:win # Windows 설치 파일·포터블 exe 만들기 (Windows에서 실행 권장)
 ```
 
+### 팀원에게 나눠 주기 · 새 버전 배포 (자동 업데이트)
+
+- 팀원은 [Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)의 `Sai-Setup-x.y.z.exe`를 한 번 설치하면 됩니다. Node.js는 필요 없습니다.
+- 설치된 사이는 켤 때와 3시간마다 새 버전을 확인합니다. 새 버전이 있으면 받아 두고, 고양이가 "지금 적용"할지 묻습니다. "나중에"를 고르면 프로그램을 끌 때 적용됩니다.
+- zip 버전으로 쓰던 사람도 업데이트를 적용하면 설치 버전으로 바뀝니다. 그 뒤로는 시작 메뉴의 "사이"를 쓰면 됩니다.
+
+새 버전을 배포하는 방법:
+
+```bash
+# 1) package.json 의 "version" 을 올린다 (예: 0.6.0 → 0.6.1)
+# 2) 커밋하고, 같은 번호로 태그를 올린다
+git tag v0.6.1
+git push origin main v0.6.1
+```
+
+태그가 올라가면 GitHub Actions가 Windows에서 설치 파일을 만들어 Releases에 올립니다 (약 10분). 태그와 package.json 버전이 다르면 멈춥니다.
+Google 연결 정보가 설치 파일에 들어가도록 저장소 **Settings → Secrets and variables → Actions**에 `GOOGLE_CLIENT_JSON` 시크릿을 넣어 두세요 (형식은 `config/README.md`).
+
 Windows를 우선 대상으로 만들었고, macOS·Linux에서도 실행됩니다 (Linux는 투명 부분 클릭 통과가 제한될 수 있음).
 
 ## 지금 할 수 있는 것

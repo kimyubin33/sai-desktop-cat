@@ -3,7 +3,7 @@ const { TOPICS } = require('../core/topics');
 const { dndSpanMinutes, MAX_DND_MINUTES } = require('../core/advice-scheduler');
 const { buildPreview, createOutboxItems, mergeIntoOutbox, leaksRawText } = require('../core/privacy');
 
-function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team }) {
+function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChanged, team, getUpdater = () => null }) {
   const handle = (ch, fn) =>
     ipcMain.handle(ch, (e, ...args) => {
       if (!chatWindow.isOwn(e)) throw new Error('허용되지 않은 요청이에요.');
@@ -237,6 +237,16 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
   handle('g:sync', async () => ({ result: await team.google.syncTodo(), view: extView() }));
   handle('g:availability', ({ projectId } = {}) => team.google.availability(projectId));
   handle('g:schedule-task', ({ id }) => team.google.scheduleTask(id));
+
+  // ---------- 업데이트 ----------
+  handle('update:status', () => ({ ...(getUpdater() ? getUpdater().state : {}), version: require('electron').app.getVersion() }));
+  handle('update:check', async () => {
+    const u = getUpdater();
+    if (!u) return { status: 'unsupported' };
+    await u.check({ manual: true });
+    return { ...u.state };
+  });
+  handle('update:install', () => getUpdater() && getUpdater().install());
 
   const publicSettings = () => {
     const s = stores.settings.get();

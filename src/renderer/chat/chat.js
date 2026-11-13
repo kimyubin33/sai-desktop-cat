@@ -43,6 +43,7 @@
       loadSettings();
       renderTeam();
       if (window.SaiExt) window.SaiExt.render();
+      renderUpdate().catch(() => {});
     }
   }
   document.querySelector('.tabs').addEventListener('click', (e) => {
@@ -708,6 +709,38 @@
     if (!confirm(`"${name}"에서 나갈까요? 이 팀으로 보낸 기록이 지워지고, 다시 참여하려면 참여 코드가 필요해요. 다른 팀은 그대로예요.`)) return;
     teamAction(() => window.sai.teamLeave(), '팀에서 나왔어요.')();
   });
+
+  // ---------- 버전 · 업데이트 ----------
+  const UPDATE_TEXT = {
+    idle: '아직 확인하지 않았어요.',
+    checking: '확인하는 중이에요…',
+    downloading: '새 버전을 받는 중이에요',
+    ready: '새 버전이 준비됐어요.',
+    latest: '최신 버전이에요.',
+    error: '확인하지 못했어요',
+    unsupported: '',
+  };
+  async function renderUpdate(st) {
+    st = st || (await window.sai.updateStatus());
+    const box = $('#updateInfo');
+    box.textContent = '';
+    box.append(el('div', {}, '지금 버전 ', el('b', { text: st.version || st.current || '' })));
+    let line = UPDATE_TEXT[st.status] || '';
+    if (st.status === 'downloading') line += ` (${st.progress || 0}%) — ${st.latest}`;
+    if (st.status === 'ready') line = `새 버전 ${st.latest}이 준비됐어요.`;
+    if (st.status === 'error' || st.status === 'unsupported') line = `${line ? `${line}: ` : ''}${st.error || ''}`;
+    if (line) box.append(el('div', { class: st.status === 'error' ? 'err' : 'hint', text: line }));
+    $('#updateInstall').classList.toggle('hidden', st.status !== 'ready');
+  }
+  $('#updateCheck').addEventListener('click', async () => {
+    $('#updateInfo').textContent = '확인하는 중이에요…';
+    try {
+      await renderUpdate(await window.sai.updateCheck());
+    } catch (e) {
+      $('#updateInfo').textContent = errMsg(e);
+    }
+  });
+  $('#updateInstall').addEventListener('click', () => window.sai.updateInstall());
 
   // ---------- 설정 ----------
   const form = $('#settingsForm');
