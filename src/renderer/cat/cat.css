@@ -1,0 +1,139 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+}
+
+#cat {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+  cursor: grab;
+}
+
+#cat.dragging {
+  cursor: grabbing;
+}
+
+.bubble {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 104px;
+  background: #fffaf2;
+  color: #3b2f2f;
+  border: 2px solid #3b2f2f;
+  border-radius: 12px;
+  padding: 10px 12px 8px;
+  box-shadow: 3px 3px 0 rgba(59, 47, 47, 0.25);
+  font-size: 13px;
+  line-height: 1.5;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -9px;
+  left: 50%;
+  margin-left: -8px;
+  width: 14px;
+  height: 14px;
+  background: #fffaf2;
+  border-right: 2px solid #3b2f2f;
+  border-bottom: 2px solid #3b2f2f;
+  transform: rotate(45deg);
+}
+
+.bubble.hidden {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
+.bubble .text {
+  margin: 0 14px 4px 0;
+  word-break: keep-all;
+}
+
+.bubble .source {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: #8a7468;
+}
+
+.bubble .actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bubble button {
+  font: inherit;
+  font-size: 11px;
+  border: 1px solid #c9b5a6;
+  background: #fff;
+  color: #5a463e;
+  border-radius: 8px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.bubble button.primary {
+  background: #f2a65a;
+  border-color: #d6803a;
+  color: #3b2f2f;
+}
+
+.bubble button:hover {
+  filter: brightness(0.95);
+}
+
+.bubble .close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  padding: 0 4px;
+  color: #8a7468;
+}
+
+.zz {
+  position: absolute;
+  bottom: 70px;
+  left: calc(50% + 24px);
+  font-weight: bold;
+  color: #6b7fa8;
+  font-size: 14px;
+  animation: float 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.zz.hidden {
+  display: none;
+}
+
+@keyframes float {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.8);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(10px, -26px) scale(1.2);
+  }
+}
