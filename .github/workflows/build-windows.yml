@@ -72,12 +72,15 @@ jobs:
         if: steps.ver.outputs.publish != 'skip'
         shell: bash
         env:
-          GOOGLE_CLIENT_JSON: ${{ secrets.GOOGLE_CLIENT_JSON }}
+          # Secrets 탭에 넣었든 Variables 탭에 넣었든 읽는다
+          GOOGLE_CLIENT_JSON: ${{ secrets.GOOGLE_CLIENT_JSON || vars.GOOGLE_CLIENT_JSON }}
         run: |
           if [ -n "$GOOGLE_CLIENT_JSON" ]; then
             mkdir -p config
             printf '%s' "$GOOGLE_CLIENT_JSON" > config/google-client.json
-            echo "Google 연결 정보를 넣었어요."
+            node -e "const j=JSON.parse(require('fs').readFileSync('config/google-client.json','utf8')); if(!(j.clientId||j.client_id||(j.installed&&j.installed.client_id))) throw new Error('형식이 달라요')" \
+              && echo "Google 연결 정보를 넣었어요." \
+              || { echo "::error::GOOGLE_CLIENT_JSON 값의 형식이 JSON 이 아니에요. {\"clientId\":\"...\",\"clientSecret\":\"...\"} 형태로 넣어 주세요."; exit 1; }
           else
             echo "::warning::GOOGLE_CLIENT_JSON 시크릿이 없어요. 설치 후 설정에서 직접 넣어야 해요."
           fi
