@@ -1,6 +1,9 @@
 // 팀 백엔드가 지켜야 할 동작과 권한. 메모리 백엔드와 Firebase 에뮬레이터 양쪽에서 같은 검사를 돌린다.
 const assert = require('node:assert/strict');
 
+// 권한 규칙 때문에 거부됐을 때만 통과 (네트워크 오류 등 다른 실패로 통과하지 않도록)
+const denied = (fn) => assert.rejects(fn, (e) => e.status === 403 || (assert.fail(`권한 거부(403)가 아니라 다른 오류: ${e.message}`), false));
+
 /**
  * makeUsers(n) → n 개의 백엔드 인스턴스 (각각 다른 사용자, 같은 서버)
  */
@@ -18,7 +21,7 @@ function defineContract(test, makeUsers) {
 
   test('없는 참여 코드는 거절된다', async () => {
     const [a] = await makeUsers(1);
-    await assert.rejects(() => a.joinTeam({ joinCode: 'ZZZZZZ', displayName: 'x' }));
+    await assert.rejects(() => a.joinTeam({ joinCode: 'ZZZZZZ', displayName: 'x' }), /참여 코드를 찾을 수 없어요/);
   });
 
   test('조언 신호: 받는 사람만 목록으로 보고, 보낸 사람은 id 로 상태만 확인한다', async () => {
@@ -39,7 +42,7 @@ function defineContract(test, makeUsers) {
     await b.holdSignal(t.teamId, forB[0].id);
     assert.equal((await a.getSignal(t.teamId, id)).held, true);
     // 받는 사람이 아니면 보류할 수 없다
-    await assert.rejects(() => c.holdSignal(t.teamId, id));
+    await denied(() => c.holdSignal(t.teamId, id));
   });
 
   test('자기 자신이나 팀원이 아닌 사람에게는 신호를 보낼 수 없다', async () => {
@@ -47,15 +50,15 @@ function defineContract(test, makeUsers) {
     const t = await a.createTeam({ name: '팀', displayName: 'A' });
     const aUid = await a.signIn();
     const bUid = await b.signIn();
-    await assert.rejects(() => a.createSignal(t.teamId, { topic: 'workload', toMember: aUid, week: '2026-W46' }));
-    await assert.rejects(() => a.createSignal(t.teamId, { topic: 'workload', toMember: bUid, week: '2026-W46' }));
+    await denied(() => a.createSignal(t.teamId, { topic: 'workload', toMember: aUid, week: '2026-W46' }));
+    await denied(() => a.createSignal(t.teamId, { topic: 'workload', toMember: bUid, week: '2026-W46' }));
   });
 
   test('팀원이 아니면 팀 데이터를 볼 수 없다', async () => {
     const [a, outsider] = await makeUsers(2);
     const t = await a.createTeam({ name: '팀', displayName: 'A' });
-    await assert.rejects(() => outsider.listMembers(t.teamId));
-    await assert.rejects(() => outsider.listProposals(t.teamId));
+    await denied(() => outsider.listMembers(t.teamId));
+    await denied(() => outsider.listProposals(t.teamId));
   });
 
   test('팀 약속 제안과 각자의 응답', async () => {
@@ -76,7 +79,7 @@ function defineContract(test, makeUsers) {
     const t = await a.createTeam({ name: '팀', displayName: 'A' });
     await b.joinTeam({ joinCode: t.joinCode, displayName: 'B' });
     await b.leaveTeam(t.teamId);
-    await assert.rejects(() => b.listMembers(t.teamId));
+    await denied(() => b.listMembers(t.teamId));
     assert.equal((await a.listMembers(t.teamId)).length, 1);
   });
 
@@ -92,7 +95,7 @@ function defineContract(test, makeUsers) {
     const pb = profiles.find((p) => p.uid === bUid);
     assert.equal(pb.weeklyHours, 8);
     assert.deepEqual(pb.skills, { 디자인: 3 });
-    await assert.rejects(() => outsider.listProfiles(t.teamId));
+    await denied(() => outsider.listProfiles(t.teamId));
 
     const pid = await a.createProject(t.teamId, { title: '홍보 영상', goal: '1분 영상', deliverable: 'mp4', deadline: '2026-11-28' });
     const tid = await a.createTask(t.teamId, pid, {
@@ -100,7 +103,7 @@ function defineContract(test, makeUsers) {
       prep: [{ text: '로고 파일', done: false }], status: 'todo', assignee: bUid, accepted: false, objections: {},
     });
     // 다른 사람이 대신 수락할 수 없다
-    await assert.rejects(() => a.updateTask(t.teamId, pid, tid, { accepted: true }));
+    await denied(() => a.updateTask(t.teamId, pid, tid, { accepted: true }));
     await b.updateTask(t.teamId, pid, tid, { accepted: true });
     // 수락된 작업의 상태는 팀원 누구나 바꿀 수 있다 (예: 검토자가 완료 처리)
     await a.updateTask(t.teamId, pid, tid, { status: 'done' });
@@ -108,7 +111,7 @@ function defineContract(test, makeUsers) {
     assert.equal(task.status, 'done');
     assert.equal(task.accepted, true);
     assert.deepEqual(task.prep, [{ text: '로고 파일', done: false }]);
-    await assert.rejects(() => outsider.listTasks(t.teamId, pid));
+    await denied(() => outsider.listTasks(t.teamId, pid));
   });
 }
 

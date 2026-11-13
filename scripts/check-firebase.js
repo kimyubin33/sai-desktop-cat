@@ -54,16 +54,32 @@ const fail = (m, fix) => {
 
   // 4) 에뮬레이터용과 같은 동작·권한 검사를 실제 프로젝트에서
   console.log('\n  동작·권한 검사 (팀 만들기, 참여, 주제 신호, 보류, 팀 약속, 협업, 권한 거부) …\n');
-  const r = spawnSync(process.execPath, ['--test', path.join(__dirname, '..', 'test', 'backend-firebase.emulator.js')], {
+  // Node 22+ 는 --test 뒤의 경로를 패턴으로 읽어서, Windows 의 \ 경로는 파일을 못 찾는다.
+  // 저장소 폴더에서 / 로 쓴 상대 경로로 실행하고, TAP 형식으로 결과를 받는다.
+  const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap', 'test/backend-firebase.emulator.js'], {
+    cwd: path.join(__dirname, '..'),
     env: { ...process.env, SAI_FIREBASE_REAL: '1' },
     encoding: 'utf8',
   });
-  const out = r.stdout + r.stderr;
+  const out = (r.stdout || '') + (r.stderr || '');
+  let passed = 0;
+  let failed = 0;
   for (const line of out.split('\n')) {
     const m = /^(ok|not ok) \d+ - (.*)$/.exec(line.trim());
-    if (m) console.log(`  ${m[1] === 'ok' ? '✓' : '✗'} ${m[2]}`);
+    if (!m) continue;
+    if (m[1] === 'ok') passed++;
+    else failed++;
+    console.log(`  ${m[1] === 'ok' ? '✓' : '✗'} ${m[2]}`);
   }
-  if (r.status !== 0) {
+  // 검사가 하나도 돌지 않았다면 통과로 보지 않는다
+  if (passed + failed === 0) {
+    console.log('\n  ✗ 동작·권한 검사가 실행되지 않았어요. 아래 내용을 Claude 에게 그대로 보내 주세요.\n');
+    console.log(`  node ${process.version}, 종료 코드 ${r.status}${r.error ? `, ${r.error.message}` : ''}`);
+    console.log(out.slice(0, 2000));
+    process.exit(1);
+  }
+  console.log(`\n  ${passed}개 통과, ${failed}개 실패`);
+  if (r.status !== 0 || failed) {
     console.log('\n  일부 검사가 실패했어요. 아래 내용을 Claude 에게 그대로 보내 주세요.\n');
     console.log(out.split('\n').filter((l) => /not ok|error|expected|actual|Firestore|실패/.test(l)).slice(0, 40).join('\n'));
     process.exit(1);
