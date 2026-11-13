@@ -9,7 +9,10 @@ const emulator = {
   auth: host(process.env.FIREBASE_AUTH_EMULATOR_HOST, 'http://127.0.0.1:9099'),
   firestore: host(process.env.FIRESTORE_EMULATOR_HOST, 'http://127.0.0.1:8080'),
 };
-const config = { apiKey: 'demo-key', projectId: process.env.GCLOUD_PROJECT || 'demo-sai', emulator };
+// SAI_FIREBASE_REAL=1 이면 에뮬레이터 대신 앱에 들어 있는 실제 프로젝트에서 같은 검사를 한다 (scripts/check-firebase.js)
+const config = process.env.SAI_FIREBASE_REAL
+  ? require('../src/main/firebase-config').BUILTIN_FIREBASE
+  : { apiKey: 'demo-key', projectId: process.env.GCLOUD_PROJECT || 'demo-sai', emulator };
 
 defineContract(test, async (n) => Array.from({ length: n }, () => new FirebaseBackend({ config })));
 

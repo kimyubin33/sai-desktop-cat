@@ -11,7 +11,8 @@
     "test": "node --test test/*.test.js",
     "icons": "node scripts/make-icons.js",
     "dist:win": "electron-builder --win nsis portable",
-    "test:emulator": "firebase emulators:exec --project demo-sai --only auth,firestore \"node --test test/backend-firebase.emulator.js\""
+    "test:emulator": "firebase emulators:exec --project demo-sai --only auth,firestore \"node --test test/backend-firebase.emulator.js\"",
+    "check:firebase": "node scripts/check-firebase.js"
   },
   "devDependencies": {
     "electron": "^33.2.0",
