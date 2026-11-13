@@ -1,0 +1,61 @@
+# Windows 설치 파일 만들기
+# - Actions 탭 → "Windows 설치 파일" → Run workflow 로 직접 실행하거나, v0.6.0 같은 태그를 올리면 실행된다.
+# - 결과: 설치 파일(Sai-Setup-*.exe), 포터블(Sai-Portable-*.exe), zip
+#   · 직접 실행: 실행 화면 아래 Artifacts 에서 내려받기
+#   · 태그: Releases 에 자동으로 올라감
+# - Google 캘린더·할 일 연결 정보는 저장소에 없으므로, 저장소 Settings → Secrets and variables → Actions 에
+#   GOOGLE_CLIENT_JSON 이름으로 {"clientId":"...","clientSecret":"..."} 를 넣어 두면 설치 파일에 함께 들어간다.
+name: Windows 설치 파일
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Google 연결 정보 넣기 (있을 때만)
+        shell: bash
+        env:
+          GOOGLE_CLIENT_JSON: ${{ secrets.GOOGLE_CLIENT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_CLIENT_JSON" ]; then
+            mkdir -p config
+            printf '%s' "$GOOGLE_CLIENT_JSON" > config/google-client.json
+            echo "Google 연결 정보를 넣었어요."
+          else
+            echo "GOOGLE_CLIENT_JSON 시크릿이 없어요. 설치 후 설정에서 직접 넣어야 해요."
+          fi
+
+      # Windows 에서는 exe 아이콘·정보 편집을 켠다 (Linux 빌드에서는 Wine 이 없어 꺼 둠)
+      - run: npx electron-builder --win nsis portable zip --x64 -c.win.signAndEditExecutable=true --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sai-windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.zip
