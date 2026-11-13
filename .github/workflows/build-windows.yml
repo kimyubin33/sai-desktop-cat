@@ -94,6 +94,12 @@ jobs:
           cp target/release/sai.exe "dist/Sai-Portable-$v.exe"
           (cd dist && 7z a -tzip "Sai-$v-win-x64.zip" "Sai-Portable-$v.exe" >/dev/null)
           (cd dist && sha256sum Sai-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          # 예전(Electron, 0.7.x 이하) 사이의 자동 업데이트가 찾는 안내 파일 → 새 설치 파일로 넘어오게 한다
+          f="Sai-Setup-$v.exe"
+          sha=$(openssl dgst -sha512 -binary "dist/$f" | base64 -w0)
+          size=$(stat -c %s "dist/$f")
+          printf 'version: %s\nfiles:\n  - url: %s\n    sha512: %s\n    size: %s\npath: %s\nsha512: %s\nreleaseDate: '"'"'%s'"'"'\n' "$v" "$f" "$sha" "$size" "$f" "$sha" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > dist/latest.yml
+          cat dist/latest.yml
 
       - name: 릴리스 올리기
         if: steps.ver.outputs.publish == 'always'
