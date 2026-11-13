@@ -154,7 +154,7 @@ function createScheduleService({ stores, team, ai }) {
   }
 
   async function chat(text) {
-    text = String(text || '').trim().slice(0, 1000);
+    text = String(text || '').trim().slice(0, 20000);
     if (!text) throw new Error('하실 말을 적어 주세요.');
     await view();
     remember('user', text);

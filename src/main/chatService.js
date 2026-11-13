@@ -60,11 +60,28 @@ class ChatService {
     return { session: this.publicView(session), replies: polished };
   }
 
-  async send(id, text, skip = false) {
+  async send(id, text, skip = false, onText = null) {
     const session = this.find(id);
     if (!session) throw new Error('대화를 찾을 수 없어요.');
+    const before = session.turns.length;
     const result = handleUser(session, text, { skip });
-    const replies = result.safety ? result.replies : await this.polish(session, result.replies);
+    let replies;
+    if (result.safety) replies = result.replies;
+    else if (session.mode === 'free' && this.ai.hasKey()) {
+      // 자유 대화는 정해진 흐름 대신 Claude 와 그대로 이야기한다 (안전 확인은 위에서 먼저 한다)
+      const ruleTurns = session.turns.splice(before).filter((t) => t.role === 'user');
+      session.turns.push(...ruleTurns);
+      const answer = await this.ai.freeChat(session, onText || (() => {}));
+      if (answer) {
+        session.turns.push({ role: 'cat', text: answer, at: Date.now(), ai: true });
+        replies = [{ role: 'cat', text: answer, ai: true, streamed: !!onText }];
+      } else {
+        const fallback = result.replies.map((r) => ({ ...r }));
+        for (const r of fallback) session.turns.push({ role: 'cat', text: r.text, at: Date.now() });
+        const why = this.ai.lastError ? ` (AI 연결 오류: ${this.ai.lastError.slice(0, 120)})` : '';
+        replies = fallback.map((r, i) => (i === fallback.length - 1 ? { ...r, text: r.text + why } : r));
+      }
+    } else replies = await this.polish(session, result.replies);
     if (result.summary) {
       session.summary = await this.ai.enrichSummary(session, result.summary);
     }

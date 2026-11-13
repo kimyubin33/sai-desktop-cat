@@ -63,7 +63,7 @@
 
   function setBusy(on) {
     state.busy = on;
-    $('#sendBtn').disabled = on;
+    // 보내기 버튼은 막지 않는다 — 답을 기다리는 중에 보낸 말은 줄을 세워 두었다가 보낸다
     $('#skipBtn').disabled = on;
     $('#summarizeBtn').disabled = on;
   }
@@ -84,6 +84,7 @@
 
   async function startSchedule() {
     showTab('chat');
+    queue.length = 0;
     messages.textContent = '';
     schedCard = null;
     state.session = { id: 'schedule', mode: 'schedule', step: 'talk' };
@@ -110,11 +111,12 @@
     } finally {
       setBusy(false);
       input.focus();
+      drainQueue();
     }
   }
 
-  async function sendSchedule(text) {
-    addMsg('user', text);
+  async function sendSchedule(text, shown = false) {
+    if (!shown) addMsg('user', text);
     setBusy(true);
     const typing = addMsg('cat', '…', 'typing');
     try {
@@ -128,12 +130,14 @@
     } finally {
       setBusy(false);
       input.focus();
+      drainQueue();
     }
   }
   window.SaiChat = { startSchedule };
 
   async function startMode(mode, topic = null) {
     if (mode === 'schedule') return startSchedule();
+    queue.length = 0;
     messages.textContent = '';
     $('#modePicker').classList.add('hidden');
     $('#composer').classList.remove('hidden');
@@ -150,6 +154,7 @@
     } finally {
       setBusy(false);
       input.focus();
+      drainQueue();
     }
   }
 
@@ -160,28 +165,72 @@
     $('#summarizeBtn').classList.toggle('hidden', !guided);
   }
 
+  // 답을 기다리는 동안 보낸 말은 줄을 세워 두었다가 차례로 보낸다 (입력이 씹히지 않도록)
+  const queue = [];
+  let streamSeq = 0;
+  let streaming = null; // { id, bubble }
+  window.sai.onStream(({ streamId, text }) => {
+    if (!streaming || streaming.id !== streamId) return;
+    const b = streaming.bubble;
+    b.classList.remove('typing');
+    b.textContent = text;
+    state.talkingUntil = Date.now() + 600;
+    const nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 120;
+    if (nearBottom) messages.scrollTop = messages.scrollHeight;
+  });
+
   async function send({ skip = false } = {}) {
-    if (state.busy || !state.session) return;
+    if (!state.session) return;
     const text = input.value.trim();
     if (!text && !skip) return;
     input.value = '';
+    if (state.busy) {
+      if (text) {
+        queue.push(text);
+        addMsg('user', text, 'queued');
+      }
+      return;
+    }
     if (state.session.mode === 'schedule') return sendSchedule(text);
     if (text) addMsg('user', text);
+    return sendNow(text, skip);
+  }
+
+  async function sendNow(text, skip = false) {
     setBusy(true);
     const typing = addMsg('cat', '…', 'typing');
+    const streamId = `s${++streamSeq}`;
+    streaming = { id: streamId, bubble: typing };
     try {
-      const res = await window.sai.send({ id: state.session.id, text, skip });
-      typing.remove();
+      const res = await window.sai.send({ id: state.session.id, text, skip, streamId });
+      streaming = null;
       state.session = res.session;
-      res.replies.forEach((r) => addMsg('cat', r.text, r.safety ? 'safety' : ''));
+      if (res.replies.length === 1 && res.replies[0].streamed) {
+        typing.classList.remove('typing');
+        typing.textContent = res.replies[0].text;
+      } else {
+        typing.remove();
+        res.replies.forEach((r) => addMsg('cat', r.text, r.safety ? 'safety' : ''));
+      }
       if (res.summary) renderSummary(res.summary, state.session.id, messages);
       updateHelpers();
     } catch (e) {
-      typing.textContent = '답하지 못했어요: ' + e.message;
+      streaming = null;
+      typing.classList.remove('typing');
+      typing.textContent = '답하지 못했어요: ' + errMsg(e);
     } finally {
       setBusy(false);
       input.focus();
+      drainQueue();
     }
+  }
+
+  function drainQueue() {
+    if (state.busy || !queue.length || !state.session) return;
+    const next = queue.shift();
+    messages.querySelector('.msg.user.queued')?.classList.remove('queued');
+    if (state.session.mode === 'schedule') sendSchedule(next, true);
+    else sendNow(next);
   }
 
   $('#modePicker').addEventListener('click', (e) => {
@@ -829,7 +878,7 @@
 
   function updateEngine(s) {
     $('#catName').textContent = s.catName;
-    $('#engine').textContent = s.ai.enabled && s.hasApiKey ? 'AI 대화 사용 중' : '기본 상담 흐름';
+    $('#engine').textContent = s.hasApiKey ? 'Claude 연결됨' : '기본 상담 흐름';
   }
 
   form.addEventListener('submit', async (e) => {

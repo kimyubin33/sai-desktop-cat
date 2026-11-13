@@ -270,6 +270,39 @@ const SCENARIOS = {
     ];
   },
 
+  // 자유 대화: Claude 와 길게, 글자가 오는 대로 (API 대신 가짜 응답)
+  'free-chat'(ctx) {
+    const h = helpers(ctx);
+    const { encryptSecret } = require('./secret');
+    ctx.stores.settings.update((s) => (s.apiKeyEnc = encryptSecret('test-key')));
+    const long = Array.from({ length: 14 }, (_, i) => `${i + 1}. 이건 길게 이어지는 답의 ${i + 1}번째 문단이에요. 중간에 끊기지 않고 끝까지 나와야 해요.`).join('\n');
+    global.fetch = async () => {
+      const chunks = long.match(/.{1,12}/gs);
+      let i = 0;
+      const enc = new TextEncoder();
+      return {
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              await new Promise((r) => setTimeout(r, 60));
+              if (i < chunks.length) return { value: enc.encode(`data: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: chunks[i++] } })}\n\n`), done: false };
+              if (i++ === chunks.length) return { value: enc.encode(`data: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn' } })}\n\n`), done: false };
+              return { done: true };
+            },
+          }),
+        },
+      };
+    };
+    return [
+      { name: 'open', wait: 300, action: () => ctx.openChat('chat'), capture: false, window: h.w, settle: 1200 },
+      { name: 'start', wait: 300, action: h.js("__saiDemo.startMode('free')"), capture: false, window: h.w },
+      { name: 'streaming', wait: 300, action: h.js("__saiDemo.send('긴 답을 해 줄래요?'); setTimeout(() => __saiDemo.send('이건 기다리는 동안 보낸 말이에요'), 200)"), window: h.w, settle: 900 },
+      { name: 'done', wait: 4000, window: h.w, settle: 300 },
+      { name: 'queued-done', wait: 5000, window: h.w, settle: 300 },
+    ];
+  },
+
   // 내 작업 시간표: 맡은 작업을 캘린더 빈 시간에 배치하고, 대화로 고친다 (Google 대신 가짜 캘린더)
   schedule(ctx) {
     const h = helpers(ctx);

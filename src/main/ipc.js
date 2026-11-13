@@ -11,7 +11,16 @@ function registerChatIpc(ipcMain, { stores, chat, ai, chatWindow, onSettingsChan
     });
 
   handle('chat:start', (arg) => (typeof arg === 'string' ? chat.start(arg) : chat.start(arg.mode, arg.topic)));
-  handle('chat:send', ({ id, text, skip }) => chat.send(id, String(text || '').slice(0, 4000), !!skip));
+  // 답이 만들어지는 대로 대화창에 흘려 보낸다
+  ipcMain.handle('chat:send', (e, { id, text, skip, streamId } = {}) => {
+    if (!chatWindow.isOwn(e)) throw new Error('허용되지 않은 요청이에요.');
+    const onText = streamId
+      ? (full) => {
+          if (!e.sender.isDestroyed()) e.sender.send('chat:stream', { streamId, text: full });
+        }
+      : null;
+    return chat.send(id, String(text || '').slice(0, 50000), !!skip, onText);
+  });
   handle('chat:summarize-now', (id) => chat.summarizeNow(id));
   handle('chat:update-summary', ({ id, patch }) => chat.updateSummary(id, patch || {}));
   handle('chat:list', () => chat.list());

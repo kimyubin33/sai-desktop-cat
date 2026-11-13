@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('sai', {
   schedClearChat: invoke('sched:clear-chat'),
   onFocusTask: (fn) => ipcRenderer.on('chat:focus-task', (_e, id) => fn(id)),
 
+  onStream: (fn) => ipcRenderer.on('chat:stream', (_e, d) => fn(d)),
   onShowTab: (fn) => ipcRenderer.on('chat:show-tab', (_e, tab) => fn(tab)),
   onStartExplain: (fn) => ipcRenderer.on('chat:start-explain', (_e, topic) => fn(topic)),
 });

@@ -901,3 +901,5 @@ select.team-pick {
 .busy { opacity: 0.6; pointer-events: none; }
 .msg-card { align-self: stretch; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .sched.compact .sched-time { min-width: 84px; }
+.msg.user.queued { opacity: 0.55; }
+.msg { overflow-wrap: anywhere; }
