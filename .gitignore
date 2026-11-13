@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# 저장소에 올리지 않는 로컬 설정 (Google OAuth 클라이언트 등)
+config/*.json

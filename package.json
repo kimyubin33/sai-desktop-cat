@@ -24,7 +24,8 @@
     "files": [
       "src/**/*",
       "assets/**/*",
-      "package.json"
+      "package.json",
+      "config/google-client.json"
     ],
     "win": {
       "icon": "assets/icon.png",
