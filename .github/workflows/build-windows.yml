@@ -1,4 +1,5 @@
 # Windows 설치 파일 만들기 · 새 버전 배포 (Tauri + Rust)
+# (Cargo.toml 이나 이 파일이 바뀐 push 에서만 돈다)
 #
 # 새 버전을 배포하는 방법 (설치된 사이가 자동으로 업데이트됨)
 #   1) Cargo.toml 의 [workspace.package] version 을 올려서 main 에 push 한다 (예: 0.8.0 → 0.8.1)
