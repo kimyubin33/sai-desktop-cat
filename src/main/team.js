@@ -5,6 +5,7 @@ const { FirebaseBackend, parseFirebaseConfig } = require('../core/team/firebase-
 const { MemoryBackend } = require('../core/team/memory-backend');
 const { randomCode } = require('../core/team/firebase-backend');
 const { encryptSecret, decryptJson } = require('./secret');
+const { BUILTIN_FIREBASE } = require('./firebase-config');
 
 const SYNC_MS = 5 * 60 * 1000;
 
@@ -17,7 +18,7 @@ function createTeamService({ stores, onChange = () => {} }) {
       if (!settings.get().localUid) settings.update((s) => (s.localUid = `local-${randomCode(10).toLowerCase()}`));
       return new MemoryBackend({ file: process.env.SAI_TEAM_FILE, uid: settings.get().localUid });
     }
-    const cfg = settings.get().firebase;
+    const cfg = settings.get().firebase || BUILTIN_FIREBASE;
     if (!cfg || !cfg.apiKey || !cfg.projectId) return null;
     const emulator = process.env.SAI_FIREBASE_EMULATOR
       ? { auth: 'http://127.0.0.1:9099', firestore: 'http://127.0.0.1:8080' }
@@ -85,7 +86,7 @@ function createTeamService({ stores, onChange = () => {} }) {
 
   function status() {
     const s = sync.status();
-    const cfg = settings.get().firebase;
+    const cfg = settings.get().firebase || BUILTIN_FIREBASE;
     return {
       ...s,
       configured: !!process.env.SAI_TEAM_FILE || !!(cfg && cfg.apiKey),
