@@ -1,67 +1,17 @@
 {
   "name": "sai-desktop-cat",
-  "version": "0.7.1",
-  "description": "사이 — 바탕화면을 돌아다니며 조언하고, 팀의 고민을 행동 조언으로 정리하는 고양이 협업 도우미",
-  "main": "src/main/main.js",
-  "author": "kimyubin33",
-  "license": "UNLICENSED",
   "private": true,
+  "description": "사이 — 바탕화면 고양이 협업 도우미 (Tauri + Rust). 이 파일은 빌드 도구(Tauri CLI)용이에요.",
+  "license": "UNLICENSED",
   "scripts": {
-    "start": "electron .",
-    "test": "node --test test/*.test.js",
-    "icons": "node scripts/make-icons.js",
-    "dist:win": "electron-builder --win nsis portable --x64",
-    "test:emulator": "firebase emulators:exec --project demo-sai --only auth,firestore \"node --test test/backend-firebase.emulator.js\"",
-    "check:firebase": "node scripts/check-firebase.js",
-    "dist:win-zip": "electron-builder --win zip --x64"
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icons": "tauri icon assets/icon.png -o src-tauri/icons",
+    "test": "cargo test --workspace",
+    "check:firebase": "cargo test -p sai-core --test firebase_real -- --ignored --nocapture"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
-  },
-  "build": {
-    "appId": "com.kimyubin33.sai",
-    "productName": "사이",
-    "files": [
-      "src/**/*",
-      "assets/**/*",
-      "package.json",
-      "config/google-client.json"
-    ],
-    "win": {
-      "icon": "assets/icon.png",
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "signAndEditExecutable": false,
-      "artifactName": "Sai-${version}-win-${arch}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "perMachine": false,
-      "artifactName": "Sai-Setup-${version}.${ext}",
-      "shortcutName": "사이",
-      "uninstallDisplayName": "사이",
-      "include": "build/installer.nsh"
-    },
-    "portable": {
-      "artifactName": "Sai-Portable-${version}.${ext}"
-    },
-    "directories": {
-      "output": "dist"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "kimyubin33",
-        "repo": "sai-desktop-cat",
-        "releaseType": "release"
-      }
-    ]
-  },
-  "dependencies": {
-    "electron-updater": "^6.8.11"
+    "@tauri-apps/cli": "2.12.4"
   }
 }

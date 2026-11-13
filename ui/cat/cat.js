@@ -55,18 +55,8 @@
     currentBubble = null;
   });
 
-  // 투명한 부분은 클릭이 아래 창으로 통과하고, 고양이와 말풍선 위에서만 마우스를 받는다
-  function interactiveWhileHover(el) {
-    el.addEventListener('mouseenter', () => window.cat.setInteractive(true));
-    el.addEventListener('mouseleave', () => {
-      if (state !== 'drag') window.cat.setInteractive(false);
-    });
-  }
-  interactiveWhileHover(bubble);
-
-  // 고양이 그림은 캔버스의 일부일 뿐이라, 캔버스 전체가 아니라 그려진 픽셀 위에서만 마우스를 받는다.
-  // (캔버스 전체로 받으면 고양이 근처의 다른 창을 눌러도 첫 클릭이 고양이 창에 먹힌다)
-  let overCat = false;
+  // 투명한 부분은 클릭이 아래 창으로 통과하고, 고양이 그림과 말풍선 위에서만 마우스를 받는다.
+  // 마우스가 그 위에 있는지는 앱이 판단하므로, 여기서는 "마우스를 받을 영역"만 알려 준다.
   const ctx2d = canvas.getContext('2d', { willReadFrequently: true });
   function hitCat(e) {
     const r = canvas.getBoundingClientRect();
@@ -79,14 +69,45 @@
     for (let i = 3; i < d.length; i += 4) if (d[i] > 30) return true;
     return false;
   }
-  function setOver(on) {
-    if (on === overCat) return;
-    overCat = on;
-    if (on) window.cat.setInteractive(true);
-    else if (state !== 'drag') window.cat.setInteractive(false);
+  /** 캔버스에서 그려진 픽셀이 있는 가로줄 묶음 → 창 기준 사각형 몇 개 */
+  function catRects() {
+    const w = canvas.width;
+    const h = canvas.height;
+    const data = ctx2d.getImageData(0, 0, w, h).data;
+    const r = canvas.getBoundingClientRect();
+    const sx = r.width / w;
+    const sy = r.height / h;
+    const rects = [];
+    const BAND = 8;
+    for (let y0 = 0; y0 < h; y0 += BAND) {
+      let minX = w;
+      let maxX = -1;
+      for (let y = y0; y < Math.min(h, y0 + BAND); y++) {
+        for (let x = 0; x < w; x++) {
+          if (data[(y * w + x) * 4 + 3] > 30) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+      }
+      if (maxX >= 0) rects.push({ x: r.left + (minX - 2) * sx, y: r.top + y0 * sy, w: (maxX - minX + 5) * sx, h: BAND * sy });
+    }
+    return rects;
   }
-  canvas.addEventListener('mousemove', (e) => setOver(hitCat(e)));
-  canvas.addEventListener('mouseleave', () => setOver(false));
+  let lastRegions = '';
+  function reportRegions() {
+    const list = catRects();
+    if (!bubble.classList.contains('hidden')) {
+      const b = bubble.getBoundingClientRect();
+      list.push({ x: b.left, y: b.top, w: b.width, h: b.height });
+    }
+    const key = JSON.stringify(list.map((q) => [Math.round(q.x), Math.round(q.y), Math.round(q.w), Math.round(q.h)]));
+    if (key === lastRegions) return;
+    lastRegions = key;
+    window.cat.regions(list);
+  }
+  setInterval(reportRegions, 150);
+  window.cat.ready();
 
   bubble.addEventListener('mouseenter', () => window.cat.bubbleHover(true));
   bubble.addEventListener('mouseleave', () => window.cat.bubbleHover(false));

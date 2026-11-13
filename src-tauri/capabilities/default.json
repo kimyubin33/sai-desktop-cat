@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "고양이 창과 대화창이 쓰는 권한: 앱 명령 호출과 이벤트 받기만",
+  "windows": ["cat", "chat"],
+  "permissions": ["core:event:default"]
+}

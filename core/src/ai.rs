@@ -16,6 +16,11 @@ use std::time::Duration;
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
+/// 시험할 때만 다른 주소로 (SAI_ANTHROPIC_URL)
+fn api_url() -> String {
+    std::env::var("SAI_ANTHROPIC_URL").unwrap_or_else(|_| API_URL.to_string())
+}
+
 const PERSONA: &str = "당신은 팀원 각자의 바탕화면에 사는 고양이 \"{name}\"입니다. 지금은 한 사용자와 단둘이 비공개로 이야기하고 있습니다.
 지켜야 할 원칙:
 - 항상 부드러운 존댓말로 말하고, 질문은 한 번에 하나만 합니다. 보통은 짧게 말하되 필요하면 충분히 설명해도 됩니다.
@@ -47,7 +52,7 @@ pub struct Ai {
 
 async fn post(api_key: &str, body: &Value, timeout: Duration) -> Result<reqwest::Response> {
     let res = client()
-        .post(API_URL)
+        .post(api_url())
         .timeout(timeout)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
@@ -90,7 +95,8 @@ pub async fn stream(api_key: &str, model: &str, system: &str, messages: &[Value]
         let body = json!({ "model": model, "max_tokens": 8192, "system": system, "messages": msgs, "stream": true });
         let res = post(api_key, &body, Duration::from_secs(60 * 30)).await?;
         let mut s = res.bytes_stream();
-        let mut buf = String::new();
+        // 글자(UTF-8)가 조각 사이에서 잘릴 수 있으므로, 줄이 끝날 때까지 바이트로 모은다
+        let mut buf: Vec<u8> = Vec::new();
         let mut stop: Option<String> = None;
         loop {
             let next = tokio::time::timeout(Duration::from_secs(60), s.next()).await;
@@ -105,10 +111,10 @@ pub async fn stream(api_key: &str, model: &str, system: &str, messages: &[Value]
                 Ok(Some(Err(e))) => return err(format!("AI 응답을 받다가 끊겼어요: {e}")),
                 Ok(Some(Ok(c))) => c,
             };
-            buf.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(i) = buf.find('\n') {
-                let line = buf[..i].trim().to_string();
-                buf = buf[i + 1..].to_string();
+            buf.extend_from_slice(&chunk);
+            while let Some(i) = buf.iter().position(|b| *b == b'\n') {
+                let line_bytes: Vec<u8> = buf.drain(..=i).collect();
+                let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
                 let Some(data) = line.strip_prefix("data:") else { continue };
                 let Ok(ev) = serde_json::from_str::<Value>(data.trim()) else { continue };
                 match ev.s("type").as_str() {
@@ -281,5 +287,47 @@ impl Ai {
         m["topics"] = json!(topics);
         self.set_err(None);
         m
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// SSE 를 조각내 보내고, 첫 응답은 max_tokens 에서 끊는다 → 이어 쓰기까지 합쳐져야 한다
+    #[tokio::test]
+    async fn stream_joins_continuation() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::env::set_var("SAI_ANTHROPIC_URL", format!("http://127.0.0.1:{port}/v1/messages"));
+        let server = tokio::spawn(async move {
+            for round in 0..2 {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 65536];
+                let n = sock.read(&mut buf).await.unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                if round == 1 {
+                    assert!(req.contains("\"assistant\""), "이어 쓰기 요청에 앞부분이 있어야 해요");
+                }
+                let ev = |t: &str| format!("event: x\ndata: {}\n\n", serde_json::json!({ "type": "content_block_delta", "delta": { "type": "text_delta", "text": t } }));
+                let (body, stop) = if round == 0 { (ev("안녕하세요, ") + &ev("긴 답의 앞부분"), "max_tokens") } else { (ev(" 이어지는 뒷부분이에요."), "end_turn") };
+                let body = body + &format!("data: {}\n\n", serde_json::json!({ "type": "message_delta", "delta": { "stop_reason": stop } }));
+                let head = format!("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len());
+                sock.write_all(head.as_bytes()).await.unwrap();
+                let bytes = body.as_bytes();
+                // 일부러 잘게 나눠 보낸다
+                for chunk in bytes.chunks(37) {
+                    sock.write_all(chunk).await.unwrap();
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                }
+            }
+        });
+        let seen = std::sync::Mutex::new(0usize);
+        let cb = |_: &str| *seen.lock().unwrap() += 1;
+        let out = stream("k", "m", "s", &[json!({ "role": "user", "content": "hi" })], &cb).await.unwrap();
+        server.await.unwrap();
+        assert_eq!(out, "안녕하세요, 긴 답의 앞부분 이어지는 뒷부분이에요.");
+        assert!(*seen.lock().unwrap() >= 3);
     }
 }

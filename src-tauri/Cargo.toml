@@ -1,0 +1,28 @@
+[package]
+name = "sai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "사이 — 바탕화면을 돌아다니며 조언하고, 팀의 고민을 행동 조언으로 정리하는 고양이 협업 도우미"
+default-run = "sai"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+sai-core = { path = "../core" }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs"] }
+open = "5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures-util = "0.3"
+sha2 = "0.10"
+semver = "1"
+rand = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation"] }

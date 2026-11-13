@@ -1,11 +1,10 @@
-# Windows 설치 파일 만들기 · 새 버전 배포
+# Windows 설치 파일 만들기 · 새 버전 배포 (Tauri + Rust)
 #
 # 새 버전을 배포하는 방법 (설치된 사이가 자동으로 업데이트됨)
-#   1) package.json 의 "version" 을 올려서 main 에 push 한다 (예: 0.6.0 → 0.6.1)
-#      (또는 같은 번호의 태그 v0.6.1 을 push 해도 된다)
-#   2) 이 작업이 그 버전이 아직 Releases 에 없으면 Windows 에서 설치 파일을 만들어 올린다 (약 10분)
+#   1) Cargo.toml 의 [workspace.package] version 을 올려서 main 에 push 한다 (예: 0.8.0 → 0.8.1)
+#   2) 이 작업이 그 버전이 아직 Releases 에 없으면 Windows 에서 테스트·실제 Firebase 점검 뒤 설치 파일을 만들어 올린다
 #      이미 있는 버전이면 아무것도 하지 않는다
-#   3) 설치된 사이는 켤 때와 3시간마다 확인해서 받아 두고, 고양이가 적용할지 묻는다
+#   3) 설치된 사이는 켤 때와 3시간마다 확인해서 받아 두고(SHA256SUMS.txt 로 확인), 고양이가 적용할지 묻는다
 #
 # Actions 탭 → "Windows 설치 파일" → Run workflow 로 직접 실행하면 배포 없이 파일만 만든다 (Artifacts 에서 받기).
 #
@@ -17,8 +16,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['package.json', '.github/workflows/build-windows.yml']
-    tags: ['v*']
+    paths: ['Cargo.toml', '.github/workflows/build-windows.yml']
 
 permissions:
   contents: write
@@ -29,14 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # main 에 push 된 경우: 이 버전이 이미 Releases 에 있으면 만들지 않는다
       - name: 배포할 버전인지 확인
         id: ver
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          v=$(node -p "require('./package.json').version")
+          v=$(grep -m1 -E '^version = "' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
           echo "version=$v" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then echo "publish=never" >> "$GITHUB_OUTPUT"; exit 0; fi
           if gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -53,26 +50,23 @@ jobs:
           cache: npm
 
       - if: steps.ver.outputs.publish != 'skip'
-        run: npm ci
+        uses: Swatinem/rust-cache@v2
 
       - if: steps.ver.outputs.publish != 'skip'
-        run: npm test
+        run: npm ci
 
-      - name: 태그와 package.json 버전이 같은지 확인
-        if: startsWith(github.ref, 'refs/tags/v') && steps.ver.outputs.publish != 'skip'
-        shell: bash
-        run: |
-          v=$(node -p "require('./package.json').version")
-          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then
-            echo "태그(${GITHUB_REF_NAME})와 package.json 버전(v$v)이 달라요. 버전을 맞춘 뒤 다시 태그를 올려 주세요."
-            exit 1
-          fi
+      - name: 테스트
+        if: steps.ver.outputs.publish != 'skip'
+        run: cargo test --workspace
+
+      - name: 실제 Firebase 점검 (팀 만들기·참여·권한 규칙)
+        if: steps.ver.outputs.publish != 'skip'
+        run: cargo test -p sai-core --test firebase_real -- --ignored --nocapture
 
       - name: Google 연결 정보 넣기 (있을 때만)
         if: steps.ver.outputs.publish != 'skip'
         shell: bash
         env:
-          # Secrets 탭에 넣었든 Variables 탭에 넣었든 읽는다
           GOOGLE_CLIENT_JSON: ${{ secrets.GOOGLE_CLIENT_JSON || vars.GOOGLE_CLIENT_JSON }}
         run: |
           if [ -n "$GOOGLE_CLIENT_JSON" ]; then
@@ -80,36 +74,39 @@ jobs:
             printf '%s' "$GOOGLE_CLIENT_JSON" > config/google-client.json
             node -e "const j=JSON.parse(require('fs').readFileSync('config/google-client.json','utf8')); if(!(j.clientId||j.client_id||(j.installed&&j.installed.client_id))) throw new Error('형식이 달라요')" \
               && echo "Google 연결 정보를 넣었어요." \
-              || { echo "::error::GOOGLE_CLIENT_JSON 값의 형식이 JSON 이 아니에요. {\"clientId\":\"...\",\"clientSecret\":\"...\"} 형태로 넣어 주세요."; exit 1; }
+              || { echo "::error::GOOGLE_CLIENT_JSON 값의 형식이 JSON 이 아니에요."; exit 1; }
           else
             echo "::warning::GOOGLE_CLIENT_JSON 시크릿이 없어요. 설치 후 설정에서 직접 넣어야 해요."
           fi
 
-      # Windows 에서는 exe 아이콘·정보 편집을 켠다 (Linux 빌드에서는 Wine 이 없어 꺼 둠)
-      # 태그면 GitHub Releases 에 올리고(자동 업데이트용 latest.yml 포함), 직접 실행이면 파일만 만든다
       - name: 만들기
         if: steps.ver.outputs.publish != 'skip'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis portable zip --x64 -c.win.signAndEditExecutable=true --publish ${{ steps.ver.outputs.publish }}
+        run: npx tauri build --bundles nsis
 
-      # 초안(Draft)으로 남으면 팀원 앱이 업데이트로 보지 못하므로, 공개 상태와 "최신" 표시를 확실히 한다
-      - name: 릴리스 공개
+      - name: 배포 파일 모으기
+        if: steps.ver.outputs.publish != 'skip'
+        shell: bash
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          mkdir -p dist
+          cp target/release/bundle/nsis/*-setup.exe "dist/Sai-Setup-$v.exe"
+          cp target/release/sai.exe "dist/Sai-Portable-$v.exe"
+          (cd dist && 7z a -tzip "Sai-$v-win-x64.zip" "Sai-Portable-$v.exe" >/dev/null)
+          (cd dist && sha256sum Sai-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: 릴리스 올리기
         if: steps.ver.outputs.publish == 'always'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           v="v${{ steps.ver.outputs.version }}"
-          gh release edit "$v" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release create "$v" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "사이 $v" --latest \
+            --notes "Windows 설치 파일: Sai-Setup-${{ steps.ver.outputs.version }}.exe (설치 없이 쓰려면 Sai-Portable). 설치된 사이는 자동으로 업데이트를 받아요."
           gh release view "$v" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,assets --jq '"\(.tagName) draft=\(.isDraft) files=\([.assets[].name] | join(", "))"'
 
       - if: steps.ver.outputs.publish != 'skip'
         uses: actions/upload-artifact@v4
         with:
           name: sai-windows
-          path: |
-            dist/*.exe
-            dist/*.zip
-            dist/latest.yml
+          path: dist/*

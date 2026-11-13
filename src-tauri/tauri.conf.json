@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "사이",
+  "mainBinaryName": "sai",
+  "identifier": "com.kimyubin33.sai",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.png"],
+    "shortDescription": "고양이 협업 도우미",
+    "longDescription": "바탕화면을 돌아다니며 조언하고, 팀의 고민을 행동 조언으로 정리하는 고양이 협업 도우미",
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Korean"],
+        "displayLanguageSelector": false,
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    }
+  }
+}

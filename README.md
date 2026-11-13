@@ -4,28 +4,35 @@
 
 개발 방향은 [docs/development-direction.md](docs/development-direction.md)를 따릅니다. 이 저장소는 그 문서의 **1~5단계**(경험 시제품, 개인 대화, 소규모 팀 연결, 협업 기능, 외부 연결)를 구현한 상태입니다. 팀 연결은 Firebase를 쓰며 설정 방법은 [docs/firebase-setup.md](docs/firebase-setup.md), Telegram·Google 연결은 [docs/integrations-setup.md](docs/integrations-setup.md)에 있습니다.
 
+## 기술 구성
+
+**Tauri 2 + Rust**로 만듭니다. 팀 동기화·상담 흐름·배분·시간표·Google·Telegram·AI·저장·업데이트 같은 로직은 모두 Rust(`core/`, `src-tauri/`)이고, 화면(`ui/`)만 HTML·CSS와 화면을 그리는 짧은 JS입니다. 설치 파일이 작고(수 MB) 메모리를 적게 씁니다. Windows 10·11에 기본으로 들어 있는 WebView2로 화면을 그립니다.
+
 ## 실행
 
+Rust(rustup)와 Node.js(빌드 도구용)가 필요합니다.
+
 ```bash
-npm install
-npm start        # 개발 실행
-npm test         # 핵심 로직 테스트 (Electron 없이 Node만으로 실행)
-npm run test:emulator  # Firebase 에뮬레이터에서 REST 호출과 보안 규칙 검사 (Java, firebase-tools 필요)
-npm run dist:win # Windows 설치 파일·포터블 exe 만들기 (Windows에서 실행 권장)
+npm install          # Tauri 빌드 도구 설치
+npm run dev          # 개발 실행
+npm test             # 핵심 로직 테스트 (cargo test --workspace)
+npm run check:firebase  # 실제 Firebase 에서 팀 기능·권한 규칙 점검 (인터넷 필요)
+npm run build        # 설치 파일 만들기 (Windows 에서)
 ```
 
 ### 팀원에게 나눠 주기 · 새 버전 배포 (자동 업데이트)
 
-- 팀원은 [Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)의 `Sai-Setup-x.y.z.exe`를 한 번 설치하면 됩니다. Node.js는 필요 없습니다.
-- 설치된 사이는 켤 때와 3시간마다 새 버전을 확인합니다. 새 버전이 있으면 받아 두고, 고양이가 "지금 적용"할지 묻습니다. "나중에"를 고르면 프로그램을 끌 때 적용됩니다.
-- zip 버전으로 쓰던 사람도 업데이트를 적용하면 설치 버전으로 바뀝니다. 그 뒤로는 시작 메뉴의 "사이"를 쓰면 됩니다.
+- 팀원은 [Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)의 `Sai-Setup-x.y.z.exe`를 한 번 설치하면 됩니다. 설치 없이 쓰려면 `Sai-Portable-x.y.z.exe` 하나만 실행해도 됩니다.
+- 설치된 사이는 켤 때와 3시간마다 새 버전을 확인합니다. 새 버전이 있으면 받아서 `SHA256SUMS.txt`로 확인해 두고, 고양이가 "지금 적용"할지 묻습니다. "나중에"를 고르면 프로그램을 끌 때 적용됩니다.
+- 포터블로 쓰던 사람이 업데이트를 적용하면 설치 화면이 떠서 설치 버전으로 바뀝니다.
+- 0.7.x 이하(Electron 버전)를 쓰던 사람은 새 설치 파일을 한 번 설치하고, 예전 사이는 "앱 및 기능"에서 지워 주세요. 팀·프로젝트·작업은 서버에 있어서 그대로이고, 이 컴퓨터의 설정·로그인은 다시 해야 합니다.
 
 새 버전을 배포하는 방법:
 
-1. `package.json`의 `"version"`을 올립니다 (예: 0.6.0 → 0.6.1).
+1. `Cargo.toml`의 `[workspace.package]` `version`을 올립니다 (예: 0.8.0 → 0.8.1).
 2. 커밋해서 `main`에 push 합니다.
 
-그러면 GitHub Actions가 그 버전이 아직 Releases에 없는지 확인합니다. 없으면 Windows에서 설치 파일을 만들어 Releases에 올립니다 (약 10분). 이미 배포된 버전이면 아무것도 하지 않습니다. 같은 번호의 태그(`v0.6.1`)를 올려도 됩니다.
+그러면 GitHub Actions가 Windows에서 테스트와 실제 Firebase 점검을 한 뒤 설치 파일을 만들어 Releases에 올립니다. 이미 배포된 버전이면 아무것도 하지 않습니다.
 Google 연결 정보가 설치 파일에 들어가도록 저장소 **Settings → Secrets and variables → Actions**에 `GOOGLE_CLIENT_JSON` 시크릿을 넣어 두세요 (형식은 `config/README.md`).
 
 Windows를 우선 대상으로 만들었고, macOS·Linux에서도 실행됩니다 (Linux는 투명 부분 클릭 통과가 제한될 수 있음).
@@ -106,49 +113,37 @@ Windows를 우선 대상으로 만들었고, macOS·Linux에서도 실행됩니�
 - 각 연결의 상태, 마지막 결과, 오류를 설정 화면에 그대로 보여 줍니다.
 
 **AI (선택)**
-- 설정에서 Claude API 키를 넣으면 사이의 말이 대화 맥락에 맞게 다듬어지고, 정리 카드가 보강됩니다. 키는 운영체제 보안 저장소(Electron safeStorage)로 암호화해 저장합니다.
+- 설정에서 Claude API 키를 넣으면 사이의 말이 대화 맥락에 맞게 다듬어지고, 정리 카드가 보강됩니다. 키는 Windows 보안 저장소(DPAPI, 내 계정으로만 풀 수 있음)로 암호화해 저장합니다.
 - 키가 없거나 호출이 실패해도 규칙 기반 상담 흐름이 그대로 동작합니다. 대화 단계, 안전 확인, 공유 범위 결정은 항상 앱 규칙이 맡고 AI는 문장과 정리 품질만 돕습니다.
 - 키를 쓰면 대화 내용이 Anthropic API로 전송된다는 점을 설정 화면에 표시합니다.
 
 ## 구조
 
 ```
-src/
-  core/        Electron 없이 테스트 가능한 로직
-    behavior.js         고양이 행동 상태 기계
-    advice-library.js   조언 모음 (출처 구분)
-    advice-scheduler.js 말 걸 때·고를 말·조용한 시간
-    topics.js           일반 주제, 행동 요청, 확인할 점, 민감 단서
-    language.js         욕설·평가 감지, 감정 감지, 행동 표현으로 바꾸기
-    safety.js           위험 신호 감지와 안내
-    counseling.js       상담 대화 흐름과 정리 카드
-    privacy.js          공유 항목 만들기, 원문 유출 검사
-    collab/
-      planner.js           배분 제안·배정 이유·마감 점검
-      progress.js          진행 확인 말 고르기
-      collab-sync.js       자기소개·프로젝트·작업 동기화
-    notify/
-      telegram.js          Telegram 봇 API, 보낼 수 있는 알림 문안
-      notifier.js          봇 등록·채팅 연결·누구에게 무엇을 보낼지
-    google/
-      oauth.js             데스크톱 OAuth (PKCE·루프백)
-      calendar.js          바쁜 시간·빈 시간·작업 시간 잡기
-      tasks.js             할 일 양방향 동기화
-    team/
-      firebase-backend.js  Firebase 익명 로그인 + Firestore REST
-      memory-backend.js    같은 인터페이스의 시험용 백엔드 (테스트·로컬 시험 모드)
-      team-sync.js         지연 전송, 받은 주제, 보류, 팀 약속
-      team-hub.js          여러 팀: 팀별 연결·저장, 모든 팀을 함께 보는 말풍선 창구
-  main/        Electron 메인 프로세스 (창, 트레이, 저장, IPC, AI, 팀)
-  preload/     렌더러에 열어 주는 최소 API
-  renderer/    고양이 창, 대화창
-test/                 핵심 로직·팀 동기화·REST 형식·백엔드 계약 테스트
+core/                 sai-core: 창·화면과 무관한 로직 (cargo test 로 시험)
+  src/
+    behavior.rs         고양이 행동 상태 기계
+    advice.rs           조언 모음(출처 구분), 말 걸 때·고를 말·조용한 시간
+    topics.rs           일반 주제, 행동 요청, 확인할 점, 민감 단서
+    language.rs         욕설·평가 감지, 감정 감지, 행동 표현으로 바꾸기
+    safety.rs           위험 신호 감지와 안내
+    counseling.rs       상담 대화 흐름과 정리 카드
+    privacy.rs          공유 항목 만들기, 원문 유출 검사
+    chat.rs             대화 세션 (이 기기에만 저장)
+    ai.rs               Claude API (자유 대화 스트리밍, 문장 다듬기, 정리 보강, 도구 호출)
+    team/               Firebase 익명 로그인 + Firestore REST, 시험용 저장소, 여러 팀·지연 전송·팀 약속
+    collab/             배분 제안·배정 이유·마감 점검, 진행 확인, 자기소개·프로젝트·작업
+    notify.rs           Telegram 봇·채팅 연결·업무 알림
+    google/             데스크톱 OAuth(PKCE·루프백), 캘린더 바쁜 시간, 할 일 동기화
+    schedule/           한국어 날짜·시간 읽기, 시간 블록 배치, 시간표 수정·캘린더 반영, 말로 고치기
+  tests/firebase_real.rs  실제 Firebase 점검
+src-tauri/            앱: 고양이 창(클릭 통과·이동), 대화창, 트레이 메뉴, 말풍선 조언, 화면 연결, 업데이트, 시작 프로그램
+ui/                   화면: 고양이 창, 대화창 (bridge.js 가 앱과 연결)
 firestore.rules       Firestore 보안 규칙
-docs/development-direction.md
-docs/firebase-setup.md
+docs/
 ```
 
-개발용: `SAI_SNAPSHOT_DIR=폴더 npm start` 로 실행하면 고양이 상태와 대화 흐름을 차례로 캡처해 PNG로 저장하고 종료합니다. `SAI_SNAPSHOT_SCENARIO`로 팀 흐름(team-create, team-join, team-share, team-receive, team-review)과 협업 흐름(collab-setup, collab-profile, collab-plan, collab-nudge)도 재현할 수 있습니다.
+개발용: `SAI_DEMO=team|chat|cat` 으로 실행하면 정해진 동작을 차례로 실행합니다 (화면 확인용). `SAI_TEAM_FILE=파일` 을 주면 서버 대신 그 파일을 팀 저장소로 써서 한 컴퓨터에서 팀처럼 시험할 수 있습니다.
 
 ## 개발 방향 문서 11장 확인 기준 대비
 
@@ -179,7 +174,7 @@ docs/firebase-setup.md
 
 ## 알려진 한계
 
-- 팀 연결(3~4단계)은 실제 Firebase 프로젝트 `saigajoa`에서 `npm run check:firebase`로 동작과 권한 규칙을 확인했습니다 (2026-11-14, 9개 검사 통과). Windows 실기기에서 고양이 창의 투명 부분 클릭 통과는 아직 따로 확인하지 않았습니다.
+- 팀 연결은 배포할 때마다 GitHub Actions 에서 실제 Firebase 프로젝트 `saigajoa`로 동작과 권한 규칙을 점검합니다 (`npm run check:firebase`). Windows 실기기에서 고양이 창의 투명 부분 클릭 통과는 아직 따로 확인하지 않았습니다.
 - 오래된 주제 문서는 자동으로 지우지 않습니다.
 - Google 캘린더·할 일 연동은 실제 계정으로 동작을 확인했습니다 (2026-11-14). Telegram 알림은 가짜 서버로만 검사했고, 실제 봇으로는 아직 확인하지 않았습니다.
 - 배분 제안의 가중치(역량·부담·쏠림)는 합리적인 출발점으로 정한 값이고, 실제 팀에서 써 보며 조정이 필요합니다.
