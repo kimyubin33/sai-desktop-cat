@@ -45,7 +45,7 @@ const TOPICS = {
   },
   help_request: {
     label: '막힐 때 도움 요청',
-    keywords: ['능력', '실력', '못해', '못 해', '모르', '막히', '막혀', '헤매', '느려', '느리'],
+    keywords: ['능력', '실력', '못해', '못 해', '모르는 게', '할 줄 모르', '막히', '막혀', '헤매', '느려', '느리'],
     advice: [
       '처음 맡는 부분은 작은 단위로 진행 상황을 공유하고, 막히면 일찍 도움을 요청해 보세요.',
       '혼자 오래 붙잡고 있기보다 "여기서 막혔어요" 한마디가 팀 전체 시간을 아껴 줘요.',
@@ -85,6 +85,29 @@ const TOPICS = {
   },
 };
 
+// 정리 카드에 보여 줄 "가능한 행동 요청"과 "추가로 확인할 점"
+const ACTION_REQUESTS = {
+  time_promise: '지연이 예상되면 미리 연락하고 새 시간을 제안하기',
+  advance_notice: '계획이 바뀌면 짧게라도 먼저 알리기',
+  role_clarity: '맡은 일의 완료 기준을 시작 전에 맞추기',
+  workload: '각자 가능한 시간에 맞춰 일을 다시 나누기',
+  help_request: '작은 단위로 진행을 공유하고 막히면 도움 요청하기',
+  communication_tone: '사람 대신 결과물에 대해 부드럽게 의견 전하기',
+  info_sharing: '자료와 최신 버전을 정해 둔 곳에 바로 올리기',
+  meeting_participation: '회의 끝에 할 일·담당·기한을 함께 정리하기',
+};
+
+const TO_CONFIRM = {
+  time_promise: '상대가 그 시간 약속을 확정된 것으로 알고 있었는지',
+  advance_notice: '상대에게 연락하기 어려운 사정이 있었는지',
+  role_clarity: '완료 기준을 서로 같은 뜻으로 이해하고 있었는지',
+  workload: '상대가 쓸 수 있는 시간과 다른 일정이 어땠는지',
+  help_request: '처음 해 보는 일이었는지, 충분한 설명과 준비 시간이 있었는지',
+  communication_tone: '상대가 그 말을 어떤 의도로 했는지',
+  info_sharing: '자료를 어디에 공유하기로 했는지 서로 알고 있었는지',
+  meeting_participation: '상대가 의견을 내기 어려운 이유가 있었는지',
+};
+
 // 자동 반영에서 빼야 할 민감한 내용의 단서 (건강·가족·연애·돈·평가 등)
 const SENSITIVE_HINTS = [
   '아파', '아프', '병원', '건강', '우울', '공황', '약 먹', '수술',
@@ -110,4 +133,4 @@ function detectSensitive(text) {
   return SENSITIVE_HINTS.filter((k) => t.includes(k));
 }
 
-module.exports = { TOPICS, SENSITIVE_HINTS, detectTopics, detectSensitive };
+module.exports = { TOPICS, ACTION_REQUESTS, TO_CONFIRM, SENSITIVE_HINTS, detectTopics, detectSensitive };
