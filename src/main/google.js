@@ -21,6 +21,9 @@ function createGoogleService({ stores, collabs, activeCollab }) {
     return null;
   };
   const settings = stores.settings;
+  // 앱에 들어 있던 연결 정보를 이 컴퓨터의 설정에도 남겨 둔다.
+  // 나중에 연결 정보가 빠진 버전으로 업데이트되더라도 Google 연결이 끊기지 않게 하기 위해서다.
+  if (BUILTIN_GOOGLE && !settings.get().googleClient) settings.update((s) => (s.googleClient = { ...BUILTIN_GOOGLE }));
   const client = () => settings.get().googleClient || BUILTIN_GOOGLE;
   let auth = null;
 
