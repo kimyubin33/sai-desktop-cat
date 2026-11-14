@@ -10,7 +10,7 @@
 
 ## 실행
 
-Rust(rustup)와 Node.js(빌드 도구용)가 필요합니다.
+Rust(rustup, `rustup target add wasm32-unknown-unknown`)와 Node.js(Tauri 빌드 도구용)가 필요합니다. 코드는 모두 Rust 이고, 화면도 Rust 로 써서 WebAssembly 로 만듭니다 (`cargo run -p xtask -- ui`, 빌드할 때 자동 실행).
 
 ```bash
 npm install          # Tauri 빌드 도구 설치
@@ -138,7 +138,9 @@ core/                 sai-core: 창·화면과 무관한 로직 (cargo test 로 
     schedule/           한국어 날짜·시간 읽기, 시간 블록 배치, 시간표 수정·캘린더 반영, 말로 고치기
   tests/firebase_real.rs  실제 Firebase 점검
 src-tauri/            앱: 고양이 창(클릭 통과·이동), 대화창, 트레이 메뉴, 말풍선 조언, 화면 연결, 업데이트, 시작 프로그램
-ui/                   화면: 고양이 창, 대화창 (bridge.js 가 앱과 연결)
+ui-app/               화면 코드 (Rust → WebAssembly): 고양이 창, 대화·정리함·협업·설정 탭
+xtask/                화면 빌드 도구 (ui-app → ui/pkg)
+ui/                   HTML·CSS 와 빌드된 화면(ui/pkg, 저장소에는 없음)
 firestore.rules       Firestore 보안 규칙
 docs/
 ```

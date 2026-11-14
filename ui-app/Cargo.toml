@@ -1,0 +1,28 @@
+[package]
+name = "sai-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "사이의 화면 (고양이 창·대화창) — Rust 로 쓰고 WebAssembly 로 만들어 창 안에서 돌린다"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-wasm-bindgen = "0.6"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "Window", "Document", "Element", "HtmlElement", "Node", "NodeList", "Text", "DomTokenList", "CssStyleDeclaration",
+  "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlButtonElement", "HtmlCanvasElement", "HtmlFormElement",
+  "HtmlOptionElement", "HtmlDetailsElement", "HtmlTemplateElement", "DocumentFragment",
+  "CanvasRenderingContext2d", "ImageData", "DomRect", "Location", "UrlSearchParams",
+  "Event", "EventTarget", "MouseEvent", "KeyboardEvent", "InputEvent", "ScrollIntoViewOptions", "ScrollBehavior", "ScrollLogicalPosition",
+  "Performance",
+]

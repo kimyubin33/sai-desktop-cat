@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "빌드 도구: 화면(sai-ui)을 WebAssembly 로 만들어 ui/pkg 에 넣는다"
+
+[dependencies]
+wasm-bindgen-cli-support = "=0.2.130"

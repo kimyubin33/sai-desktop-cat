@@ -56,6 +56,12 @@ jobs:
       - if: steps.ver.outputs.publish != 'skip'
         run: npm ci
 
+      - name: 화면(Rust → WebAssembly) 만들기
+        if: steps.ver.outputs.publish != 'skip'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo run -p xtask -- ui
+
       - name: 테스트
         if: steps.ver.outputs.publish != 'skip'
         run: cargo test --workspace
