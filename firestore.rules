@@ -17,6 +17,11 @@ service cloud.firestore {
       return signedIn() && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
 
+    // 팀 관리자: 관리자 아이디·비밀번호로 로그인한 기기 (admins/<uid> 문서가 있다)
+    function isAdmin(teamId) {
+      return signedIn() && exists(/databases/$(database)/documents/teams/$(teamId)/admins/$(request.auth.uid));
+    }
+
     function validTopic(t) {
       return t is string && t.size() > 0 && t.size() <= 40 && t.matches('^[a-z_]+$');
     }
@@ -47,15 +52,68 @@ service cloud.firestore {
       match /members/{memberId} {
         allow get: if (signedIn() && request.auth.uid == memberId) || isMember(teamId);
         allow list: if isMember(teamId);
-        // 참여 코드를 알아야 들어올 수 있다
+        // 참여 코드를 알아야 들어올 수 있고, 같은 이름의 팀원이 없어야 한다 (names/<이름> 을 내가 잡고 있어야 함)
         allow create: if signedIn() && request.auth.uid == memberId
-          && request.resource.data.keys().hasOnly(['displayName', 'joinCode'])
+          && request.resource.data.keys().hasOnly(['displayName', 'joinCode', 'nameKey'])
           && request.resource.data.displayName is string && request.resource.data.displayName.size() <= 30
-          && request.resource.data.joinCode == get(/databases/$(database)/documents/teams/$(teamId)).data.joinCode;
+          && request.resource.data.joinCode == get(/databases/$(database)/documents/teams/$(teamId)).data.joinCode
+          && request.resource.data.nameKey is string
+          && getAfter(/databases/$(database)/documents/teams/$(teamId)/names/$(request.resource.data.nameKey)).data.uid == request.auth.uid;
         allow update: if signedIn() && request.auth.uid == memberId
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
-          && request.resource.data.displayName is string && request.resource.data.displayName.size() <= 30;
-        allow delete: if signedIn() && request.auth.uid == memberId;
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'nameKey'])
+          && request.resource.data.displayName is string && request.resource.data.displayName.size() <= 30
+          && request.resource.data.nameKey is string
+          && getAfter(/databases/$(database)/documents/teams/$(teamId)/names/$(request.resource.data.nameKey)).data.uid == request.auth.uid;
+        // 나가기는 본인, 내보내기는 관리자만
+        allow delete: if signedIn() && (request.auth.uid == memberId || isAdmin(teamId));
+      }
+
+      // 이름 잡아 두기: 한 팀에 같은 이름은 한 명만. 문서 id 가 이름이고, 먼저 잡은 사람의 것이다
+      match /names/{nameKey} {
+        // 들어오기 전에 이름이 비었는지 확인할 수 있어야 한다
+        allow get: if signedIn();
+        allow list: if isMember(teamId);
+        // 팀원(또는 지금 함께 팀원이 되는 사람)만 자기 이름으로 잡는다
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['uid'])
+          && request.resource.data.uid == request.auth.uid
+          && existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+        allow update: if false;
+        // 본인, 관리자, 또는 잡아 둔 사람이 이미 팀을 나갔을 때 팀원 누구나
+        allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin(teamId)
+          || (isMember(teamId) && !exists(/databases/$(database)/documents/teams/$(teamId)/members/$(resource.data.uid))));
+      }
+
+      // ---------- 관리자 ----------
+      // 관리자 아이디와, 비밀번호 확인에 쓰는 소금값. 비밀번호 자체는 어디에도 없다.
+      // 처음 한 번만 만들 수 있다 (만든 사람이 관리자가 된다)
+      match /admin/config {
+        allow get: if isMember(teamId);
+        allow create: if isMember(teamId)
+          && request.resource.data.keys().hasOnly(['adminId', 'salt', 'by'])
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.adminId is string && request.resource.data.adminId.size() <= 30;
+        allow update, delete: if false;
+      }
+      // 아이디·비밀번호로 계산한 값이 문서 id. 값을 정확히 아는 사람만 하나씩 조회할 수 있다 (목록 조회 불가)
+      match /adminKeys/{key} {
+        allow get: if isMember(teamId);
+        allow list: if false;
+        // 관리자를 처음 정하는 바로 그 요청에서만 만들 수 있다
+        allow create: if isMember(teamId)
+          && !exists(/databases/$(database)/documents/teams/$(teamId)/admin/config)
+          && getAfter(/databases/$(database)/documents/teams/$(teamId)/admin/config).data.by == request.auth.uid;
+        allow update, delete: if false;
+      }
+      // 관리자로 로그인한 기기. 맞는 값을 내야만 만들 수 있다
+      match /admins/{memberId} {
+        allow get: if signedIn() && request.auth.uid == memberId;
+        allow list: if false;
+        allow create: if isMember(teamId) && request.auth.uid == memberId
+          && request.resource.data.keys().hasOnly(['key'])
+          && existsAfter(/databases/$(database)/documents/teams/$(teamId)/adminKeys/$(request.resource.data.key));
+        allow update: if false;
+        allow delete: if signedIn() && (request.auth.uid == memberId || isAdmin(teamId));
       }
 
       match /signals/{signalId} {
@@ -86,7 +144,7 @@ service cloud.firestore {
           && (!('pr' in request.resource.data) || request.resource.data.pr.size() <= 500)
           && (!('weeklyHours' in request.resource.data) || (request.resource.data.weeklyHours is number
               && request.resource.data.weeklyHours >= 0 && request.resource.data.weeklyHours <= 80));
-        allow delete: if signedIn() && request.auth.uid == memberId;
+        allow delete: if signedIn() && (request.auth.uid == memberId || isAdmin(teamId));
       }
 
       match /projects/{projectId} {

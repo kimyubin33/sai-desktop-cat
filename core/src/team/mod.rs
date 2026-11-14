@@ -15,6 +15,8 @@
 //!   held            받은 사람이 "내 사정도 있어요"로 보류함
 //! 서버로는 주제 id, 받는 사람 uid, 주(週)만 간다. 문안은 받는 쪽 앱의 일반 문안을 쓴다.
 pub mod account;
+#[cfg(test)]
+mod admin_tests;
 pub mod backend;
 pub mod claude;
 pub mod codec;
@@ -557,6 +559,10 @@ impl Team {
         if !members.iter().any(|m| m.s("uid") == my_uid) {
             return err("이 기기는 더 이상 팀원으로 등록되어 있지 않아요. 참여 코드로 다시 참여해 주세요.");
         }
+        // 같은 이름 막기용 이름 정리, 관리자 상태
+        b.tidy_names(&team_id, &members).await;
+        let admin = b.admin_state(&team_id).await;
+        self.cache_update(|c| c["admin"] = admin);
         self.send_due().await?;
         let inbox = b.list_signals_for_me(&team_id).await?;
         // 내가 보낸 신호가 보류되었는지 확인
@@ -677,7 +683,45 @@ impl Team {
             "lastSync": c.i("lastSync"),
             "lastError": c.get("lastError").cloned().unwrap_or(Value::Null),
             "backendKind": self.hub.backend_kind(),
+            "admin": c.get("admin").cloned().unwrap_or(Value::Null),
         })
+    }
+
+    // ---------- 관리자 ----------
+    async fn refresh_admin(&self) {
+        if let (Ok(team_id), Ok(b)) = (self.team_id(), self.backend()) {
+            let admin = b.admin_state(&team_id).await;
+            self.cache_update(|c| c["admin"] = admin);
+        }
+    }
+
+    pub fn is_admin(&self) -> bool {
+        self.cache_get()["admin"].b("me")
+    }
+
+    pub async fn admin_setup(&self, admin_id: &str, password: &str) -> Result<()> {
+        self.backend()?.admin_setup(&self.team_id()?, admin_id, password).await?;
+        self.refresh_admin().await;
+        Ok(())
+    }
+
+    pub async fn admin_login(&self, admin_id: &str, password: &str) -> Result<()> {
+        self.backend()?.admin_login(&self.team_id()?, admin_id, password).await?;
+        self.refresh_admin().await;
+        Ok(())
+    }
+
+    pub async fn admin_logout(&self) -> Result<()> {
+        self.backend()?.admin_logout(&self.team_id()?).await?;
+        self.refresh_admin().await;
+        Ok(())
+    }
+
+    /// 관리자만: 팀원 내보내기
+    pub async fn remove_member(&self, uid: &str) -> Result<()> {
+        self.backend()?.remove_member(&self.team_id()?, uid).await?;
+        self.sync().await;
+        Ok(())
     }
 }
 

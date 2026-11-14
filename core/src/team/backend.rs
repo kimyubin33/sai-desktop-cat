@@ -291,6 +291,59 @@ impl Backend {
         }
     }
 
+    /// 여러 문서를 한 번에 (모두 되거나 모두 안 되거나).
+    /// writes: { op: "create" | "update" | "delete", path, data?, fields? }
+    async fn commit(&self, writes: Vec<Value>) -> Result<()> {
+        match self {
+            Backend::Firebase(f) => {
+                // 문서 이름은 projects/…/documents/<path> 꼴이어야 한다
+                let root = f.docs_base.split("/v1/").nth(1).unwrap_or("").to_string();
+                let ws: Vec<Value> = writes
+                    .iter()
+                    .map(|w| {
+                        let name = format!("{root}/{}", w.s("path"));
+                        let fields = encode_fields(w["data"].as_object().unwrap_or(&Map::new()));
+                        match w.s("op").as_str() {
+                            "delete" => json!({ "delete": name }),
+                            "update" => json!({ "update": { "name": name, "fields": fields }, "updateMask": { "fieldPaths": w.arr("fields") }, "currentDocument": { "exists": true } }),
+                            _ => json!({ "update": { "name": name, "fields": fields }, "currentDocument": { "exists": false } }),
+                        }
+                    })
+                    .collect();
+                f.req("POST", ":commit", Some(json!({ "writes": ws })), "").await?;
+                Ok(())
+            }
+            Backend::Memory(m) => m.tx(|d| {
+                for w in &writes {
+                    let exists = d["docs"].get(w.s("path")).is_some();
+                    match w.s("op").as_str() {
+                        "create" if exists => return Err("이미 있는 문서예요.".to_string()),
+                        "update" if !exists => return Err("문서가 없어요.".to_string()),
+                        _ => {}
+                    }
+                }
+                for w in &writes {
+                    let path = w.s("path");
+                    match w.s("op").as_str() {
+                        "delete" => {
+                            if let Some(o) = d["docs"].as_object_mut() {
+                                o.remove(&path);
+                            }
+                        }
+                        "update" => {
+                            for k in w.arr("fields") {
+                                let k = k.as_str().unwrap_or("").to_string();
+                                d["docs"][&path][&k] = w["data"][&k].clone();
+                            }
+                        }
+                        _ => d["docs"][&path] = w["data"].clone(),
+                    }
+                }
+                Ok(())
+            }),
+        }
+    }
+
     // ---------- 팀 ----------
     /// → { teamId, joinCode, name }
     pub async fn create_team(&self, name: &str, display_name: &str) -> Result<Value> {
@@ -302,7 +355,7 @@ impl Backend {
             }
             let team_id = self.create_doc("teams", None, json!({ "name": name, "joinCode": code, "createdBy": uid })).await?;
             self.create_doc("joinCodes", Some(&code), json!({ "teamId": team_id, "teamName": name })).await?;
-            self.create_doc(&format!("teams/{team_id}/members"), Some(&uid), json!({ "displayName": display_name, "joinCode": code })).await?;
+            self.enter(&team_id, &uid, display_name, &code, false).await?;
             return Ok(json!({ "teamId": team_id, "joinCode": code, "name": name }));
         }
         err("참여 코드를 만들지 못했어요. 다시 시도해 주세요.")
@@ -314,22 +367,175 @@ impl Backend {
         let Some(r) = self.get_doc(&format!("joinCodes/{code}")).await? else { return err("참여 코드를 찾을 수 없어요.") };
         let team_id = r.s("teamId");
         let mpath = format!("teams/{team_id}/members/{uid}");
-        if self.get_doc(&mpath).await.ok().flatten().is_some() {
-            self.patch_doc(&mpath, json!({ "displayName": display_name }), &["displayName".into()]).await?;
+        let already = self.get_doc(&mpath).await.ok().flatten();
+        let key = name_key(display_name);
+        if let Some(me) = &already {
+            // 이미 이 팀의 팀원: 이름만 바꾸는 경우. 팀원이라 목록을 볼 수 있으니 먼저 확인한다
+            if name_key(&me.s("displayName")) != key || me.s("nameKey") != key {
+                if self.list_members(&team_id).await?.iter().any(|m| m.s("uid") != uid && name_key(&m.s("displayName")) == key) {
+                    return err(same_name(display_name));
+                }
+                self.enter(&team_id, &uid, display_name, &code, true).await?;
+                let old = me.s("nameKey");
+                if !old.is_empty() && old != key {
+                    let _ = self.delete_doc(&format!("teams/{team_id}/names/{old}")).await;
+                }
+            }
         } else {
-            self.create_doc(&format!("teams/{team_id}/members"), Some(&uid), json!({ "displayName": display_name, "joinCode": code })).await?;
+            self.enter(&team_id, &uid, display_name, &code, false).await?;
+            // 예전 버전으로 들어와 이름을 잡아 두지 않은 팀원과 겹치는지: 들어온 뒤에야 목록을 볼 수 있다
+            let clash = self.list_members(&team_id).await.map(|l| l.iter().any(|m| m.s("uid") != uid && name_key(&m.s("displayName")) == key)).unwrap_or(false);
+            if clash {
+                let _ = self.delete_doc(&format!("teams/{team_id}/names/{key}")).await;
+                let _ = self.delete_doc(&mpath).await;
+                return err(same_name(display_name));
+            }
         }
         Ok(json!({ "teamId": team_id, "joinCode": code, "name": r.s("teamName") }))
     }
 
+    /// 이름을 잡아 두고(names/<이름>) 팀원으로 등록한다. 같은 이름을 다른 사람이 잡고 있으면 실패
+    async fn enter(&self, team_id: &str, uid: &str, display_name: &str, code: &str, member_exists: bool) -> Result<()> {
+        let key = name_key(display_name);
+        let npath = format!("teams/{team_id}/names/{key}");
+        let mpath = format!("teams/{team_id}/members/{uid}");
+        let member_write = |with_key: bool| {
+            let mut data = json!({ "displayName": display_name });
+            if with_key {
+                data["nameKey"] = json!(key);
+            }
+            if member_exists {
+                let fields: Vec<&str> = if with_key { vec!["displayName", "nameKey"] } else { vec!["displayName"] };
+                json!({ "op": "update", "path": mpath, "data": data, "fields": fields })
+            } else {
+                data["joinCode"] = json!(code);
+                json!({ "op": "create", "path": mpath, "data": data })
+            }
+        };
+        match self.get_doc(&npath).await {
+            Ok(Some(n)) if n.s("uid") != uid => err(same_name(display_name)),
+            Ok(Some(_)) => self.commit(vec![member_write(true)]).await,
+            Ok(None) => self.commit(vec![json!({ "op": "create", "path": npath, "data": { "uid": uid } }), member_write(true)]).await.map_err(|e| if denied(&e) { same_name(display_name) } else { e }),
+            // 서버 규칙이 예전 것이면 이름 잡아 두기를 쓸 수 없다 → 예전 방식으로 들어간다
+            Err(e) if denied(&e) => self.commit(vec![member_write(false)]).await,
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn leave_team(&self, team_id: &str) -> Result<()> {
         let uid = self.sign_in().await?;
-        self.delete_doc(&format!("teams/{team_id}/members/{uid}")).await
+        let mpath = format!("teams/{team_id}/members/{uid}");
+        if let Ok(Some(me)) = self.get_doc(&mpath).await {
+            let key = if me.s("nameKey").is_empty() { name_key(&me.s("displayName")) } else { me.s("nameKey") };
+            if let Ok(Some(n)) = self.get_doc(&format!("teams/{team_id}/names/{key}")).await {
+                if n.s("uid") == uid {
+                    let _ = self.delete_doc(&format!("teams/{team_id}/names/{key}")).await;
+                }
+            }
+            let _ = self.delete_doc(&format!("teams/{team_id}/admins/{uid}")).await;
+        }
+        self.delete_doc(&mpath).await
     }
 
     /// [{ uid, displayName }]
     pub async fn list_members(&self, team_id: &str) -> Result<Vec<Value>> {
-        Ok(self.list_docs(&format!("teams/{team_id}/members")).await?.iter().map(|d| json!({ "uid": d.s("id"), "displayName": d.s("displayName") })).collect())
+        Ok(self.list_docs(&format!("teams/{team_id}/members")).await?.iter().map(|d| json!({ "uid": d.s("id"), "displayName": d.s("displayName"), "nameKey": d.s("nameKey") })).collect())
+    }
+
+    /// 이름 잡아 두기 정리: 내 이름이 안 잡혀 있으면 잡고, 나간 사람이 잡아 둔 이름은 푼다 (규칙이 예전 것이면 아무것도 안 함)
+    pub async fn tidy_names(&self, team_id: &str, members: &[Value]) {
+        let Ok(uid) = self.sign_in().await else { return };
+        let Ok(names) = self.list_docs(&format!("teams/{team_id}/names")).await else { return };
+        for n in &names {
+            if !members.iter().any(|m| m.s("uid") == n.s("uid")) {
+                let _ = self.delete_doc(&format!("teams/{team_id}/names/{}", n.s("id"))).await;
+            }
+        }
+        let Some(me) = members.iter().find(|m| m.s("uid") == uid) else { return };
+        let key = name_key(&me.s("displayName"));
+        if me.s("nameKey") != key && !names.iter().any(|n| n.s("id") == key && members.iter().any(|m| m.s("uid") == n.s("uid"))) {
+            let _ = self.enter(team_id, &uid, &me.s("displayName"), "", true).await;
+        }
+    }
+
+    // ---------- 관리자 (팀마다 아이디·비밀번호) ----------
+    /// → { supported, exists, adminId, me }
+    pub async fn admin_state(&self, team_id: &str) -> Value {
+        let Ok(uid) = self.sign_in().await else { return json!({ "supported": false }) };
+        match self.get_doc(&format!("teams/{team_id}/admin/config")).await {
+            Err(_) => json!({ "supported": false }),
+            Ok(cfg) => {
+                let me = self.get_doc(&format!("teams/{team_id}/admins/{uid}")).await.ok().flatten().is_some();
+                json!({ "supported": true, "exists": cfg.is_some(), "adminId": cfg.map(|c| c.s("adminId")), "me": me })
+            }
+        }
+    }
+
+    /// 처음 한 번: 관리자 아이디·비밀번호를 정한다 (정한 사람이 관리자가 된다)
+    pub async fn admin_setup(&self, team_id: &str, admin_id: &str, password: &str) -> Result<()> {
+        let uid = self.sign_in().await?;
+        check_admin_input(admin_id, password)?;
+        if self.get_doc(&format!("teams/{team_id}/admin/config")).await.map_err(|e| if denied(&e) { rules_old() } else { e })?.is_some() {
+            return err("이 팀에는 이미 관리자가 있어요. 관리자 아이디와 비밀번호로 로그인해 주세요.");
+        }
+        let salt = random_code(16);
+        let key = admin_key(&salt, admin_id, password);
+        self.commit(vec![
+            json!({ "op": "create", "path": format!("teams/{team_id}/adminKeys/{key}"), "data": { "v": 1 } }),
+            json!({ "op": "create", "path": format!("teams/{team_id}/admin/config"), "data": { "adminId": admin_id.trim(), "salt": salt, "by": uid } }),
+            json!({ "op": "create", "path": format!("teams/{team_id}/admins/{uid}"), "data": { "key": key } }),
+        ])
+        .await
+        .map_err(|e| if denied(&e) { rules_old() } else { e })
+    }
+
+    /// 다른 컴퓨터에서도: 아이디·비밀번호가 맞으면 이 기기가 관리자가 된다
+    pub async fn admin_login(&self, team_id: &str, admin_id: &str, password: &str) -> Result<()> {
+        let uid = self.sign_in().await?;
+        let Some(cfg) = self.get_doc(&format!("teams/{team_id}/admin/config")).await.map_err(|e| if denied(&e) { rules_old() } else { e })? else {
+            return err("이 팀에는 아직 관리자가 없어요.");
+        };
+        let wrong = || "관리자 아이디나 비밀번호가 달라요.".to_string();
+        if cfg.s("adminId") != admin_id.trim() {
+            return Err(wrong());
+        }
+        let key = admin_key(&cfg.s("salt"), admin_id, password);
+        if self.get_doc(&format!("teams/{team_id}/adminKeys/{key}")).await.ok().flatten().is_none() {
+            return Err(wrong());
+        }
+        let path = format!("teams/{team_id}/admins/{uid}");
+        if self.get_doc(&path).await.ok().flatten().is_none() {
+            self.create_doc(&format!("teams/{team_id}/admins"), Some(&uid), json!({ "key": key })).await.map_err(|e| if denied(&e) { wrong() } else { e })?;
+        }
+        Ok(())
+    }
+
+    pub async fn admin_logout(&self, team_id: &str) -> Result<()> {
+        let uid = self.sign_in().await?;
+        self.delete_doc(&format!("teams/{team_id}/admins/{uid}")).await
+    }
+
+    /// 관리자만: 팀원 내보내기 (그 사람이 잡아 둔 이름도 푼다)
+    pub async fn remove_member(&self, team_id: &str, member: &str) -> Result<()> {
+        let uid = self.sign_in().await?;
+        if member == uid {
+            return err("나 자신은 내보낼 수 없어요. \"보고 있는 팀 나가기\"를 써 주세요.");
+        }
+        if self.get_doc(&format!("teams/{team_id}/admins/{uid}")).await.ok().flatten().is_none() {
+            return err("관리자만 팀원을 내보낼 수 있어요.");
+        }
+        let mpath = format!("teams/{team_id}/members/{member}");
+        if let Ok(Some(m)) = self.get_doc(&mpath).await {
+            let key = if m.s("nameKey").is_empty() { name_key(&m.s("displayName")) } else { m.s("nameKey") };
+            if let Ok(Some(n)) = self.get_doc(&format!("teams/{team_id}/names/{key}")).await {
+                if n.s("uid") == member {
+                    let _ = self.delete_doc(&format!("teams/{team_id}/names/{key}")).await;
+                }
+            }
+        }
+        let _ = self.delete_doc(&format!("teams/{team_id}/admins/{member}")).await;
+        let _ = self.delete_doc(&format!("teams/{team_id}/profiles/{member}")).await;
+        self.delete_doc(&mpath).await.map_err(|e| if denied(&e) { "팀원을 내보내지 못했어요. 관리자 로그인이 풀렸거나 서버 규칙이 예전 것이에요.".to_string() } else { e })
     }
 
     // ---------- 조언 주제 신호 ----------
@@ -591,4 +797,43 @@ impl Memory {
         }
         r
     }
+}
+
+/// 이름 비교용 (공백·대소문자 무시). Firestore 문서 id 로도 쓴다
+pub fn name_key(name: &str) -> String {
+    let s: String = name.trim().to_lowercase().chars().filter(|c| !c.is_whitespace()).map(|c| if c == '/' { '_' } else { c }).collect();
+    format!("n-{s}")
+}
+
+fn same_name(name: &str) -> String {
+    format!("이 팀에는 이미 \"{}\"(이)라는 이름의 팀원이 있어요. 다른 이름으로 들어와 주세요. 예전에 쓰던 내 이름이라면 관리자에게 그 이름을 내보내 달라고 해 주세요.", name.trim())
+}
+
+fn denied(e: &str) -> bool {
+    e.contains("(403)") || e.contains("PERMISSION_DENIED")
+}
+
+fn rules_old() -> String {
+    "팀 서버 규칙에 아직 관리자 기능이 없어요. Firebase 콘솔에서 firestore.rules 를 게시해 주세요.".to_string()
+}
+
+fn check_admin_input(admin_id: &str, password: &str) -> Result<()> {
+    let id = admin_id.trim();
+    if id.chars().count() < 3 || id.chars().count() > 30 {
+        return err("관리자 아이디는 3~30자로 정해 주세요.");
+    }
+    if password.chars().count() < 6 || password.chars().count() > 100 {
+        return err("관리자 비밀번호는 6자 이상으로 정해 주세요.");
+    }
+    Ok(())
+}
+
+/// 비밀번호 자체는 어디에도 저장하지 않는다. 아이디·비밀번호로 만든 이 값을 아는 것이 관리자라는 증거가 된다
+fn admin_key(salt: &str, admin_id: &str, password: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::digest(format!("sai-admin:{salt}:{}:{password}", admin_id.trim()).as_bytes());
+    for _ in 0..100_000 {
+        h = Sha256::digest(h);
+    }
+    format!("{h:x}")
 }

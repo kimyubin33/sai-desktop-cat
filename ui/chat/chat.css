@@ -965,3 +965,10 @@ select.team-pick {
 .drive-picker input[type="search"] { flex: 1; min-width: 120px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 13px; }
 .pick-path { font-size: 13px; }
 .pick-list .item .drive-kind { min-width: 36px; height: 36px; margin-right: 8px; }
+
+/* 관리자 · 새 팀 만들기 */
+.admin-box { margin: 8px 0; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 10px; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.admin-box input, .team-create input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 13px; background: var(--panel); color: var(--ink); }
+.team-create { margin-top: 6px; }
+.team-create > input { width: 100%; box-sizing: border-box; margin: 6px 0; }
+.team-create summary { cursor: pointer; color: var(--muted); }

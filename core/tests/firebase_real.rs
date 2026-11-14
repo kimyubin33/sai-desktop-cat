@@ -5,8 +5,22 @@ use sai_core::team::Backend;
 use sai_core::util::J;
 use serde_json::{json, Value};
 
+/// SAI_FIREBASE_EMULATOR 가 있으면 로컬 에뮬레이터(저장소의 firestore.rules 를 그대로 올린 것)로 점검한다.
+/// 이때는 "규칙이 아직 없어요" 경고로 넘어가지 않고 실패로 본다.
+fn emulator() -> bool {
+    std::env::var("SAI_FIREBASE_EMULATOR").is_ok()
+}
+
 fn cfg() -> Value {
+    if emulator() {
+        return json!({ "apiKey": "demo-key", "projectId": "demo-sai", "emulator": { "auth": "http://127.0.0.1:9099", "firestore": "http://127.0.0.1:8080" } });
+    }
     json!({ "apiKey": "AIzaSyC6MBRsYOCchzBRZT7hX2cvbxUujGG_Eq0", "projectId": "saigajoa" })
+}
+
+fn not_deployed(what: &str) {
+    assert!(!emulator(), "{what}: 저장소의 규칙으로 통과해야 해요");
+    println!("::warning::{what} 규칙이 서버에 아직 없어요. Firebase 콘솔 → Firestore → 규칙에 저장소의 firestore.rules 를 붙여 넣고 게시해 주세요.");
 }
 
 fn backend() -> Backend {
@@ -64,7 +78,7 @@ async fn firebase_contract() {
             println!("✓ Telegram 연결 정보");
         }
         Err(e) if e.contains("403") => {
-            println!("::warning::Telegram 연결 규칙이 서버에 아직 없어요. Firebase 콘솔 → Firestore → 규칙에 저장소의 firestore.rules 를 붙여 넣고 게시해 주세요.");
+            not_deployed("Telegram 연결");
         }
         Err(e) => panic!("{e}"),
     }
@@ -77,7 +91,7 @@ async fn firebase_contract() {
             a.delete_integration(&team, "claude").await.unwrap();
             println!("✓ Claude 키 공유: 팀원이 받고, 공유한 사람만 끔");
         }
-        Err(e) if e.contains("403") => println!("::warning::Claude 키 공유 규칙이 서버에 아직 없어요. Firebase 콘솔 → Firestore → 규칙에 저장소의 firestore.rules 를 붙여 넣고 게시해 주세요."),
+        Err(e) if e.contains("403") => not_deployed("Claude 키 공유"),
         Err(e) => panic!("{e}"),
     }
 
@@ -92,7 +106,7 @@ async fn firebase_contract() {
             b.delete_file(&team, &proj, &fid).await.unwrap();
             println!("✓ 팀 자료: 올린 사람 본인 이름으로만, 지우기도 본인만");
         }
-        Err(e) if e.contains("403") => println!("::warning::팀 자료 규칙이 서버에 아직 없어요. Firebase 콘솔 → Firestore → 규칙에 저장소의 firestore.rules 를 붙여 넣고 게시해 주세요."),
+        Err(e) if e.contains("403") => not_deployed("팀 자료"),
         Err(e) => panic!("{e}"),
     }
 
@@ -105,9 +119,40 @@ async fn firebase_contract() {
             a.delete_share(&team, &sid).await.unwrap();
             println!("✓ 팀 Drive 함: 본인 이름으로만 보내고, 지우기도 본인만");
         }
-        Err(e) if e.contains("403") => println!("::warning::팀 Drive 함 규칙이 서버에 아직 없어요. Firebase 콘솔 → Firestore → 규칙에 저장소의 firestore.rules 를 붙여 넣고 게시해 주세요."),
+        Err(e) if e.contains("403") => not_deployed("팀 Drive 함"),
         Err(e) => panic!("{e}"),
     }
+
+    // 같은 이름으로는 들어올 수 없다 (공백·대소문자만 달라도)
+    let c = backend();
+    let uc = c.sign_in().await.unwrap();
+    assert!(c.join_team(&t.s("joinCode"), " 점검b ").await.is_err(), "같은 이름이면 거절돼야 해요");
+    assert_eq!(a.list_members(&team).await.unwrap().len(), 2, "실패한 참여는 흔적이 없어야 해요");
+    c.join_team(&t.s("joinCode"), "점검C").await.expect("다른 이름으로 참여");
+    println!("✓ 같은 이름 막기");
+
+    // 관리자: 아이디·비밀번호를 정한 사람과, 그것으로 로그인한 기기만 팀원을 내보낸다 (규칙을 아직 배포하지 않았으면 경고만)
+    if a.admin_state(&team).await.b("supported") {
+        assert!(b.remove_member(&team, &uc).await.is_err(), "관리자가 아니면 내보낼 수 없어요");
+        a.admin_setup(&team, "checkadmin", "check-password-1").await.expect("관리자 정하기");
+        assert!(b.admin_setup(&team, "other", "other-password").await.is_err(), "관리자는 한 번만 정해요");
+        assert!(b.admin_login(&team, "checkadmin", "wrong-password").await.is_err(), "틀린 비밀번호");
+        assert!(!b.admin_state(&team).await.b("me"));
+        assert!(b.remove_member(&team, &uc).await.is_err(), "로그인에 실패한 기기는 내보낼 수 없어요");
+        b.admin_login(&team, "checkadmin", "check-password-1").await.expect("다른 기기에서 관리자 로그인");
+        assert!(b.admin_state(&team).await.b("me"));
+        b.remove_member(&team, &uc).await.expect("관리자가 내보내기");
+        assert_eq!(a.list_members(&team).await.unwrap().len(), 2);
+        assert!(c.list_members(&team).await.is_err(), "내보내진 사람은 팀을 볼 수 없어요");
+        // 내보낸 이름은 다시 쓸 수 있다
+        c.join_team(&t.s("joinCode"), "점검C").await.expect("내보낸 이름으로 다시 참여");
+        b.admin_logout(&team).await.unwrap();
+        assert!(b.remove_member(&team, &uc).await.is_err(), "로그아웃하면 권한이 없어요");
+        println!("✓ 관리자: 정하기·다른 기기 로그인·내보내기, 관리자가 아니면 거절");
+    } else {
+        not_deployed("관리자·같은 이름 막기");
+    }
+    c.leave_team(&team).await.unwrap();
 
     // 다른 컴퓨터로 옮기기: 같은 로그인 정보로 새 기기에서 같은 계정·팀을 이어 쓴다
     let moved = Backend::firebase(&cfg(), b.session(), Box::new(|_| {})).unwrap();

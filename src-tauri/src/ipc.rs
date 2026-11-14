@@ -201,6 +201,7 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
 
         // ---------- 팀 ----------
         "team:status" => Ok(team_view(a)),
+        "team:configure" if !a.local_mode && !crate::app::builtin_firebase().s("apiKey").is_empty() => Err("이 버전은 팀 서버 설정이 앱에 들어 있어서 바꿀 수 없어요.".into()),
         "team:configure" => {
             let Some(cfg) = parse_firebase_config(x.as_str().unwrap_or("")) else {
                 return Err("apiKey 와 projectId 를 찾지 못했어요. Firebase 콘솔의 firebaseConfig 를 그대로 붙여 넣어 주세요.".into());
@@ -219,8 +220,36 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             after_team(a)
         }
         "team:create" => {
+            // 팀을 만드는 사람이 관리자 아이디·비밀번호를 정한다 (비밀번호는 기록하지 않는다)
+            let (admin_id, admin_pw) = (x.s("adminId").trim().to_string(), x.s("adminPassword"));
+            let n = admin_id.chars().count();
+            if !(3..=30).contains(&n) {
+                return Err("관리자 아이디는 3~30자로 정해 주세요.".into());
+            }
+            if admin_pw.chars().count() < 6 {
+                return Err("관리자 비밀번호는 6자 이상으로 정해 주세요.".into());
+            }
             hub.create_team(&x.s("name"), &x.s("displayName")).await?;
-            after_team(a)
+            let notice = hub.active().admin_setup(&admin_id, &admin_pw).await.err().map(|e| format!("팀은 만들었지만 관리자는 정하지 못했어요: {e}"));
+            let mut v = after_team(a)?;
+            v["notice"] = json!(notice);
+            Ok(v)
+        }
+        "team:admin-setup" => {
+            hub.active().admin_setup(&x.s("adminId"), &x.s("password")).await?;
+            Ok(team_view(a))
+        }
+        "team:admin-login" => {
+            hub.active().admin_login(&x.s("adminId"), &x.s("password")).await?;
+            Ok(team_view(a))
+        }
+        "team:admin-logout" => {
+            hub.active().admin_logout().await?;
+            Ok(team_view(a))
+        }
+        "team:remove-member" => {
+            hub.active().remove_member(x.as_str().unwrap_or("")).await?;
+            Ok(team_view(a))
         }
         "team:join" => {
             hub.join_team(&x.s("code"), &x.s("displayName")).await?;
@@ -598,6 +627,8 @@ fn team_view(a: &Arc<App>) -> Value {
     v["configured"] = json!(a.local_mode || !cfg.s("apiKey").is_empty());
     v["projectId"] = json!(if a.local_mode { "로컬 시험 모드".into() } else { cfg.s("projectId") });
     v["localMode"] = json!(a.local_mode);
+    // 앱에 팀 서버 설정이 들어 있으면 화면에서 바꿀 일이 없다 (잘못 건드리면 팀 연결이 끊긴다)
+    v["canEditFirebase"] = json!(!a.local_mode && crate::app::builtin_firebase().s("apiKey").is_empty());
     v["teams"] = json!(hub
         .all()
         .iter()

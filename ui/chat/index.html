@@ -86,6 +86,7 @@
         </div>
         <div id="teamConnected" class="hidden">
           <div id="memberList" class="list"></div>
+          <div id="adminBox" class="admin-box"></div>
           <div class="inline">
             <button type="button" id="teamSyncBtn">지금 동기화</button>
             <button type="button" id="teamLeave" class="danger">보고 있는 팀 나가기</button>
@@ -98,13 +99,20 @@
             <input type="text" id="displayName" maxlength="30" placeholder="예: 유빈" />
           </label>
           <div class="inline">
-            <input type="text" id="teamName" maxlength="60" placeholder="새 팀 이름" />
-            <button type="button" id="teamCreate">팀 만들기</button>
-          </div>
-          <div class="inline">
             <input type="text" id="joinCode" maxlength="6" placeholder="참여 코드 6자리" class="code" />
             <button type="button" id="teamJoinBtn" class="primary">참여하기</button>
           </div>
+          <p class="hint">한 팀에 같은 이름은 한 명만 들어올 수 있어요.</p>
+          <details class="team-create">
+            <summary>새 팀 만들기</summary>
+            <input type="text" id="teamName" maxlength="60" placeholder="새 팀 이름" />
+            <p class="hint">팀을 만드는 사람이 관리자예요. 관리자만 팀원을 내보낼 수 있고, 다른 컴퓨터에서도 이 아이디·비밀번호로 관리자가 돼요. 비밀번호는 다시 볼 수 없으니 기억해 두세요.</p>
+            <div class="inline">
+              <input type="text" id="adminId" maxlength="30" placeholder="관리자 아이디 (3자 이상)" autocomplete="off" />
+              <input type="password" id="adminPw" maxlength="100" placeholder="관리자 비밀번호 (6자 이상)" autocomplete="new-password" />
+            </div>
+            <div class="inline"><button type="button" id="teamCreate">팀 만들기</button></div>
+          </details>
         </div>
         <span id="teamMsg" class="status"></span>
       </fieldset>

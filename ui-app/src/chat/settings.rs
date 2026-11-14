@@ -127,18 +127,77 @@ pub async fn render_team(info: Option<Value>) {
         let _ = stx.append_child(&bx);
     }
 
+    // 앱에 팀 서버 설정이 들어 있으면 설정 칸과 "바꾸기"는 아예 보이지 않는다
+    let can_edit = b(&info, "canEditFirebase");
     let cfg = by_id("teamConfig").unwrap();
     let editing = cfg.get_attribute("data-editing").as_deref() == Some("1");
-    toggle(&cfg, "hidden", local || (configured && !editing));
+    toggle(&cfg, "hidden", !can_edit || (configured && !editing));
     // 팀이 있어도 다른 팀을 더 만들거나 참여할 수 있다
     toggle(&by_id("teamJoin").unwrap(), "hidden", !configured);
     toggle(&by_id("teamConnected").unwrap(), "hidden", !connected);
-    toggle(&by_id("fbEdit").unwrap(), "hidden", local);
+    toggle(&by_id("fbEdit").unwrap(), "hidden", !can_edit);
+
+    let admin = &info["admin"];
+    let i_am_admin = b(admin, "me");
     let ml = by_id("memberList").unwrap();
     clear(&ml);
     for m in arr(&info, "members") {
-        let _ = ml.append_child(&el("div").cls("item").kid(el("div").cls("main").kid(el("div").cls("title").text(&format!("{}{}", s(&m, "displayName"), if b(&m, "me") { " (나)" } else { "" })))).0);
+        let me = b(&m, "me");
+        let name = s(&m, "displayName");
+        let uid = s(&m, "uid");
+        let item = el("div").cls("item").kid(el("div").cls("main").kid(el("div").cls("title").text(&format!("{name}{}{}", if me { " (나)" } else { "" }, if me && i_am_admin { " · 관리자" } else { "" })))).maybe(if i_am_admin && !me {
+            Some(el("button").cls("link").text("내보내기").click(move |_| {
+                if !confirm(&format!("\"{name}\"을(를) 팀에서 내보낼까요? 그 기기는 더 이상 이 팀을 볼 수 없고, 다시 들어오려면 참여 코드가 필요해요.")) {
+                    return;
+                }
+                let uid = uid.clone();
+                team_action(async move { call("team:remove-member", json!(uid)).await }, "팀에서 내보냈어요.".into());
+            }))
+        } else {
+            None
+        });
+        let _ = ml.append_child(&item.0);
     }
+    render_admin(admin);
+}
+
+/// 관리자 칸: 아직 없으면 정하기, 있으면 로그인, 관리자면 로그아웃
+fn render_admin(admin: &Value) {
+    let Some(bx) = by_id("adminBox") else { return };
+    clear(&bx);
+    let add = |e: El| {
+        let _ = bx.append_child(&e.0);
+    };
+    if !b(admin, "supported") {
+        add(el("div").cls("hint").text("관리자 기능은 팀 서버 규칙을 게시한 뒤에 쓸 수 있어요. (게시 후 \"지금 동기화\")"));
+        return;
+    }
+    if b(admin, "me") {
+        add(el("div").txt("관리자로 로그인돼 있어요. 팀원 이름 옆의 \"내보내기\"를 쓸 수 있어요. "));
+        add(el("div").cls("inline").kid(el("button").attr("type", "button").cls("link").text("관리자 로그아웃").click(|_| team_action(async { call("team:admin-logout", Value::Null).await }, "관리자에서 로그아웃했어요.".into()))));
+        return;
+    }
+    let exists = b(admin, "exists");
+    let id_in = el("input").attr("type", "text").attr("maxlength", "30").attr("placeholder", "관리자 아이디").attr("autocomplete", "off").build();
+    let pw_in = el("input").attr("type", "password").attr("maxlength", "100").attr("placeholder", if exists { "관리자 비밀번호" } else { "관리자 비밀번호 (6자 이상)" }).attr("autocomplete", "new-password").build();
+    add(el("div").cls("hint").text(if exists {
+        "팀원 내보내기는 관리자만 할 수 있어요. 관리자라면 아이디·비밀번호로 로그인해 주세요."
+    } else {
+        "이 팀에는 아직 관리자가 없어요. 팀을 만든 사람이 관리자 아이디·비밀번호를 정해 주세요. 한 번 정하면 바꿀 수 없고, 비밀번호는 다시 볼 수 없어요."
+    }));
+    let (i2, p2) = (id_in.clone(), pw_in.clone());
+    add(el("div").cls("inline").child(id_in).child(pw_in).kid(el("button").attr("type", "button").text(if exists { "관리자 로그인" } else { "관리자 정하기" }).click(move |_| {
+        let args = json!({ "adminId": val(&i2), "password": val(&p2) });
+        set_val(&p2, "");
+        if exists {
+            team_action(async move { call("team:admin-login", args).await }, "관리자로 로그인했어요.".into());
+        } else {
+            if !confirm("이 아이디·비밀번호로 이 팀의 관리자를 정할까요? 한 번 정하면 바꿀 수 없어요.") {
+                return;
+            }
+            team_action(async move { call("team:admin-setup", args).await }, "관리자를 정했어요. 다른 컴퓨터에서는 이 아이디·비밀번호로 로그인하면 돼요.".into());
+        }
+    })));
 }
 
 fn team_action<F: Future<Output = Result<Value, String>> + 'static>(fut: F, ok: String) {
@@ -146,10 +205,14 @@ fn team_action<F: Future<Output = Result<Value, String>> + 'static>(fut: F, ok: 
     spawn(async move {
         match fut.await {
             Ok(info) => {
-                set_text("teamMsg", &ok);
+                let notice = s(&info, "notice");
+                set_text("teamMsg", if notice.is_empty() { &ok } else { &notice });
                 render_team(Some(info)).await;
-                set_val(&by_id("teamName").unwrap(), "");
-                set_val(&by_id("joinCode").unwrap(), "");
+                for id in ["teamName", "joinCode", "adminId", "adminPw"] {
+                    if let Some(e) = by_id(id) {
+                        set_val(&e, "");
+                    }
+                }
             }
             Err(e) => set_text("teamMsg", &e),
         }
@@ -321,8 +384,8 @@ pub fn bind() {
         toggle(&c, "hidden", false);
     });
     click("teamCreate", |_| {
-        let args = json!({ "name": v("teamName"), "displayName": v("displayName") });
-        team_action(async move { call("team:create", args).await }, "팀을 만들었어요. 참여 코드를 팀원에게 알려 주세요.".into())
+        let args = json!({ "name": v("teamName"), "displayName": v("displayName"), "adminId": v("adminId"), "adminPassword": v("adminPw") });
+        team_action(async move { call("team:create", args).await }, "팀을 만들었어요. 참여 코드를 팀원에게 알려 주세요. 관리자 아이디·비밀번호는 기억해 두세요.".into())
     });
     click("teamJoinBtn", |_| {
         let args = json!({ "code": v("joinCode"), "displayName": v("displayName") });
