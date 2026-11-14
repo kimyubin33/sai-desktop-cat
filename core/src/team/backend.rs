@@ -305,9 +305,10 @@ impl Backend {
                     .map(|w| {
                         let name = format!("{root}/{}", w.s("path"));
                         let fields = encode_fields(w["data"].as_object().unwrap_or(&Map::new()));
+                        let current = w.get("updateTime").map(|v| json!({ "updateTime": v })).unwrap_or_else(|| json!({ "exists": true }));
                         match w.s("op").as_str() {
                             "delete" => json!({ "delete": name }),
-                            "update" => json!({ "update": { "name": name, "fields": fields }, "updateMask": { "fieldPaths": w.arr("fields") }, "currentDocument": { "exists": true } }),
+                            "update" => json!({ "update": { "name": name, "fields": fields }, "updateMask": { "fieldPaths": w.arr("fields") }, "currentDocument": current }),
                             _ => json!({ "update": { "name": name, "fields": fields }, "currentDocument": { "exists": false } }),
                         }
                     })
@@ -317,7 +318,11 @@ impl Backend {
             }
             Backend::Memory(m) => m.tx(|d| {
                 for w in &writes {
-                    let exists = d["docs"].get(w.s("path")).is_some();
+                    let doc = d["docs"].get(w.s("path"));
+                    let exists = doc.is_some();
+                    if w.get("expected").is_some() && doc != w.get("expected") {
+                        return Err("작업이 변경됐어요. 배분을 다시 계산해 주세요.".into());
+                    }
                     match w.s("op").as_str() {
                         "create" if exists => return Err("이미 있는 문서예요.".to_string()),
                         "update" if !exists => return Err("문서가 없어요.".to_string()),
@@ -604,6 +609,46 @@ impl Backend {
         self.list_docs(&format!("teams/{team_id}/projects")).await
     }
 
+    pub async fn check_brief_project(&self, team_id: &str, project_id: &str) -> Result<()> {
+        // 프로젝트 읽기는 현재 팀원만 허용된다. 로컬 시험 서버에도 같은 경계를 적용한다.
+        if let Backend::Memory(m) = self {
+            if self.get_doc(&format!("teams/{team_id}/members/{}", m.uid)).await?.is_none() {
+                return err("팀원만 프로젝트 기획서를 볼 수 있어요.");
+            }
+        }
+        if self.get_doc(&format!("teams/{team_id}/projects/{project_id}")).await?.is_none() {
+            return err("프로젝트를 찾을 수 없어요.");
+        }
+        Ok(())
+    }
+
+    pub async fn get_brief(&self, team_id: &str, project_id: &str) -> Result<Option<Value>> {
+        if matches!(self, Backend::Memory(_)) {
+            self.check_brief_project(team_id, project_id).await?;
+        }
+        self.get_doc(&format!("teams/{team_id}/projects/{project_id}/briefs/current")).await
+    }
+
+    pub async fn put_brief(&self, team_id: &str, project_id: &str, data: Value) -> Result<()> {
+        let path = format!("teams/{team_id}/projects/{project_id}/briefs/current");
+        match self {
+            Backend::Firebase(f) => {
+                // 문서가 없으면 만들고, 있으면 한 번의 쓰기로 이전 기획서를 교체한다.
+                let doc = json!({ "fields": encode_fields(data.as_object().ok_or("기획서 형식을 확인해 주세요.")?) });
+                f.req("PATCH", &format!("/{path}"), Some(doc), "").await?.ok_or("프로젝트를 찾을 수 없어요.")?;
+                Ok(())
+            }
+            Backend::Memory(m) => {
+                self.check_brief_project(team_id, project_id).await?;
+                if data.s("by") != m.uid {
+                    return err("현재 팀원으로만 기획서를 저장할 수 있어요.");
+                }
+                m.tx(|db| db["docs"][&path] = data);
+                Ok(())
+            }
+        }
+    }
+
     pub async fn update_project(&self, team_id: &str, project_id: &str, patch: Value) -> Result<()> {
         let keys: Vec<String> = patch.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
         self.patch_doc(&format!("teams/{team_id}/projects/{project_id}"), patch, &keys).await
@@ -611,6 +656,35 @@ impl Backend {
 
     pub async fn create_task(&self, team_id: &str, project_id: &str, data: Value) -> Result<String> {
         self.create_doc(&format!("teams/{team_id}/projects/{project_id}/tasks"), None, data).await
+    }
+
+    /// 미리 본 내용과 같은 작업만 수정하고, 새 작업과 함께 한 번의 커밋으로 반영한다.
+    pub async fn commit_allocation(&self, team: &str, project: &str, creates: Vec<(String, Value)>, updates: Vec<(Value, String)>) -> Result<()> {
+        let coll = format!("teams/{team}/projects/{project}/tasks");
+        let mut writes: Vec<_> = creates.into_iter().map(|(id, data)| json!({
+            "op": "create", "path": format!("{coll}/{id}"), "data": data
+        })).collect();
+        for (expected, uid) in updates {
+            let path = format!("{coll}/{}", expected.s("id"));
+            let mut w = json!({ "op": "update", "path": path, "data": { "assignee": uid, "accepted": false }, "fields": ["assignee","accepted"] });
+            match self {
+                Backend::Firebase(f) => {
+                    let raw = f.req("GET", &format!("/{path}"), None, "").await?.ok_or("작업이 삭제됐어요. 배분을 다시 계산해 주세요.")?;
+                    if decode_doc(&raw).as_ref() != Some(&expected) {
+                        return err("작업이 변경됐어요. 배분을 다시 계산해 주세요.");
+                    }
+                    w["updateTime"] = json!(raw.os("updateTime").ok_or("작업의 변경 시각을 읽지 못했어요.")?);
+                }
+                Backend::Memory(_) => {
+                    let mut value = expected;
+                    value.as_object_mut().ok_or("작업 형식을 확인해 주세요.")?.remove("id");
+                    w["expected"] = value;
+                }
+            }
+            writes.push(w);
+        }
+        if !writes.is_empty() { self.commit(writes).await?; }
+        Ok(())
     }
 
     pub async fn list_tasks(&self, team_id: &str, project_id: &str) -> Result<Vec<Value>> {
@@ -840,7 +914,7 @@ fn same_name(name: &str) -> String {
     format!("이 팀에는 이미 \"{}\"(이)라는 이름의 팀원이 있어요. 다른 이름으로 들어와 주세요. 예전에 쓰던 내 이름이라면 관리자에게 그 이름을 내보내 달라고 해 주세요.", name.trim())
 }
 
-fn denied(e: &str) -> bool {
+pub(crate) fn denied(e: &str) -> bool {
     e.contains("(403)") || e.contains("PERMISSION_DENIED")
 }
 

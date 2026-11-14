@@ -3,7 +3,7 @@ resolver = "2"
 members = ["core", "src-tauri", "ui-app", "xtask"]
 
 [workspace.package]
-version = "0.9.9"
+version = "0.9.10"
 edition = "2021"
 license = "UNLICENSED"
 

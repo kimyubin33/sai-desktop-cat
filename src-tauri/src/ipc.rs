@@ -290,11 +290,42 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
         }
 
         // ---------- 협업 ----------
+        "collab:get-brief" | "collab:save-brief" => {
+            let team = hub.active();
+            if x["teamId"].as_str() != Some(team.team_id()?.as_str()) {
+                return Err("선택한 팀이 바뀌었어요. 프로젝트를 다시 열어 주세요.".into());
+            }
+            let project = x.s("projectId");
+            if ch == "collab:get-brief" {
+                Ok(team.get_project_brief(&project).await?.unwrap_or(Value::Null))
+            } else {
+                team.save_project_brief(&project, &x.s("name"), &x.s("text")).await
+            }
+        }
         "collab:view" => {
             if x.b("refresh") && hub.active().is_connected() {
                 sync_now(a).await;
             }
             Ok(collab_view(a))
+        }
+        "collab:ai-plan" | "collab:apply-ai-plan" => {
+            let team = hub.active();
+            let team_id = team.team_id()?;
+            let pid = x.s("projectId");
+            if x["teamId"] != team_id { return Err("보고 있는 팀이 바뀌었어요.".into()); }
+            let scope = (team_id.clone(), pid.clone());
+            if ch == "collab:ai-plan" {
+                let plan = team.calculate_allocation(&a.ai, &pid, &x.s("provider")).await?;
+                let preview = plan.preview();
+                a.allocation_plans.lock().unwrap().insert(scope, plan);
+                Ok(preview)
+            } else {
+                let plan = a.allocation_plans.lock().unwrap().get(&scope)
+                    .filter(|p| p.matches(&team_id, &pid, &x.s("planId"))).cloned()
+                    .ok_or("배분 제안이 바뀌었어요. 다시 계산해 주세요.")?;
+                team.apply_allocation(&plan, &x.strs("selected")).await?;
+                Ok(collab_view(a))
+            }
         }
         "collab:plan" => {
             if hub.active().is_connected() {
@@ -585,6 +616,14 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             ok()
         }
         "ai:test" => Ok(a.ai.test().await),
+        "ai:set-openai" => {
+            if !x.is_object() || ["key", "model"].iter().any(|k| x.get(*k).is_some_and(|v| !v.is_string())) {
+                return Err("GPT 연결 설정의 형식이 올바르지 않아요.".into());
+            }
+            a.ai.configure_openai(x["key"].as_str(), x["model"].as_str())?;
+            Ok(public_settings(a))
+        }
+        "ai:test-openai" => Ok(a.ai.test_openai().await),
         // 보고 있는 팀에 내 키를 공유하거나 끈다
         "ai:share-team" => {
             let Some(key) = a.ai.own_key() else { return Err("먼저 내 Claude API 키를 저장해 주세요.".into()) };
@@ -607,6 +646,7 @@ fn public_settings(a: &Arc<App>) -> Value {
         "catName": s["catName"], "frequency": s["frequency"], "quietUntil": s["quietUntil"], "dnd": s["dnd"],
         "retentionDays": s["retentionDays"], "ai": s["ai"], "hasApiKey": a.ai.has_key(),
         "hasOwnKey": a.ai.own_key().is_some(), "usingSharedKey": a.ai.using_shared(),
+        "hasOpenAiKey": a.ai.has_openai_key(), "openAiModel": a.ai.openai_model(), "openAiKeyPersistent": cfg!(windows),
         "teamConnected": a.hub.active().is_connected(), "teamName": a.hub.active().name(),
         "teamShare": a.hub.active().claude_status(),
     })
@@ -685,6 +725,7 @@ fn collab_view(a: &Arc<App>) -> Value {
         .unwrap_or_default();
     json!({
         "connected": true,
+        "ai": { "hasClaudeKey": a.ai.has_project_claude_key(&t), "hasOpenaiKey": a.ai.has_openai_key() },
         "teamId": t.id,
         "teamName": t.name(),
         "teams": a.hub.teams(),

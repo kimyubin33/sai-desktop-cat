@@ -1,6 +1,8 @@
 //! 협업: 자기소개·프로젝트·작업을 팀 서버와 주고받고, 배분 제안·진행 확인을 계산한다.
+mod brief;
 pub mod docs;
 pub mod planner;
+pub mod ai_plan;
 pub mod progress;
 
 use crate::team::Team;

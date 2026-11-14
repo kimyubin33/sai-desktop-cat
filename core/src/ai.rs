@@ -1,4 +1,4 @@
-//! Claude API.
+//! Claude 대화와 프로젝트 업무 배분에 쓰는 AI 연결.
 //!  - "그냥 이야기할래요": 일반 Claude 대화처럼 전체 대화를 보고 길이 제한 없이 (스트리밍)
 //!  - 상담 흐름: 단계별 의도는 앱의 규칙이 정하고, AI는 문장과 정리 품질만 돕는다
 //!  - 시간표 대화: 도구(tool use)로 시간표를 직접 고친다
@@ -13,6 +13,8 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::sync::Mutex;
 use std::time::Duration;
+
+mod openai;
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -50,6 +52,9 @@ pub struct Ai {
     pub last_error: Mutex<Option<String>>,
     /// 팀에서 공유받은 키 (내 키가 없을 때만 쓴다)
     shared: Mutex<Option<String>>,
+    // Windows 밖에서는 GPT 키를 파일에 쓰지 않는다.
+    #[cfg(not(windows))]
+    openai_session_key: Mutex<Option<String>>,
 }
 
 async fn post(api_key: &str, body: &Value, timeout: Duration) -> Result<reqwest::Response> {
@@ -151,14 +156,23 @@ fn transcript(s: &Session, limit: usize) -> String {
 
 impl Ai {
     pub fn new(settings: Store) -> Ai {
-        Ai { settings, last_error: Mutex::new(None), shared: Mutex::new(None) }
+        Ai {
+            settings,
+            last_error: Mutex::new(None),
+            shared: Mutex::new(None),
+            #[cfg(not(windows))]
+            openai_session_key: Mutex::new(None),
+        }
     }
 
     pub fn config(&self) -> Config {
         let s = self.settings.get();
         let key = self.own_key().or_else(|| self.shared.lock().unwrap().clone());
-        let model = s["ai"].os("model").filter(|m| !m.is_empty()).unwrap_or_else(|| "claude-sonnet-5-5".into());
-        Config { enabled: s["ai"].b("enabled") && key.is_some(), api_key: key, model, name: s.s("catName") }
+        Config { enabled: s["ai"].b("enabled") && key.is_some(), api_key: key, model: self.claude_model(), name: s.s("catName") }
+    }
+
+    fn claude_model(&self) -> String {
+        self.settings.read(|s| s["ai"].os("model").filter(|m| !m.is_empty()).unwrap_or_else(|| "claude-sonnet-5-5".into()))
     }
 
     pub fn set_key(&self, key: &str) {

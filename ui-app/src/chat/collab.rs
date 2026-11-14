@@ -1,4 +1,6 @@
 //! 협업 탭: 자기소개 · 프로젝트 · 작업 · 배분 제안 · 진행 상태 · 내 작업 시간표
+mod allocation;
+
 use super::{arr, b, n, num_text, s, schedule};
 use crate::api::call;
 use crate::dom::*;
@@ -14,6 +16,8 @@ use web_sys::{Element, HtmlElement};
 struct C {
     view: Option<Value>,
     plan: Option<Value>,
+    render_id: u64,
+    team_id: Option<String>,
     focus: Option<String>,
     editing: Option<String>,
     sched: Option<Value>,
@@ -55,8 +59,12 @@ fn act<F: Future<Output = Result<Value, String>> + 'static>(fut: F, ok: Option<S
         return;
     }
     BUSY.with(|b| b.set(true));
+    let team_id = cs(|state| state.team_id.clone());
     spawn(async move {
-        match fut.await {
+        let response = fut.await;
+        BUSY.with(|b| b.set(false));
+        if !cs(|state| state.team_id == team_id) { return; }
+        match response {
             Ok(v) => {
                 if v.get("connected").is_some() {
                     cs(|c| c.view = Some(v));
@@ -70,7 +78,6 @@ fn act<F: Future<Output = Result<Value, String>> + 'static>(fut: F, ok: Option<S
             }
             Err(e) => flash(&e, true),
         }
-        BUSY.with(|b| b.set(false));
     });
 }
 
@@ -88,22 +95,52 @@ pub fn focus(id: &str) {
     }
 }
 
+pub(super) fn switch_team(team: &str) {
+    let changed = cs(|state| {
+        if state.team_id.as_deref() == Some(team) {
+            return false;
+        }
+        state.team_id = Some(team.to_owned());
+        state.render_id += 1;
+        state.view = None;
+        state.plan = None;
+        state.editing = None;
+        true
+    });
+    if changed {
+        allocation::leave_project();
+        if let Some(root) = by_id("collabRoot") {
+            clear(&root);
+        }
+    }
+}
+
+fn accepts_view(request: u64, view: &Value) -> bool {
+    cs(|state| state.render_id == request && (!b(view, "connected")
+        || state.team_id.as_deref().is_none_or(|id| view["teamId"] == id)))
+}
+
 /// 저장된 내용을 먼저 보여 주고, 필요하면 서버와 동기화한 뒤 다시 그린다
 pub fn render(refresh: bool) {
+    let request = cs(|state| { state.render_id += 1; state.render_id });
+    allocation::refresh_on_enter();
     spawn(async move {
         match call("collab:view", json!({ "refresh": false })).await {
             Ok(v) => {
+                if !accepts_view(request, &v) { return; }
                 let connected = b(&v, "connected");
                 cs(|c| c.view = Some(v));
                 draw();
                 if refresh && connected {
                     if let Ok(v) = call("collab:view", json!({ "refresh": true })).await {
+                        if !accepts_view(request, &v) { return; }
                         cs(|c| c.view = Some(v));
                         draw();
                     }
                 }
             }
             Err(e) => {
+                if !cs(|state| state.render_id == request) { return; }
                 cs(|c| c.view = Some(json!({ "connected": false, "error": e })));
                 draw();
             }
@@ -123,6 +160,7 @@ fn draw() {
         let _ = root.append_child(&e);
     };
     if !b(&v, "connected") {
+        allocation::leave_project();
         add(el("div")
             .cls("empty-state")
             .kid(el("p").text("협업 기능은 팀에 연결한 뒤 쓸 수 있어요."))
@@ -135,9 +173,12 @@ fn draw() {
     if arr(&v, "teams").len() > 1 {
         add(el("div").cls("team-banner").text(&format!("{} 팀의 협업이에요. 다른 팀은 위쪽 이름 아래에서 바꿀 수 있어요.", s(&v, "teamName"))).build());
     }
-    add(schedule_section());
-    add(profile_section(&v));
     add(project_section(&v));
+    if v["project"].is_object() {
+        add(allocation::section(&v));
+    }
+    add(profile_section(&v));
+    add(schedule_section());
     if v["project"].is_object() {
         add(plan_section(&v));
         add(task_section(&v));
@@ -289,13 +330,32 @@ fn project_section(v: &Value) -> HtmlElement {
     if projects.is_empty() {
         return bx.kid(el("strong").text("프로젝트")).kid(el("p").cls("hint").text("아직 프로젝트가 없어요. 목표와 마감일부터 적어 주세요.")).child(new_form).build();
     }
-    let sel = el("select").build();
+    let sel = el("select").attr("aria-label", "프로젝트 선택").build();
     let pid = s(p, "id");
     for x in &projects {
         let _ = sel.append_child(&el("option").attr("value", &s(x, "id")).text(&s(x, "title")).flag("selected", s(x, "id") == pid).0);
     }
     let s2 = sel.clone();
-    on(&sel, "change", move |_| act(c("collab:set-active", json!({ "id": val(&s2) })), None));
+    on(&sel, "change", move |_| {
+        if BUSY.with(|busy| busy.get()) {
+            set_val(&s2, &s(&view()["project"], "id"));
+            return;
+        }
+        cs(|state| {
+            state.render_id += 1;
+            state.plan = None;
+            state.editing = None;
+        });
+        allocation::leave_project();
+        if let Some(panel) = by_id("aiAllocation") { panel.remove(); }
+        let id = val(&s2);
+        act(async move {
+            match call("collab:set-active", json!({ "id": id })).await {
+                Ok(view) => Ok(view),
+                Err(error) => { draw(); Err(error) }
+            }
+        }, None);
+    });
     let meta = if p.is_object() {
         let deadline = s(p, "deadline");
         let dl_text = if deadline.is_empty() {
@@ -332,12 +392,17 @@ fn plan_section(v: &Value) -> HtmlElement {
     let plan = cs(|c| c.plan.clone());
     let pid = s(&v["project"], "id");
     let p2 = pid.clone();
+    let team = s(v, "teamId");
     let bx = el("div")
         .cls("block plan")
         .kid(el("div").cls("inline").kid(el("strong").text("배분 제안")).kid(el("button").cls("primary").text(if plan.is_some() { "다시 계산" } else { "배분 제안 받기" }).click(move |_| {
             let pid = p2.clone();
+            let team = team.clone();
             spawn(async move {
-                match call("collab:plan", json!({ "projectId": pid })).await {
+                let result = call("collab:plan", json!({ "projectId": pid })).await;
+                let active = view();
+                if active["teamId"] != team || active["project"]["id"] != pid { return; }
+                match result {
                     Ok(r) => {
                         cs(|c| c.plan = Some(r));
                         draw();
