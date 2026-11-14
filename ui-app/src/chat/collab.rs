@@ -311,7 +311,20 @@ fn project_section(v: &Value) -> HtmlElement {
     } else {
         None
     };
-    bx.kid(el("div").cls("inline").kid(el("strong").text("프로젝트")).child(sel)).maybe(meta).kid(el("details").kid(el("summary").text("새 프로젝트 만들기")).child(new_form)).build()
+    let report = if p.is_object() {
+        let (pid, drive) = (s(p, "id"), b(&v["google"], "drive"));
+        Some(el("div").cls("inline").kid(el("button").text("현황을 Google 문서로 기록").attr("title", "작업·담당·진행 상태·팀원별 부담·팀 자료를 정리한 문서를 Drive 에 만들고 팀 자료에 붙여요").click(move |_| {
+            if !drive {
+                flash("현황 기록은 Google Drive 에 만들어요. 설정 → 외부 연결에서 Google 로 (다시) 로그인해 주세요.", true);
+                return;
+            }
+            flash("지금 현황을 정리해 문서로 만드는 중…", false);
+            act(c("collab:report", json!({ "projectId": pid })), ok("현황 기록을 만들어 열었어요. 팀 자료에도 붙였어요."));
+        })))
+    } else {
+        None
+    };
+    bx.kid(el("div").cls("inline").kid(el("strong").text("프로젝트")).child(sel)).maybe(meta).maybe(report).kid(el("details").kid(el("summary").text("새 프로젝트 만들기")).child(new_form)).build()
 }
 
 // ---------- 배분 제안 ----------
@@ -442,6 +455,8 @@ fn task_section(v: &Value) -> HtmlElement {
     tasks.sort_by_key(|t| order(&s(t, "status")));
     let my_uid = s(v, "myUid");
     let project_id = s(&v["project"], "id");
+    let all_files = arr(v, "files");
+    let drive = b(&v["google"], "drive");
     for t in &tasks {
         let id = s(t, "id");
         let status = s(t, "status");
@@ -519,6 +534,58 @@ fn task_section(v: &Value) -> HtmlElement {
             }
         }));
         let _ = card.append_child(&actions);
+
+        // 작업 노트 · 결과물 (Google Drive)
+        let files: Vec<Value> = all_files.iter().filter(|f| s(f, "taskId") == id).cloned().collect();
+        let work = el("div").cls("task-files").build();
+        for f in &files {
+            let u = s(f, "url");
+            let label = if s(f, "kind") == "note" { format!("노트: {}", s(f, "name")) } else { format!("자료: {}", s(f, "name")) };
+            let _ = work.append_child(&el("button").cls("link").text(&label).attr("title", &format!("{} 올림", s(f, "byName"))).click(move |_| open_url(u.clone())).0);
+        }
+        let has_note = files.iter().any(|f| s(f, "kind") == "note");
+        let (p_n, t_n) = (project_id.clone(), id.clone());
+        let _ = work.append_child(
+            &el("button")
+                .text(if has_note { "작업 노트 열기" } else { "작업 노트 만들기" })
+                .attr("title", "팀이 함께 쓰는 Google 문서 (진행 메모·결과물·검토 의견)")
+                .click(move |_| {
+                    if !drive {
+                        flash("작업 노트는 Google Drive 에 만들어요. 설정 → 외부 연결에서 Google 로 (다시) 로그인해 주세요.", true);
+                        return;
+                    }
+                    flash(if has_note { "작업 노트를 여는 중…" } else { "작업 노트를 만드는 중…" }, false);
+                    act(c("collab:task-note", json!({ "projectId": p_n, "taskId": t_n })), ok(if has_note { "작업 노트를 열었어요." } else { "작업 노트를 만들어 열었어요. 팀원 모두 고칠 수 있어요." }));
+                })
+                .0,
+        );
+        let picker = el("input").attr("type", "file").flag("multiple", true).cls("hidden").build();
+        {
+            let (pk, p_u, t_u) = (picker.clone(), project_id.clone(), id.clone());
+            on(&picker, "change", move |_| {
+                let inp: &web_sys::HtmlInputElement = pk.unchecked_ref();
+                if let Some(fl) = inp.files() {
+                    upload_files(fl, p_u.clone(), t_u.clone(), true);
+                }
+                inp.set_value("");
+            });
+        }
+        let pk2 = picker.clone();
+        let _ = work.append_child(
+            &el("button")
+                .cls("link")
+                .text("결과물 올리기")
+                .click(move |_| {
+                    if !drive {
+                        flash("결과물은 Google Drive 에 올려요. 설정 → 외부 연결에서 Google 로 (다시) 로그인해 주세요.", true);
+                        return;
+                    }
+                    pk2.click();
+                })
+                .0,
+        );
+        let _ = work.append_child(&picker);
+        let _ = card.append_child(&work);
         let _ = bx.append_child(&card);
     }
     bx
@@ -634,7 +701,7 @@ fn open_url(url: String) {
 }
 
 /// 고른(또는 끌어다 놓은) 파일을 읽어 앱으로 보낸다. 앱이 내 Drive 에 올리고 팀 자료에 붙인다
-fn upload_files(files: web_sys::FileList, project_id: String, task_id: String) {
+fn upload_files(files: web_sys::FileList, project_id: String, task_id: String, edit: bool) {
     let list: Vec<web_sys::File> = (0..files.length()).filter_map(|i| files.get(i)).collect();
     if list.is_empty() {
         return;
@@ -656,12 +723,12 @@ fn upload_files(files: web_sys::FileList, project_id: String, task_id: String) {
             };
             use base64::Engine;
             let data = base64::engine::general_purpose::STANDARD.encode(&buf);
-            let args = json!({ "projectId": project_id, "taskId": task_id, "name": name, "mime": f.type_(), "data": data });
+            let args = json!({ "projectId": project_id, "taskId": task_id, "name": name, "mime": f.type_(), "data": data, "edit": edit });
             match call("collab:upload-file", args).await {
                 Ok(v) => {
                     cs(|c| c.view = Some(v));
                     draw();
-                    flash(&format!("{name} 을(를) 올렸어요. 팀원 모두 볼 수 있어요."), false);
+                    flash(&format!("{name} 을(를) 올렸어요. {}", if edit { "팀원 모두 열어서 고칠 수 있어요." } else { "팀원 모두 볼 수 있어요." }), false);
                 }
                 Err(e) => {
                     flash(&e, true);
@@ -683,7 +750,7 @@ fn files_section(v: &Value) -> HtmlElement {
         .cls("block files")
         .id("filesBox")
         .kid(el("strong").text("팀 자료 (Google Drive)"))
-        .kid(el("p").cls("hint").text("파일을 여기에 끌어다 놓거나 골라 올리면 내 Google Drive 의 \"사이 - 팀 이름\" 폴더에 들어가고, 링크가 있는 사람은 볼 수 있게 바뀌어 팀원 모두의 사이에 보여요. 이미 Drive 에 있는 파일은 공유 링크를 붙여 넣으면 돼요."))
+        .kid(el("p").cls("hint").text("파일을 여기에 끌어다 놓거나 골라 올리면 내 Google Drive 의 \"사이 - 팀 이름\" 폴더에 들어가고, 링크로 팀원과 공유돼 모두의 사이에 보여요. Google Drive 의 \"링크가 있는 사용자 - 편집자\"처럼 팀원이 바로 열어 함께 고칠 수 있어요. 이미 Drive 에 있는 파일은 공유 링크를 붙여 넣으면 돼요 (권한은 Drive 에서 정한 그대로)."))
         .build();
     let add = |e: El| {
         let _ = bx.append_child(&e.0);
@@ -707,10 +774,32 @@ fn files_section(v: &Value) -> HtmlElement {
         let sub = format!("{}{task}{}{}", s(f, "byName"), size_text(n(f, "size")), if when > 0.0 { format!(" · {}", super::fmt_date(when)) } else { String::new() });
         let (u2, fid, p2) = (url.clone(), s(f, "id"), pid.clone());
         let name = s(f, "name");
+        let kind = match s(f, "kind").as_str() {
+            "note" => "작업 노트 · ",
+            "report" => "현황 기록 · ",
+            _ => "",
+        };
+        let access = s(f, "access");
+        let (pill_cls, pill) = match access.as_str() {
+            "edit" => ("status-pill sent", "팀원 편집 가능"),
+            "view" => ("status-pill", "보기만"),
+            _ => ("status-pill", "Drive 권한 그대로"),
+        };
+        let toggle_btn = if b(f, "mine") && (access == "edit" || access == "view") {
+            let (p3, f3) = (pid.clone(), s(f, "id"));
+            let to_edit = access != "edit";
+            Some(el("button").cls("link").text(if to_edit { "편집 허용 켜기" } else { "보기만으로" }).click(move |_| {
+                act(c("collab:file-access", json!({ "projectId": p3, "id": f3, "edit": to_edit })), ok(if to_edit { "이제 팀원도 고칠 수 있어요." } else { "이제 팀원은 보기만 할 수 있어요." }));
+            }))
+        } else {
+            None
+        };
         let item = el("div")
             .cls("item")
-            .kid(el("div").cls("main").kid(el("div").cls("title").text(&name).attr("title", &url)).kid(el("div").cls("sub").text(&sub)))
+            .kid(el("div").cls("main").kid(el("div").cls("title").text(&format!("{kind}{name}")).attr("title", &url)).kid(el("div").cls("sub").text(&sub)))
+            .kid(el("span").cls(pill_cls).text(pill))
             .kid(el("button").text("열기").click(move |_| open_url(u2.clone())))
+            .maybe(toggle_btn)
             .maybe(if b(f, "mine") {
                 Some(el("button").cls("link").text("빼기").attr("title", "팀 자료에서만 빼요. Drive 의 파일은 그대로 있어요.").click(move |_| {
                     if confirm(&format!("\"{name}\"을(를) 팀 자료에서 뺄까요? Drive 의 파일은 지워지지 않아요.")) {
@@ -730,14 +819,16 @@ fn files_section(v: &Value) -> HtmlElement {
         let _ = task_sel.append_child(&el("option").attr("value", &s(t, "id")).text(&s(t, "title")).0);
     }
 
+    // 팀원도 고칠 수 있게 (Google 의 "링크가 있는 사용자 - 편집자" 와 같다)
+    let edit_cb = el("input").attr("type", "checkbox").flag("checked", true).build();
     // 올리기: 고르기 + 끌어다 놓기
     let input = el("input").attr("type", "file").flag("multiple", true).cls("hidden").build();
     {
-        let (i2, p2, ts) = (input.clone(), pid.clone(), task_sel.clone());
+        let (i2, p2, ts, ec) = (input.clone(), pid.clone(), task_sel.clone(), edit_cb.clone());
         on(&input, "change", move |_| {
             let inp: &web_sys::HtmlInputElement = i2.unchecked_ref();
             if let Some(fl) = inp.files() {
-                upload_files(fl, p2.clone(), val(&ts));
+                upload_files(fl, p2.clone(), val(&ts), checked(&ec));
             }
             inp.set_value("");
         });
@@ -758,7 +849,7 @@ fn files_section(v: &Value) -> HtmlElement {
         });
         let d3 = drop.clone();
         on(&drop, "dragleave", move |_| toggle(&d3, "over", false));
-        let (d4, p2, ts) = (drop.clone(), pid.clone(), task_sel.clone());
+        let (d4, p2, ts, ec) = (drop.clone(), pid.clone(), task_sel.clone(), edit_cb.clone());
         on(&drop, "drop", move |e| {
             e.prevent_default();
             toggle(&d4, "over", false);
@@ -768,11 +859,12 @@ fn files_section(v: &Value) -> HtmlElement {
             }
             let de: &web_sys::DragEvent = e.unchecked_ref();
             if let Some(fl) = de.data_transfer().and_then(|d| d.files()) {
-                upload_files(fl, p2.clone(), val(&ts));
+                upload_files(fl, p2.clone(), val(&ts), checked(&ec));
             }
         });
     }
     let _ = bx.append_child(&el("div").cls("inline").kid(el("span").text("어느 작업의 자료인가요?")).child(task_sel.clone()).0);
+    let _ = bx.append_child(&el("label").cls("check").child(edit_cb).txt(" 팀원도 열어서 고칠 수 있게 (끄면 보기만)").0);
     let _ = bx.append_child(&drop);
     let _ = bx.append_child(&input);
 

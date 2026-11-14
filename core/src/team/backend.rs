@@ -429,6 +429,11 @@ impl Backend {
         self.list_docs(&format!("teams/{team_id}/projects/{project_id}/files")).await
     }
 
+    pub async fn update_file(&self, team_id: &str, project_id: &str, file_id: &str, patch: Value) -> Result<()> {
+        let keys: Vec<String> = patch.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+        self.patch_doc(&format!("teams/{team_id}/projects/{project_id}/files/{file_id}"), patch, &keys).await
+    }
+
     pub async fn delete_file(&self, team_id: &str, project_id: &str, file_id: &str) -> Result<()> {
         self.delete_doc(&format!("teams/{team_id}/projects/{project_id}/files/{file_id}")).await
     }

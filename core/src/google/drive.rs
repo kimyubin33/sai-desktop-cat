@@ -100,8 +100,8 @@ async fn folder(a: &GoogleAuth, name: &str) -> Result<String> {
 
 const FIELDS: &str = "id,name,mimeType,size,webViewLink";
 
-/// 파일을 내 Drive 의 팀 폴더에 올리고, 링크가 있는 사람은 볼 수 있게 한다
-pub async fn upload(a: &GoogleAuth, folder_name: &str, name: &str, mime: &str, bytes: Vec<u8>) -> Result<Value> {
+/// 파일을 내 Drive 의 팀 폴더에 올리고, 링크가 있는 사람은 보거나(edit=false) 고칠 수 있게(edit=true) 한다
+pub async fn upload(a: &GoogleAuth, folder_name: &str, name: &str, mime: &str, bytes: Vec<u8>, edit: bool) -> Result<Value> {
     if bytes.is_empty() {
         return err("빈 파일이에요.");
     }
@@ -113,15 +113,38 @@ pub async fn upload(a: &GoogleAuth, folder_name: &str, name: &str, mime: &str, b
     let loc = create_resumable(a, &json!({ "name": name, "parents": [parent] }), mime, bytes.len()).await?;
     let f = put_bytes(a, &format!("{loc}"), mime, bytes).await?;
     let id = f.s("id");
-    share_link(a, &id).await?;
+    set_access(a, &id, edit).await?;
     let d = send(a, client().get(format!("{API}/files/{id}")).query(&[("fields", FIELDS)])).await?;
     Ok(d)
 }
 
-/// 링크가 있는 사람은 볼 수 있게 (팀원이 Google 계정을 몰라도 열리도록)
-async fn share_link(a: &GoogleAuth, id: &str) -> Result<()> {
-    send(a, client().post(format!("{API}/files/{id}/permissions")).json(&json!({ "role": "reader", "type": "anyone" }))).await?;
+/// 링크가 있는 사람의 권한: 보기(reader) 또는 편집(writer). 팀원이 Google 계정을 몰라도 열리도록
+pub async fn set_access(a: &GoogleAuth, id: &str, edit: bool) -> Result<()> {
+    let role = if edit { "writer" } else { "reader" };
+    let d = send(a, client().get(format!("{API}/files/{id}/permissions")).query(&[("fields", "permissions(id,type,role)")])).await?;
+    let existing = d["permissions"].as_array().and_then(|l| l.iter().find(|p| p.s("type") == "anyone").cloned());
+    match existing {
+        Some(p) if p.s("role") == role => {}
+        Some(p) => {
+            send(a, client().patch(format!("{API}/files/{id}/permissions/{}", p.s("id"))).json(&json!({ "role": role }))).await?;
+        }
+        None => {
+            send(a, client().post(format!("{API}/files/{id}/permissions")).json(&json!({ "role": role, "type": "anyone" }))).await?;
+        }
+    }
     Ok(())
+}
+
+/// HTML 내용으로 Google 문서를 만든다 (Drive 가 문서로 바꿔 준다)
+pub async fn create_doc(a: &GoogleAuth, folder_name: &str, title: &str, html: &str, edit: bool) -> Result<Value> {
+    let parent = folder(a, folder_name).await?;
+    let body = html.as_bytes().to_vec();
+    let meta = json!({ "name": title, "parents": [parent], "mimeType": "application/vnd.google-apps.document" });
+    let loc = create_resumable(a, &meta, "text/html", body.len()).await?;
+    let f = put_bytes(a, &loc, "text/html", body).await?;
+    let id = f.s("id");
+    set_access(a, &id, edit).await?;
+    send(a, client().get(format!("{API}/files/{id}")).query(&[("fields", FIELDS)])).await
 }
 
 /// Drive 링크에서 파일 id 찾기

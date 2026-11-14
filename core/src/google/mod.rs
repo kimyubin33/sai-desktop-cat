@@ -245,7 +245,27 @@ impl Google {
     }
 
     // ---------- 팀 자료 (Drive) ----------
-    pub async fn upload_file(&self, team_name: &str, name: &str, mime: &str, bytes: Vec<u8>) -> Result<Value> {
+    fn drive_auth(&self) -> Result<std::sync::Arc<oauth::GoogleAuth>> {
+        if !self.is_ready() {
+            return err("Google Drive 를 쓰려면 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
+        }
+        if !self.has_drive() {
+            return err("Drive 를 쓰려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
+        }
+        self.auth()
+    }
+
+    pub async fn set_file_access(&self, drive_id: &str, edit: bool) -> Result<()> {
+        let a = self.drive_auth()?;
+        drive::set_access(&a, drive_id, edit).await
+    }
+
+    pub async fn create_doc(&self, team_name: &str, title: &str, html: &str, edit: bool) -> Result<Value> {
+        let a = self.drive_auth()?;
+        drive::create_doc(&a, &format!("사이 - {team_name}"), title, html, edit).await
+    }
+
+    pub async fn upload_file(&self, team_name: &str, name: &str, mime: &str, bytes: Vec<u8>, edit: bool) -> Result<Value> {
         if !self.is_ready() {
             return err("파일을 올리려면 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
         }
@@ -253,7 +273,7 @@ impl Google {
             return err("Drive 에 올리려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
         }
         let a = self.auth()?;
-        drive::upload(&a, &format!("사이 - {team_name}"), name, mime, bytes).await
+        drive::upload(&a, &format!("사이 - {team_name}"), name, mime, bytes, edit).await
     }
 
     /// 붙여 넣은 Drive 링크의 파일 정보 (볼 수 없으면 None)

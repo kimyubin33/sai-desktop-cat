@@ -933,3 +933,4 @@ select.team-pick {
   background: var(--panel);
   color: var(--ink);
 }
+.task-files { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); font-size: 13px; }

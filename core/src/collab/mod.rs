@@ -1,4 +1,5 @@
 //! 협업: 자기소개·프로젝트·작업을 팀 서버와 주고받고, 배분 제안·진행 확인을 계산한다.
+pub mod docs;
 pub mod planner;
 pub mod progress;
 
@@ -223,6 +224,10 @@ impl Team {
             "mimeType": clean(&file.s("mimeType"), 100),
             "size": file.i("size").max(0),
             "taskId": clean(&file.s("taskId"), 60),
+            // edit: 링크가 있는 팀원이 고칠 수 있음, view: 보기만, link: 붙여 넣은 링크라 Drive 의 권한 그대로
+            "access": match file.s("access").as_str() { "edit" => "edit", "view" => "view", _ => "link" },
+            // file: 올린 파일, link: 붙여 넣은 링크, note: 작업 노트, report: 현황 기록
+            "kind": match file.s("kind").as_str() { "note" => "note", "report" => "report", "link" => "link", _ => "file" },
             "by": self.my_uid(),
             "at": self.now(),
         });
@@ -243,6 +248,24 @@ impl Team {
             let list = d["files"].as_object_mut().unwrap().entry(project_id.to_string()).or_insert_with(|| json!([]));
             if let Some(a) = list.as_array_mut() {
                 a.push(f);
+            }
+        });
+        Ok(())
+    }
+
+    pub fn file(&self, project_id: &str, file_id: &str) -> Option<Value> {
+        self.files_of(project_id).into_iter().find(|f| f.s("id") == file_id)
+    }
+
+    pub async fn set_file_access(&self, project_id: &str, file_id: &str, edit: bool) -> Result<()> {
+        let team_id = self.team_id()?;
+        let access = if edit { "edit" } else { "view" };
+        self.backend()?.update_file(&team_id, project_id, file_id, json!({ "access": access })).await?;
+        self.collab_update(|d| {
+            if let Some(a) = d["files"].get_mut(project_id).and_then(|v| v.as_array_mut()) {
+                for f in a.iter_mut().filter(|f| f.s("id") == file_id) {
+                    f["access"] = json!(access);
+                }
             }
         });
         Ok(())
@@ -507,6 +530,38 @@ mod tests {
         tb.set_status(&poster, "done").await.unwrap();
         a.sync_team(&ta).await;
         assert_eq!(ta.find_task(&poster).unwrap().1["status"], "done");
+    }
+
+    #[tokio::test]
+    async fn team_files_notes_and_report() {
+        let shared = Backend::new_shared_memory();
+        let a = hub(shared.clone(), "ua");
+        let b = hub(shared.clone(), "ub");
+        let t = a.create_team("홍보팀", "유빈").await.unwrap();
+        b.join_team(&t["joinCode"].as_str().unwrap(), "민수").await.unwrap();
+        let ta = a.active();
+        let pid = ta.create_project(&json!({ "title": "홍보 영상", "goal": "축제 홍보", "deadline": "2099-12-01" })).await.unwrap();
+        let task = ta.add_task(&pid, &json!({ "title": "컷 <편집>", "estimateHours": 5, "doneCriteria": "3분 이내" })).await.unwrap();
+        ta.add_file(&pid, &json!({ "name": "기획안.pdf", "url": "https://drive.google.com/file/d/abcdefghijkl/view", "access": "edit", "kind": "file", "taskId": task })).await.unwrap();
+        assert!(ta.add_file(&pid, &json!({ "name": "x", "url": "http://bad" })).await.is_err());
+        // 다른 팀원에게도 보인다
+        let tb = b.active();
+        b.sync_team(&tb).await;
+        let files = tb.files_of(&pid);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["access"], "edit");
+        assert_eq!(files[0]["by"], "ua");
+        // 올린 사람이 보기만으로 바꾼다
+        ta.set_file_access(&pid, files[0]["id"].as_str().unwrap(), false).await.unwrap();
+        assert_eq!(ta.files_of(&pid)[0]["access"], "view");
+        // 작업 노트와 현황 기록 내용
+        let (title, html) = ta.task_note_html(&pid, &task).unwrap();
+        assert!(title.contains("컷 <편집>") && title.contains("작업 노트"));
+        assert!(html.contains("컷 &lt;편집&gt;") && html.contains("3분 이내"));
+        a.sync_team(&ta).await;
+        let (rt, rh) = ta.project_report_html(&pid).unwrap();
+        assert!(rt.starts_with("[홍보 영상] 현황"));
+        assert!(rh.contains("기획안.pdf") && rh.contains("축제 홍보") && rh.contains("민수"));
     }
 }
 

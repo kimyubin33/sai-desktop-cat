@@ -82,9 +82,11 @@ async fn firebase_contract() {
     }
 
     // 팀 자료 (Drive 링크): 올린 사람만 지운다 (규칙을 아직 배포하지 않았으면 경고만)
-    match b.add_file(&team, &proj, json!({ "name": "발표.pdf", "url": "https://drive.google.com/file/d/abc/view", "driveId": "abc", "mimeType": "application/pdf", "size": 10, "taskId": task, "by": ub, "at": 1 })).await {
+    match b.add_file(&team, &proj, json!({ "name": "발표.pdf", "url": "https://drive.google.com/file/d/abc/view", "driveId": "abc", "mimeType": "application/pdf", "size": 10, "taskId": task, "access": "edit", "kind": "file", "by": ub, "at": 1 })).await {
         Ok(fid) => {
             assert_eq!(a.list_files(&team, &proj).await.unwrap().len(), 1);
+            assert!(a.update_file(&team, &proj, &fid, json!({ "access": "view" })).await.is_err(), "다른 팀원이 권한을 바꾸면 거절돼야 해요");
+            b.update_file(&team, &proj, &fid, json!({ "access": "view" })).await.expect("올린 사람은 권한을 바꿈");
             assert!(a.delete_file(&team, &proj, &fid).await.is_err(), "다른 팀원이 지우면 거절돼야 해요");
             assert!(a.add_file(&team, &proj, json!({ "name": "x", "url": "https://drive.google.com/x", "driveId": "", "mimeType": "", "size": 0, "taskId": "", "by": ub, "at": 1 })).await.is_err(), "남의 이름으로 올리면 거절돼야 해요");
             b.delete_file(&team, &proj, &fid).await.unwrap();

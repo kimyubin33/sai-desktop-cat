@@ -293,8 +293,9 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             use base64::Engine;
             let t = hub.active();
             let bytes = base64::engine::general_purpose::STANDARD.decode(x.s("data")).map_err(|_| "파일을 읽지 못했어요.".to_string())?;
-            let f = a.google.upload_file(&t.name(), &x.s("name"), &x.s("mime"), bytes).await?;
-            t.add_file(&x.s("projectId"), &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId") })).await?;
+            let edit = x.b("edit");
+            let f = a.google.upload_file(&t.name(), &x.s("name"), &x.s("mime"), bytes, edit).await?;
+            t.add_file(&x.s("projectId"), &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId"), "access": if edit { "edit" } else { "view" }, "kind": "file" })).await?;
             Ok(collab_view(a))
         }
         "collab:link-file" => {
@@ -306,8 +307,47 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             let meta = a.google.link_meta(&url).await.unwrap_or(Value::Null);
             let typed = x.s("name").trim().to_string();
             let name = if !typed.is_empty() { typed } else if !meta.s("name").is_empty() { meta.s("name") } else { "Drive 파일".into() };
-            t.add_file(&x.s("projectId"), &json!({ "name": name, "url": url, "driveId": meta.s("id"), "mimeType": meta.s("mimeType"), "size": meta.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId") })).await?;
+            t.add_file(&x.s("projectId"), &json!({ "name": name, "url": url, "driveId": meta.s("id"), "mimeType": meta.s("mimeType"), "size": meta.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId"), "access": "link", "kind": "link" })).await?;
             Ok(collab_view(a))
+        }
+        "collab:file-access" => {
+            let t = hub.active();
+            let pid = x.s("projectId");
+            let f = t.file(&pid, &x.s("id")).ok_or("그 자료를 찾을 수 없어요.")?;
+            if f.s("by") != t.my_uid() {
+                return Err("올린 사람만 바꿀 수 있어요.".into());
+            }
+            if f.s("driveId").is_empty() || f.s("access") == "link" {
+                return Err("붙여 넣은 링크는 Google Drive 에서 직접 공유 설정을 바꿔 주세요.".into());
+            }
+            let edit = x.b("edit");
+            a.google.set_file_access(&f.s("driveId"), edit).await?;
+            t.set_file_access(&pid, &f.s("id"), edit).await?;
+            Ok(collab_view(a))
+        }
+        "collab:task-note" => {
+            // 작업마다 팀이 함께 쓰는 Google 문서 하나. 이미 있으면 그것을 연다
+            let t = hub.active();
+            let (pid, tid) = (x.s("projectId"), x.s("taskId"));
+            if let Some(f) = t.files_of(&pid).into_iter().find(|f| f.s("kind") == "note" && f.s("taskId") == tid) {
+                crate::system::open_url(&f.s("url"));
+                return Ok(json!({ "view": collab_view(a), "opened": true }));
+            }
+            let (title, html) = t.task_note_html(&pid, &tid).ok_or("그 작업을 찾을 수 없어요.")?;
+            let f = a.google.create_doc(&t.name(), &title, &html, true).await?;
+            t.add_file(&pid, &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "taskId": tid, "access": "edit", "kind": "note" })).await?;
+            crate::system::open_url(&f.s("webViewLink"));
+            Ok(json!({ "view": collab_view(a), "created": true }))
+        }
+        "collab:report" => {
+            let t = hub.active();
+            let pid = x.s("projectId");
+            hub.sync_team(&t).await;
+            let (title, html) = t.project_report_html(&pid).ok_or("프로젝트를 찾을 수 없어요.")?;
+            let f = a.google.create_doc(&t.name(), &title, &html, true).await?;
+            t.add_file(&pid, &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "access": "edit", "kind": "report" })).await?;
+            crate::system::open_url(&f.s("webViewLink"));
+            Ok(json!({ "view": collab_view(a), "created": true }))
         }
         "collab:delete-file" => {
             hub.active().delete_file(&x.s("projectId"), &x.s("id")).await?;
