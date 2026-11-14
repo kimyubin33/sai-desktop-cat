@@ -3,7 +3,7 @@
 #
 # 새 버전을 배포하는 방법 (설치된 사이가 자동으로 업데이트됨)
 #   1) Cargo.toml 의 [workspace.package] version 을 올려서 main 에 push 한다 (예: 0.8.0 → 0.8.1)
-#   2) 이 작업이 그 버전이 아직 Releases 에 없으면 Windows 에서 테스트·실제 Firebase 점검 뒤 설치 파일을 만들어 올린다
+#   2) 이 작업이 그 버전이 아직 Releases 에 없으면 Windows(x64)와 Windows on ARM(ARM64)에서 각각 테스트 뒤 설치 파일을 만들어 함께 올린다
 #      이미 있는 버전이면 아무것도 하지 않는다
 #   3) 설치된 사이는 켤 때와 3시간마다 확인해서 받아 두고(SHA256SUMS.txt 로 확인), 고양이가 적용할지 묻는다
 #
@@ -23,14 +23,15 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      publish: ${{ steps.ver.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
-
       - name: 배포할 버전인지 확인
         id: ver
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -44,34 +45,51 @@ jobs:
             echo "publish=always" >> "$GITHUB_OUTPUT"
           fi
 
-      - if: steps.ver.outputs.publish != 'skip'
-        uses: actions/setup-node@v4
+  build:
+    needs: version
+    if: needs.version.outputs.publish != 'skip'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # x64: 파일 이름은 예전 그대로 (이미 설치된 사이의 업데이트가 이 이름을 찾는다)
+          - arch: x64
+            runner: windows-latest
+            suffix: ''
+          # ARM64: 스냅드래곤 같은 Windows on ARM 노트북에서 에뮬레이션 없이 바로 돈다
+          - arch: arm64
+            runner: windows-11-arm
+            suffix: '-arm64'
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - if: steps.ver.outputs.publish != 'skip'
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
-      - if: steps.ver.outputs.publish != 'skip'
-        run: npm ci
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+
+      - run: npm ci
 
       - name: 화면(Rust → WebAssembly) 만들기
-        if: steps.ver.outputs.publish != 'skip'
-        run: |
-          rustup target add wasm32-unknown-unknown
-          cargo run -p xtask -- ui
+        run: cargo run -p xtask -- ui
 
       - name: 테스트
-        if: steps.ver.outputs.publish != 'skip'
         run: cargo test --workspace
 
       - name: 실제 Firebase 점검 (팀 만들기·참여·권한 규칙)
-        if: steps.ver.outputs.publish != 'skip'
+        if: matrix.arch == 'x64'
         run: cargo test -p sai-core --test firebase_real -- --ignored --nocapture
 
       - name: Google 연결 정보 넣기 (있을 때만)
-        if: steps.ver.outputs.publish != 'skip'
         shell: bash
         env:
           GOOGLE_CLIENT_JSON: ${{ secrets.GOOGLE_CLIENT_JSON || vars.GOOGLE_CLIENT_JSON }}
@@ -87,20 +105,49 @@ jobs:
           fi
 
       - name: 만들기
-        if: steps.ver.outputs.publish != 'skip'
         run: npx tauri build --bundles nsis
 
-      - name: 배포 파일 모으기
-        if: steps.ver.outputs.publish != 'skip'
+      - name: 이 CPU 용 파일인지 확인
+        shell: pwsh
+        run: |
+          $b = [System.IO.File]::ReadAllBytes("target/release/sai.exe")
+          $pe = [BitConverter]::ToInt32($b, 0x3C)
+          $m = '{0:X4}' -f [BitConverter]::ToUInt16($b, $pe + 4)
+          $want = @{ x64 = '8664'; arm64 = 'AA64' }['${{ matrix.arch }}']
+          Write-Host "sai.exe machine = 0x$m (기대값 0x$want)"
+          if ($m -ne $want) { throw "다른 CPU 용으로 만들어졌어요." }
+
+      - name: 파일 모으기
         shell: bash
         run: |
-          v="${{ steps.ver.outputs.version }}"
+          v="${{ needs.version.outputs.version }}"
+          s="${{ matrix.suffix }}"
           mkdir -p dist
-          cp target/release/bundle/nsis/*-setup.exe "dist/Sai-Setup-$v.exe"
-          cp target/release/sai.exe "dist/Sai-Portable-$v.exe"
-          (cd dist && 7z a -tzip "Sai-$v-win-x64.zip" "Sai-Portable-$v.exe" >/dev/null)
+          cp target/release/bundle/nsis/*-setup.exe "dist/Sai-Setup-$v$s.exe"
+          cp target/release/sai.exe "dist/Sai-Portable-$v$s.exe"
+          (cd dist && 7z a -tzip "Sai-$v-win-${{ matrix.arch }}.zip" "Sai-Portable-$v$s.exe" >/dev/null)
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sai-windows-${{ matrix.arch }}
+          path: dist/*
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sai-windows-*
+          merge-multiple: true
+          path: dist
+
+      - name: 확인용 파일 만들기
+        run: |
+          v="${{ needs.version.outputs.version }}"
           (cd dist && sha256sum Sai-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
-          # 예전(Electron, 0.7.x 이하) 사이의 자동 업데이트가 찾는 안내 파일 → 새 설치 파일로 넘어오게 한다
+          # 예전(Electron, 0.7.x 이하) 사이의 자동 업데이트가 찾는 안내 파일 → 새 설치 파일(x64)로 넘어오게 한다
           f="Sai-Setup-$v.exe"
           sha=$(openssl dgst -sha512 -binary "dist/$f" | base64 -w0)
           size=$(stat -c %s "dist/$f")
@@ -108,18 +155,19 @@ jobs:
           cat dist/latest.yml
 
       - name: 릴리스 올리기
-        if: steps.ver.outputs.publish == 'always'
-        shell: bash
+        if: needs.version.outputs.publish == 'always'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          v="v${{ steps.ver.outputs.version }}"
-          gh release create "$v" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "사이 $v" --latest \
-            --notes "Windows 설치 파일: Sai-Setup-${{ steps.ver.outputs.version }}.exe (설치 없이 쓰려면 Sai-Portable). 설치된 사이는 자동으로 업데이트를 받아요."
-          gh release view "$v" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,assets --jq '"\(.tagName) draft=\(.isDraft) files=\([.assets[].name] | join(", "))"'
+          v="${{ needs.version.outputs.version }}"
+          gh release create "v$v" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "사이 v$v" --latest \
+            --notes "Windows 설치 파일
+          - 일반 PC(인텔·AMD): Sai-Setup-$v.exe
+          - ARM PC(스냅드래곤 등 Windows on ARM): Sai-Setup-$v-arm64.exe
+          설치 없이 쓰려면 Sai-Portable. 설치된 사이는 자동으로 자기 PC 에 맞는 판을 받아요."
+          gh release view "v$v" --repo "$GITHUB_REPOSITORY" --json tagName,assets --jq '"\(.tagName) files=\([.assets[].name] | join(", "))"'
 
-      - if: steps.ver.outputs.publish != 'skip'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: sai-windows
           path: dist/*

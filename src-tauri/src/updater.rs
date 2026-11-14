@@ -35,6 +35,22 @@ pub struct Updater {
     pub current: String,
 }
 
+/// 이 컴퓨터의 CPU 가 ARM64 인지 (x64 판이 ARM 에서 에뮬레이션으로 돌고 있어도 참)
+pub fn native_arm64() -> bool {
+    if let Ok(v) = std::env::var("SAI_UPDATE_ARCH") {
+        return v == "arm64";
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, IsWow64Process2};
+        let (mut process, mut native) = (0u16, 0u16);
+        if IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) != 0 {
+            return native == 0xAA64; // IMAGE_FILE_MACHINE_ARM64
+        }
+    }
+    cfg!(target_arch = "aarch64")
+}
+
 pub fn supported() -> bool {
     // 개발용: SAI_UPDATE_TEST 가 있으면 다른 운영체제·개발 실행에서도 확인·내려받기까지 해 본다 (설치는 하지 않음)
     (cfg!(windows) && !cfg!(debug_assertions)) || std::env::var("SAI_UPDATE_TEST").is_ok()
@@ -53,7 +69,7 @@ impl Updater {
 
     pub fn state(&self) -> Value {
         let s = self.st.lock().unwrap();
-        json!({ "current": self.current, "version": self.current, "status": s.status, "latest": s.latest, "progress": s.progress, "lastCheck": s.last_check, "error": s.error })
+        json!({ "current": self.current, "version": self.current, "status": s.status, "latest": s.latest, "progress": s.progress, "lastCheck": s.last_check, "error": s.error, "build": if cfg!(target_arch = "aarch64") { "ARM64" } else { "x64" }, "armPc": native_arm64() })
     }
 
     pub fn is_ready(&self) -> bool {
@@ -151,7 +167,6 @@ impl Updater {
             return Ok(None);
         }
         let base = format!("https://github.com/{REPO}/releases/download/{tag}");
-        let setup_name = format!("Sai-Setup-{latest}.exe");
         let sums_res = client()
             .get(format!("{base}/SHA256SUMS.txt"))
             .timeout(Duration::from_secs(60))
@@ -162,15 +177,21 @@ impl Updater {
             return Err(format!("새 버전에 확인용 파일(SHA256SUMS.txt)이 없어요 (응답 {}).", sums_res.status()));
         }
         let sums = sums_res.text().await.map_err(|e| e.to_string())?;
-        let want = sums
-            .lines()
-            .find_map(|l| {
+        let hash_of = |name: &str| {
+            sums.lines().find_map(|l| {
                 let mut p = l.split_whitespace();
                 let h = p.next()?;
                 let n = p.next()?.trim_start_matches('*');
-                (n == setup_name).then(|| h.to_lowercase())
+                (n == name).then(|| h.to_lowercase())
             })
-            .ok_or("확인용 파일에 설치 파일 정보가 없어요.")?;
+        };
+        // ARM 컴퓨터(예: 스냅드래곤 노트북)는 ARM 전용 설치 파일을 받는다. 지금 x64 판이 에뮬레이션으로 돌고 있어도 넘어간다
+        let x64_name = format!("Sai-Setup-{latest}.exe");
+        let arm_name = format!("Sai-Setup-{latest}-arm64.exe");
+        let (setup_name, want) = match (native_arm64(), hash_of(&arm_name)) {
+            (true, Some(h)) => (arm_name, h),
+            _ => (x64_name.clone(), hash_of(&x64_name).ok_or("확인용 파일에 설치 파일 정보가 없어요.")?),
+        };
 
         self.set(|s| {
             s.status = "downloading".into();

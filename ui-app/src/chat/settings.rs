@@ -152,7 +152,11 @@ fn draw_update(stv: &Value) {
     let bx = by_id("updateInfo").unwrap();
     clear(&bx);
     let ver = if s(stv, "version").is_empty() { s(stv, "current") } else { s(stv, "version") };
-    let _ = bx.append_child(&el("div").txt("지금 버전 ").kid(el("b").text(&ver)).0);
+    let build = s(stv, "build");
+    let _ = bx.append_child(&el("div").txt("지금 버전 ").kid(el("b").text(&ver)).txt(&if build.is_empty() { String::new() } else { format!(" ({build})") }).0);
+    if build == "x64" && b(stv, "armPc") {
+        let _ = bx.append_child(&el("div").cls("hint").text("ARM 컴퓨터에서 x64 판을 쓰고 있어요. 다음 업데이트 때 더 빠른 ARM64 판으로 바뀌어요.").0);
+    }
     let status = s(stv, "status");
     let mut line = update_text(&status).to_string();
     match status.as_str() {

@@ -22,7 +22,7 @@ npm run build        # 설치 파일 만들기 (Windows 에서)
 
 ### 팀원에게 나눠 주기 · 새 버전 배포 (자동 업데이트)
 
-- 팀원은 [Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)의 `Sai-Setup-x.y.z.exe`를 한 번 설치하면 됩니다. 설치 없이 쓰려면 `Sai-Portable-x.y.z.exe` 하나만 실행해도 됩니다.
+- 팀원은 [Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)의 `Sai-Setup-x.y.z.exe`를 한 번 설치하면 됩니다. 스냅드래곤 같은 ARM 노트북(Windows on ARM)은 `Sai-Setup-x.y.z-arm64.exe`를 받으면 에뮬레이션 없이 더 빠르게 돌아갑니다. 설치 없이 쓰려면 `Sai-Portable-x.y.z.exe` 하나만 실행해도 됩니다.
 - 설치된 사이는 켤 때와 3시간마다 새 버전을 확인합니다. 새 버전이 있으면 받아서 `SHA256SUMS.txt`로 확인해 두고, 고양이가 "지금 적용"할지 묻습니다. "나중에"를 고르면 프로그램을 끌 때 적용됩니다.
 - 포터블로 쓰던 사람이 업데이트를 적용하면 설치 화면이 떠서 설치 버전으로 바뀝니다.
 - 0.7.x 이하(Electron 버전)를 쓰던 사람은 새 설치 파일을 한 번 설치하고, 예전 사이는 "앱 및 기능"에서 지워 주세요. 팀·프로젝트·작업은 서버에 있어서 그대로이고, 이 컴퓨터의 설정·로그인은 다시 해야 합니다.
