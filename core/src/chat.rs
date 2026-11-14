@@ -1,4 +1,6 @@
 //! 개인 대화 세션을 관리한다. 대화 원문은 private/conversations.json 에만 저장된다.
+pub mod delivery;
+
 use crate::ai::Ai;
 use crate::counseling::{build_summary, create_session, handle_user, mode_label, Reply, Session, Turn};
 use crate::store::Store;
@@ -48,6 +50,7 @@ impl Chat {
         }
         let cutoff = now_ms() - days * DAY;
         self.conv.update(|d| {
+            arr_mut(d, "deliveryDrafts").retain(|r| r.i("updatedAt") >= cutoff);
             arr_mut(d, "sessions").retain(|s| {
                 let last = s.arr("turns").last().map(|t| t.i("at")).unwrap_or_else(|| s.i("startedAt"));
                 last >= cutoff
@@ -180,11 +183,17 @@ impl Chat {
     }
 
     pub fn delete(&self, id: &str) {
-        self.conv.update(|d| arr_mut(d, "sessions").retain(|s| s.s("id") != id));
+        self.conv.update(|d| {
+            arr_mut(d, "sessions").retain(|s| s.s("id") != id);
+            arr_mut(d, "deliveryDrafts").retain(|s| s["sessionId"] != id);
+        });
     }
 
     pub fn delete_all(&self) {
-        self.conv.update(|d| d["sessions"] = json!([]));
+        self.conv.update(|d| {
+            d["sessions"] = json!([]);
+            d["deliveryDrafts"] = json!([]);
+        });
     }
 }
 

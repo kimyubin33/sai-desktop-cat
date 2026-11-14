@@ -8,7 +8,7 @@
 //!   teams/{teamId}/proposals/{id} { topic, week, responses: {uid: 'agree'|'later'} }
 //!   teams/{teamId}/profiles/{uid}, projects/{id}, projects/{id}/tasks/{id}
 //!   teams/{teamId}/integrations/telegram, teams/{teamId}/telegram/{uid}
-//! 문안(text)은 서버에 올리지 않는다. 받는 쪽이 자기 앱에 있는 주제별 일반 문안으로 말한다.
+//! 기존 신호는 주제만 공유한다. AI 문안은 작성자가 확인한 뒤, 선택한 대상에게만 전달한다.
 use super::codec::{decode_doc, encode_fields};
 use crate::http::{client, json_body, short};
 use crate::util::{to_base36, J};
@@ -273,8 +273,7 @@ impl Backend {
             Backend::Firebase(f) => {
                 let body = json!({ "structuredQuery": {
                     "from": [{ "collectionId": coll }],
-                    "where": { "fieldFilter": { "field": { "fieldPath": field }, "op": "EQUAL", "value": { "stringValue": value } } },
-                    "limit": 200
+                    "where": { "fieldFilter": { "field": { "fieldPath": field }, "op": "EQUAL", "value": { "stringValue": value } } }
                 }});
                 let rows = f.req("POST", &format!("/{parent}:runQuery"), Some(body), "").await?.unwrap_or(json!([]));
                 Ok(rows.as_array().cloned().unwrap_or_default().iter().filter_map(|r| r.get("document").and_then(decode_doc)).collect())
@@ -307,7 +306,9 @@ impl Backend {
                         let fields = encode_fields(w["data"].as_object().unwrap_or(&Map::new()));
                         let current = w.get("updateTime").map(|v| json!({ "updateTime": v })).unwrap_or_else(|| json!({ "exists": true }));
                         match w.s("op").as_str() {
+                            "delete" if w.get("updateTime").is_some() => json!({ "delete": name, "currentDocument": current }),
                             "delete" => json!({ "delete": name }),
+                            "replace" => json!({ "update": { "name": name, "fields": fields }, "currentDocument": current }),
                             "update" => json!({ "update": { "name": name, "fields": fields }, "updateMask": { "fieldPaths": w.arr("fields") }, "currentDocument": current }),
                             _ => json!({ "update": { "name": name, "fields": fields }, "currentDocument": { "exists": false } }),
                         }
@@ -325,7 +326,7 @@ impl Backend {
                     }
                     match w.s("op").as_str() {
                         "create" if exists => return Err("이미 있는 문서예요.".to_string()),
-                        "update" if !exists => return Err("문서가 없어요.".to_string()),
+                        "update" | "replace" if !exists => return Err("문서가 없어요.".to_string()),
                         _ => {}
                     }
                 }
@@ -372,6 +373,7 @@ impl Backend {
         let uid = self.sign_in().await?;
         let code = join_code.trim().to_uppercase();
         let Some(r) = self.get_doc(&format!("joinCodes/{code}")).await? else { return err("참여 코드를 찾을 수 없어요.") };
+        if r.b("closed") { return err("해산한 팀이에요. 이 코드로 다시 참여할 수 없어요."); }
         let team_id = r.s("teamId");
         let mpath = format!("teams/{team_id}/members/{uid}");
         let already = self.get_doc(&mpath).await.ok().flatten();
@@ -427,6 +429,34 @@ impl Backend {
             Err(e) if denied(&e) => self.commit(vec![member_write(false)]).await,
             Err(e) => Err(e),
         }
+    }
+
+    pub(crate) async fn code_closed(&self, code: &str) -> Result<bool> {
+        if code.is_empty() { return Ok(false); }
+        Ok(self.get_doc(&format!("joinCodes/{code}")).await?.is_some_and(|r| r.b("closed")))
+    }
+
+    pub(crate) async fn team_creator(&self, team: &str) -> Result<String> {
+        self.get_doc(&format!("teams/{team}")).await?.and_then(|r| r.os("createdBy")).ok_or_else(|| "팀 개설자를 확인할 수 없어요.".into())
+    }
+
+    pub async fn dissolve_team(&self, team: &str, code: &str) -> Result<()> {
+        let root_path = format!("teams/{team}");
+        let code_path = format!("joinCodes/{code}");
+        let uid = self.sign_in().await?;
+        let mapping = self.get_doc(&code_path).await?.ok_or("팀의 참여 코드를 확인할 수 없어요.")?;
+        let root = self.get_doc(&root_path).await?.ok_or("팀을 찾을 수 없어요.")?;
+        if root["createdBy"] != uid || root["joinCode"] != code || mapping["teamId"] != team {
+            return err("팀을 개설한 계정만 해당 팀을 해산할 수 있어요.");
+        }
+        if self.get_doc(&format!("{root_path}/members/{uid}")).await?.is_none() {
+            return err("이 팀에 참여 중인 개설자만 해산할 수 있어요.");
+        }
+        let closed = json!({"closed":true});
+        let writes = vec![json!({"op":"replace","path":root_path,"data":closed}), json!({"op":"replace","path":code_path,"data":closed})];
+        self.commit(writes).await.map_err(|e| if denied(&e) {
+            "팀을 해산하지 못했어요. 개설자 권한과 서버의 팀 해산 규칙을 확인해 주세요.".to_string()
+        } else { e })
     }
 
     pub async fn leave_team(&self, team_id: &str) -> Result<()> {
@@ -563,9 +593,99 @@ impl Backend {
         self.patch_doc(&format!("teams/{team_id}/signals/{id}"), json!({ "held": true }), &["held".into()]).await
     }
 
+    /// 제안과 팀 톡에 같은 문서 ID를 쓴다. 기존 팀의 응답 권한 규칙에서도 동작한다.
+    pub(crate) async fn deliver_promise(&self, team: &str, id: &str, item: &Value) -> Result<()> {
+        let uid = self.sign_in().await?;
+        let message = format!("[팀 약속 제안] {}\n{}", item.s("title"), item.s("text"));
+        let vote_path = format!("teams/{team}/proposals/{id}");
+        let post_path = format!("teams/{team}/shares/{id}");
+        if self.get_doc(&vote_path).await?.is_none() {
+            self.commit(vec![
+                json!({"op":"create", "path":vote_path, "data":{"topic":"ai_promise", "week":item["week"], "responses":{}}}),
+                json!({"op":"create", "path":post_path, "data":{"text":message, "by":uid, "at":item["createdAt"]}}),
+            ]).await?;
+        } else {
+            let post = self.get_doc(&post_path).await?.ok_or("이미 철회한 팀 약속이에요. 대기함에서 이 항목을 지워 주세요.")?;
+            if post["by"] != uid || post["text"] != message {
+                return err("같은 번호의 다른 제안이 있어요. 새로 작성해 주세요.");
+            }
+        }
+        self.respond_proposal(team, id, "agree").await
+    }
+
+    pub async fn get_share(&self, team: &str, id: &str) -> Result<Option<Value>> {
+        self.get_doc(&format!("teams/{team}/shares/{id}")).await
+    }
+
+    /// 신호·비공개 문안·발신자의 삭제 권한을 한 번에 만든다. 서버 규칙이 허용할 때까지 대기한다.
+    pub(crate) async fn deliver_private(&self, team: &str, id: &str, item: &Value) -> Result<()> {
+        let uid = self.sign_in().await?;
+        let path = format!("teams/{team}/signals/{id}");
+        let body_path = format!("{path}/private/body");
+        let owner_path = format!("{path}/owner/sender");
+        if let Some(existing) = self.get_doc(&path).await? {
+            let body = self.get_doc(&body_path).await?.ok_or("기존 개인 문안을 찾을 수 없어요.")?;
+            let owner = self.get_doc(&owner_path).await?.ok_or("기존 문안의 작성자를 확인할 수 없어요.")?;
+            if owner["uid"] != uid || existing["toMember"] != item["toMember"] || body["text"] != item["text"] || body["title"] != item["title"] {
+                return err("같은 번호의 다른 개인 문안이 있어요. 새로 작성해 주세요.");
+            }
+            return Ok(());
+        }
+        self.commit(vec![
+            json!({"op":"create","path":path,"data":{"topic":item["topic"],"week":item["week"],"held":false,"toMember":item["toMember"]}}),
+            json!({"op":"create","path":body_path,"data":{"title":item["title"],"text":item["text"],"toMember":item["toMember"]}}),
+            json!({"op":"create","path":owner_path,"data":{"uid":uid}}),
+        ]).await.map_err(|e| if denied(&e) { "개인 문안 전송 권한을 확인하지 못했어요. 팀 서버에 최신 Firestore 규칙을 게시하면 다시 시도해요.".to_owned() } else { e })
+    }
+
+    pub async fn get_private_body(&self, team: &str, id: &str) -> Result<Option<Value>> {
+        let parent = format!("teams/{team}/signals/{id}");
+        let body = self.get_doc(&format!("{parent}/private/body")).await?;
+        if matches!(self, Backend::Memory(_)) {
+            let uid = self.sign_in().await?;
+            let recipient = body.as_ref().is_some_and(|v| v["toMember"] == uid);
+            let owner = self.get_doc(&format!("{parent}/owner/sender")).await?.is_some_and(|v| v["uid"] == uid);
+            if body.is_some() && !recipient && !owner { return err("이 개인 문안을 볼 수 없어요."); }
+        }
+        Ok(body)
+    }
+
+    pub async fn delete_personal_delivery(&self, team: &str, id: &str) -> Result<()> {
+        if !super::delivery::is_delivery_id(id) { return err("개인 전달 항목을 찾을 수 없어요."); }
+        let path = format!("teams/{team}/signals/{id}");
+        if self.get_doc(&path).await?.is_none() { return Ok(()); }
+        let owner = format!("{path}/owner/sender");
+        let uid = self.sign_in().await?;
+        if self.get_doc(&owner).await?.is_none_or(|doc| doc["uid"] != uid) {
+            return err("직접 보낸 문안만 철회할 수 있어요.");
+        }
+        self.commit(vec![
+            json!({"op":"delete","path":format!("{path}/private/body")}),
+            json!({"op":"delete","path":owner}), json!({"op":"delete","path":path}),
+        ]).await
+    }
+
     // ---------- 팀 약속 제안 ----------
     pub async fn create_proposal(&self, team_id: &str, topic: &str, week: &str) -> Result<String> {
         self.create_doc(&format!("teams/{team_id}/proposals"), None, json!({ "topic": topic, "week": week, "responses": {} })).await
+    }
+
+    pub(crate) async fn delete_owned_promise(&self, team: &str, id: &str) -> Result<()> {
+        let uid = self.sign_in().await?;
+        let proposal = format!("teams/{team}/proposals/{id}");
+        let post = format!("teams/{team}/shares/{id}");
+        let Some(body) = self.get_doc(&post).await? else { return Ok(()) };
+        if !self.get_doc(&proposal).await?.is_some_and(|r| r["topic"] == "ai_promise") {
+            return err("작성자를 확인할 수 있는 팀 약속만 철회할 수 있어요.");
+        }
+        if body["by"] != uid {
+            return err("직접 작성한 팀 약속만 철회할 수 있어요.");
+        }
+        let writes = vec![json!({"op":"delete", "path":proposal}), json!({"op":"delete", "path":post})];
+        match self.commit(writes).await {
+            Err(e) if denied(&e) => self.delete_doc(&post).await, // 이전 규칙에서도 작성자는 공유 문안을 지울 수 있다.
+            result => result,
+        }
     }
 
     pub async fn list_proposals(&self, team_id: &str) -> Result<Vec<Value>> {
@@ -601,8 +721,79 @@ impl Backend {
             .collect())
     }
 
+    pub async fn delete_own_profile(&self, team_id: &str) -> Result<String> {
+        let uid = self.sign_in().await?;
+        self.delete_doc(&format!("teams/{team_id}/profiles/{uid}")).await?;
+        Ok(uid)
+    }
+
     pub async fn create_project(&self, team_id: &str, data: Value) -> Result<String> {
-        self.create_doc(&format!("teams/{team_id}/projects"), None, data).await
+        Ok(self.create_project_record(team_id, data).await?.s("id"))
+    }
+
+    pub(crate) async fn create_project_record(&self, team_id: &str, data: Value) -> Result<Value> {
+        let mut owned = data.clone();
+        owned["createdBy"] = json!(self.sign_in().await?);
+        let coll = format!("teams/{team_id}/projects");
+        let (id, mut saved) = match self.create_doc(&coll, None, owned.clone()).await {
+            Ok(id) => (id, owned),
+            Err(e) if denied(&e) => (self.create_doc(&coll, None, data.clone()).await?, data),
+            Err(e) => return Err(e),
+        };
+        saved["id"] = json!(id);
+        Ok(saved)
+    }
+
+    /// 먼저 프로젝트 쓰기를 잠근 뒤 하위 문서를 지운다. 중단돼도 같은 프로젝트에서 재개한다.
+    pub async fn delete_project_tree(&self, team: &str, pid: &str) -> Result<()> {
+        let path = format!("teams/{team}/projects/{pid}");
+        let uid = self.sign_in().await?;
+        let Some(project) = self.get_doc(&path).await? else { return Ok(()) };
+        self.check_brief_project(team, pid).await?;
+        if project["createdBy"] != uid && !self.admin_state(team).await.b("me") {
+            return err("프로젝트를 만든 사람이나 팀 관리자만 팀 전체에서 삭제할 수 있어요.");
+        }
+        self.patch_doc(&path, json!({"deleting": true}), &["deleting".into()]).await.map_err(|e| {
+            if denied(&e) { "서버가 프로젝트 삭제를 허용하지 않아요. 이 기기 목록에서는 숨길 수 있어요.".into() } else { e }
+        })?;
+        for coll in ["tasks", "files"] {
+            let collection = format!("{path}/{coll}");
+            let docs = self.list_docs(&collection).await?;
+            for group in docs.chunks(100) {
+                let deletes = group.iter().map(|doc| json!({"op":"delete","path":format!("{collection}/{}", doc.s("id"))})).collect();
+                self.commit(deletes).await?;
+            }
+        }
+        if self.get_brief(team, pid).await?.is_some() {
+            self.delete_doc(&format!("{path}/briefs/current")).await?;
+        }
+        self.delete_doc(&path).await
+    }
+
+    /// 같은 이름으로 바뀐 기획서도 확인 후에만 지울 수 있도록 문서 버전을 비교한다.
+    pub async fn delete_brief_version(&self, team: &str, project: &str, expected: Value) -> Result<()> {
+        let path = format!("teams/{team}/projects/{project}/briefs/current");
+        self.check_brief_project(team, project).await?;
+        let uid = self.sign_in().await?;
+        if expected["by"] != uid && !self.admin_state(team).await.b("me") {
+            return err("마지막으로 기획서를 올린 사람이나 팀 관리자만 삭제할 수 있어요.");
+        }
+        let stale = "기획서가 변경됐어요. 다시 열어 내용을 확인해 주세요.";
+        match self {
+            Backend::Firebase(f) => {
+                let raw = f.req("GET", &format!("/{path}"), None, "").await?.ok_or(stale)?;
+                if decode_doc(&raw).as_ref() != Some(&expected) { return err(stale); }
+                let stamp = raw.os("updateTime").ok_or(stale)?;
+                self.commit(vec![json!({"op":"delete","path":path,"updateTime":stamp})]).await
+            }
+            Backend::Memory(m) => m.tx(|db| {
+                let mut expected = expected;
+                expected.as_object_mut().unwrap().remove("id");
+                if db["docs"].get(&path) != Some(&expected) { return err(stale); }
+                db["docs"].as_object_mut().unwrap().remove(&path);
+                Ok(())
+            }),
+        }
     }
 
     pub async fn list_projects(&self, team_id: &str) -> Result<Vec<Value>> {

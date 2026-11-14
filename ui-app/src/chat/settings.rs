@@ -34,6 +34,9 @@ pub async fn load() {
 fn key_placeholder(sx: &Value) {
     let f = form();
     let _ = field(&f, "apiKey").set_attribute("placeholder", if b(sx, "hasOwnKey") { "저장된 키가 있어요 (바꿀 때만 입력)" } else { "sk-ant-..." });
+    for (button, flag) in [("removeClaude", "hasOwnKey"), ("removeOpenAi", "hasOpenAiKey")] {
+        if let Some(button) = by_id(button) { toggle(&button, "hidden", !b(sx, flag)); }
+    }
     let gpt_hint = if b(sx, "hasOpenAiKey") {
         if b(sx, "openAiKeyPersistent") { "저장된 GPT 키가 있어요 (바꿀 때만 입력)" } else { "현재 실행 중에 사용할 GPT 키가 있어요" }
     } else if b(sx, "openAiKeyPersistent") {
@@ -95,6 +98,15 @@ pub async fn render_team(info: Option<Value>) {
     } else {
         let _ = stx.append_child(&el("div").kid(el("b").text(&s(&info["team"], "name"))).txt(&format!(" · 팀원 {}명 · 마지막 동기화 {}", s(&info, "memberCount"), fmt_time(n(&info, "lastSync")))).0);
         let _ = stx.append_child(&el("div").txt("참여 코드 ").kid(el("span").cls("code-big").text(&s(&info["team"], "joinCode"))).txt(" — 팀원에게 알려 주세요").0);
+        if b(&info, "canDissolve") {
+            let id = s(&info, "activeTeamId");
+            let name = s(&info["team"], "name");
+            let _ = stx.append_child(&el("button").cls("danger").text("팀 해산").click(move |_| {
+                if !confirm(&format!("‘{name}’ 팀을 영구 해산할까요? 모든 팀원의 서버 자료 접근과 참여 코드가 차단됩니다. 서버의 기존 하위 기록은 보관되며, 개인 상담 기록은 유지돼요.")) { return; }
+                let args = json!({"teamId":id, "teamName":name});
+                team_action(async move { call("team:dissolve", args).await }, "팀을 해산했어요.".into());
+            }).0);
+        }
         let _ = stx.append_child(&el("div").cls("hint").text(&if local { "로컬 시험 모드".into() } else { format!("Firebase: {}", s(&info, "projectId")) }).0);
     }
     if !s(&info, "lastError").is_empty() {
@@ -494,6 +506,28 @@ pub fn bind() {
             }
         });
     });
+    for (button, field_name, channel, status, prompt) in [
+        ("removeClaude", "apiKey", "ai:set-key", "aiStatus", "이 기기에 저장된 내 Claude API 키를 삭제할까요? 팀에 공유한 키는 팀 키 설정에서 따로 끌 수 있어요."),
+        ("removeOpenAi", "openAiKey", "ai:set-openai", "openAiStatus", "이 기기에 저장된 내 GPT API 키를 삭제할까요?"),
+    ] {
+        click(button, move |_| {
+            if !confirm(prompt) { return; }
+            spawn(async move {
+                let args = if channel == "ai:set-key" { json!("") } else { json!({"key":""}) };
+                match call(channel, args).await {
+                    Ok(sx) => {
+                        set_val(&field(&form(), field_name), "");
+                        st(|state| state.settings = sx.clone());
+                        update_engine(&sx);
+                        key_placeholder(&sx);
+                        render_team_key(&sx);
+                        set_text(status, "이 기기에서 키를 삭제했어요.");
+                    }
+                    Err(error) => set_text(status, &error),
+                }
+            });
+        });
+    }
     click("testAi", |_| {
         spawn(async {
             if let Err(e) = save_key_if_typed().await {

@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 const MAX_BYTES: usize = 48 * 1024;
 
-fn check_project_id(id: &str) -> Result<()> {
+pub(super) fn check_project_id(id: &str) -> Result<()> {
     if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')) {
         return err("올바른 프로젝트를 선택해 주세요.");
     }
@@ -30,15 +30,15 @@ fn validate<'a>(name: &str, text: &'a str) -> Result<&'a str> {
     Ok(text)
 }
 
-fn view(doc: &Value, shared: bool) -> Result<Value> {
+fn view(doc: &Value, shared: bool, can_delete: bool) -> Result<Value> {
     let name = doc["name"].as_str().unwrap_or("");
     let text = validate(name, doc["text"].as_str().unwrap_or(""))?;
-    Ok(json!({ "name": name, "text": text, "updatedAt": doc["updatedAt"], "shared": shared }))
+    Ok(json!({ "name": name, "text": text, "updatedAt": doc["updatedAt"], "shared": shared, "canDelete":can_delete }))
 }
 
 impl Team {
     fn local_project_brief(&self, project: &str, uid: &str) -> Result<Option<Value>> {
-        self.cache_get()["localBriefs"][uid].get(project).map(|doc| view(doc, false)).transpose()
+        self.cache_get()["localBriefs"][uid].get(project).map(|doc| view(doc, false, true)).transpose()
     }
 
     pub async fn get_project_brief(&self, project: &str) -> Result<Option<Value>> {
@@ -46,7 +46,10 @@ impl Team {
         let id = self.team_id()?;
         let backend = self.backend()?;
         match backend.get_brief(&id, project).await {
-            Ok(Some(doc)) => return Ok(Some(view(&doc, true)?)),
+            Ok(Some(doc)) => {
+                let can_delete = doc["by"] == backend.sign_in().await? || self.is_admin();
+                return Ok(Some(view(&doc, true, can_delete)?));
+            }
             Ok(None) => {}
             Err(e) if denied(&e) => {
                 backend.check_brief_project(&id, project).await?;
@@ -54,6 +57,31 @@ impl Team {
             Err(e) => return Err(e),
         }
         self.local_project_brief(project, &backend.sign_in().await?)
+    }
+
+    pub async fn delete_project_brief(&self, project: &str, expected: &Value) -> Result<()> {
+        check_project_id(project)?;
+        let team = self.team_id()?;
+        let uid = self.my_uid();
+        if uid.is_empty() || expected["shared"].as_bool().is_none() { return err("삭제할 기획서를 다시 열어 주세요."); }
+        let same = |doc: &Value| ["name","text","updatedAt"].iter().all(|key| doc[*key] == expected[*key]);
+        let stale = "기획서가 변경됐어요. 다시 열어 내용을 확인해 주세요.";
+        if expected["shared"] == true {
+            let backend = self.backend()?;
+            let doc = backend.get_brief(&team, project).await?.ok_or(stale)?;
+            if !same(&doc) { return err(stale); }
+            backend.delete_brief_version(&team, project, doc).await.map_err(|e| {
+                if denied(&e) { "서버가 기획서 삭제를 허용하지 않아요. 팀의 기획서 삭제 권한과 서버 규칙을 확인해 주세요.".into() } else { e }
+            })?;
+        } else {
+            self.cache_update(|cache| {
+                let docs = cache["localBriefs"][&uid].as_object_mut().ok_or(stale)?;
+                if !docs.get(project).is_some_and(same) { return err(stale); }
+                docs.remove(project);
+                Ok(())
+            })?;
+        }
+        Ok(())
     }
 
     pub async fn save_project_brief(&self, project: &str, name: &str, text: &str) -> Result<Value> {
@@ -70,7 +98,7 @@ impl Team {
                         local.remove(project);
                     }
                 });
-                view(&doc, true)
+                view(&doc, true, true)
             }
             Err(e) if denied(&e) => {
                 // 실제 팀 탈퇴나 쓰기 전용 제한을 구형 규칙으로 잘못 판단하지 않는다.
@@ -79,7 +107,7 @@ impl Team {
                     return Err(e);
                 }
                 self.cache_update(|cache| cache["localBriefs"][&uid][project] = doc.clone());
-                view(&doc, false)
+                view(&doc, false, true)
             }
             Err(e) => Err(e),
         }

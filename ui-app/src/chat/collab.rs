@@ -264,6 +264,14 @@ fn profile_section(v: &Value) -> HtmlElement {
         .flag("open", !has)
         .kid(el("summary").kid(el("strong").text("자기소개 · 역량 · 가능 시간")).maybe(if has { None } else { Some(el("span").cls("status-pill review").text("입력 필요")) }))
         .child(form)
+        .maybe(has.then(|| {
+            let tid = s(v, "teamId");
+            el("button").cls("link").text("내 자기소개 삭제").click(move |_| {
+                if confirm("팀원에게 공개한 내 자기소개·역량·가능 시간을 삭제할까요?") {
+                    act(c("collab:delete-profile", json!({ "teamId": tid })), ok("내 자기소개를 삭제했어요."));
+                }
+            })
+        }))
         .kid(el("div").cls("label").text("팀원"))
         .kid(team)
         .build()
@@ -326,9 +334,19 @@ fn project_section(v: &Value) -> HtmlElement {
         let args = json!({ "title": val(&field(&f2, "title")), "goal": val(&field(&f2, "goal")), "deliverable": val(&field(&f2, "deliverable")), "deadline": val(&field(&f2, "deadline")) });
         act(c("collab:create-project", args), ok("프로젝트를 만들었어요."));
     });
-    let bx = el("div").cls("block");
+    let hidden = arr(v, "hiddenProjects");
+    let restore = (!hidden.is_empty()).then(|| {
+        let team = s(v, "teamId");
+        el("details").kid(el("summary").text("이 기기에서 숨긴 프로젝트")).kids(hidden.iter().map(|p| {
+            let (pid, team) = (s(p, "id"), team.clone());
+            el("div").cls("inline").kid(el("span").text(&s(p, "title"))).kid(el("button").text("다시 표시").click(move |_| {
+                act(c("collab:restore-project", json!({"teamId":team,"projectId":pid})), ok("프로젝트를 다시 표시했어요."));
+            }))
+        }))
+    });
+    let bx = el("div").cls("block").maybe(restore);
     if projects.is_empty() {
-        return bx.kid(el("strong").text("프로젝트")).kid(el("p").cls("hint").text("아직 프로젝트가 없어요. 목표와 마감일부터 적어 주세요.")).child(new_form).build();
+        return bx.kid(el("strong").text("프로젝트")).kid(el("p").cls("hint").text("표시할 프로젝트가 없어요. 새 프로젝트를 만들 수 있어요.")).child(new_form).build();
     }
     let sel = el("select").attr("aria-label", "프로젝트 선택").build();
     let pid = s(p, "id");
@@ -384,7 +402,22 @@ fn project_section(v: &Value) -> HtmlElement {
     } else {
         None
     };
-    bx.kid(el("div").cls("inline").kid(el("strong").text("프로젝트")).child(sel)).maybe(meta).maybe(report).kid(el("details").kid(el("summary").text("새 프로젝트 만들기")).child(new_form)).build()
+    let team = s(v, "teamId");
+    let title = s(p, "title");
+    let hide = {
+        let (pid, team) = (pid.clone(), team.clone());
+        el("button").cls("link").text("이 기기에서 숨기기").click(move |_| {
+            act(c("collab:hide-project", json!({"teamId":team,"projectId":pid})), ok("이 기기에서 프로젝트를 숨겼어요."));
+        })
+    };
+    let can_delete = b(v, "isAdmin") || (p["createdBy"].is_string() && p["createdBy"] == v["myUid"]);
+    let delete = can_delete.then(|| el("button").cls("link danger").text(if b(p, "deleting") { "프로젝트 삭제 계속하기" } else { "프로젝트 삭제" }).click(move |_| {
+        if confirm(&format!("‘{title}’ 프로젝트와 포함된 작업, 기획서, 자료 링크를 팀 전체에서 삭제할까요? Drive 원본 파일은 유지됩니다.")) {
+            act(c("collab:delete-project", json!({"teamId":team,"projectId":pid})), ok("팀 프로젝트와 포함된 항목을 삭제했어요."));
+        }
+    }));
+    bx.kid(el("div").cls("inline").kid(el("strong").text("프로젝트")).child(sel)).maybe(meta).maybe(report)
+        .kid(el("div").cls("inline").kid(hide).maybe(delete)).kid(el("details").kid(el("summary").text("새 프로젝트 만들기")).child(new_form)).build()
 }
 
 // ---------- 배분 제안 ----------
@@ -592,10 +625,10 @@ fn task_section(v: &Value) -> HtmlElement {
                 f.scroll_into_view();
             }
         }));
-        let (title, pid, id_d) = (s(t, "title"), project_id.clone(), id.clone());
+        let (title, pid, id_d, tid) = (s(t, "title"), project_id.clone(), id.clone(), s(v, "teamId"));
         push(el("button").cls("link").text("삭제").click(move |_| {
             if confirm(&format!("\"{title}\" 작업을 지울까요?")) {
-                act(c("collab:delete-task", json!({ "projectId": pid, "id": id_d })), ok("지웠어요."));
+                act(c("collab:delete-task", json!({ "teamId": tid, "projectId": pid, "id": id_d })), ok("지웠어요."));
             }
         }));
         let _ = card.append_child(&actions);

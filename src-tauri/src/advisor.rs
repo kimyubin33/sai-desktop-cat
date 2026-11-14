@@ -97,7 +97,7 @@ impl Advisor {
         if busy || !visible {
             return self.schedule(a, Some(BUSY_RETRY_MS));
         }
-        if !self.maybe_show_update(a) && !self.maybe_show_proposal(a) && !self.maybe_show_progress(a) {
+        if !self.maybe_show_update(a) && !self.maybe_show_proposal(a) && !self.maybe_show_private_advice(a) && !self.maybe_show_progress(a) {
             self.speak_now(a);
         }
         self.schedule(a, None);
@@ -147,6 +147,27 @@ impl Advisor {
             None,
         );
         true
+    }
+
+    /// 받는 사람이 이미 읽어 보거나 숨긴 개인 문안은 다시 알리지 않는다.
+    fn maybe_show_private_advice(&self, a: &Arc<App>) -> bool {
+        for team in a.hub.all() {
+            let cache = team.cache_get();
+            let mine = team.my_uid();
+            let shown = &cache["shownPrivateAdvice"][&mine];
+            if let Some(item) = team.visible_advice().into_iter().find(|item| item.b("custom") && !item.b("held") && shown.get(item.s("id")).is_none()) {
+                let id = item.s("id");
+                // 정리함에서 전체 문안을 읽을 수 있다. 버튼이 가리키는 팀은 알림의 출처에 고정한다.
+                let displayed = self.show(a, json!({ "id":format!("advice-{id}"), "kind":"advice", "teamId":team.id,
+                    "text":item["text"], "sourceLabel":format!("— {} · {}",team.name(),item.s("title")),
+                    "actions":[act("close","닫기",false),act("open-advice","정리함에서 보기",true)] }), None);
+                if displayed {
+                    team.cache_update(|c| c["shownPrivateAdvice"][&mine][&id] = json!(true));
+                }
+                return displayed;
+            }
+        }
+        false
     }
 
     /// 업무 진행 확인 (배정 확인, 시작, 막힘, 준비물, 마감) — 지금 보고 있는 팀부터
@@ -273,6 +294,11 @@ impl Advisor {
                 tauri::async_runtime::spawn(async move {
                     let _ = a2.hub.respond(&pid, "agree").await;
                 });
+            }
+            "open-advice" => {
+                if let Some(id) = entry.os("teamId") {
+                    if a.hub.set_active(&id).is_ok() { open_chat(&a.handle, a, "notes", json!({})); }
+                }
             }
             "chat" => open_chat(&a.handle, a, "chat", json!({})),
             "update-install" => {

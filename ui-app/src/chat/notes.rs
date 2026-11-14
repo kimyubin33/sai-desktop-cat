@@ -37,7 +37,6 @@ fn redo(ch: &'static str, args: Value) {
 }
 
 fn held_action(item: &Value, teams: &[Value], outbox: &[Value]) -> El {
-    let id = s(item, "id");
     let team_id = s(item, "teamId");
     let Some(team) = teams.iter().find(|t| !team_id.is_empty() && t["teamId"] == team_id) else {
         return el("span").cls("hint").text("이 항목의 팀에 연결해야 약속을 제안할 수 있어요.");
@@ -49,24 +48,27 @@ fn held_action(item: &Value, teams: &[Value], outbox: &[Value]) -> El {
             return el("span").cls("hint").attr("role", "status").text(&format!("‘{name}’ 팀 약속 제안 · {status}"));
         }
     }
-    let message = el("span").cls("hint").attr("role", "status").build();
+    let seed = format!("{}에 대해 팀 약속을 만들고 싶어요.", s(item, "label"));
+    el("button").text(&format!("‘{name}’ 팀 약속 잡기")).click(move |_| {
+        spawn(super::talk::delivery::open("promise", "promise".into(), Some(team_id.clone()), Some(seed.clone())));
+    })
+}
+
+/// 팀 전체에서 철회하는지, 내 기기에서만 지우는지 실행 전에 명확하게 표시한다.
+fn remove_control(label: &str, prompt: &'static str, channel: &'static str, args: Value) -> El {
+    let message = el("span").cls("hint err").attr("role", "status").build();
     let status = message.clone();
-    let button = el("button").text(&format!("‘{name}’에 팀 약속 제안")).click(move |e| {
+    let button = el("button").cls("link").text(label).click(move |e| {
         let Some(button) = event_target(&e) else { return };
-        if button.has_attribute("disabled") { return; }
+        if button.has_attribute("disabled") || !confirm(prompt) { return; }
         set_disabled(&button, true);
-        status.set_class_name("hint");
-        status.set_text_content(Some("제안을 등록하는 중이에요…"));
-        let args = json!({ "teamId": team_id, "itemId": id });
         let status = status.clone();
+        let args = args.clone();
         spawn(async move {
-            let result = call("share:propose-held", args).await;
-            if !button.is_connected() { return; }
-            match result {
+            match call(channel, args).await {
                 Ok(_) => render().await,
-                Err(error) => {
-                    status.set_class_name("hint err");
-                    status.set_text_content(Some(&error));
+                Err(e) => {
+                    status.set_text_content(Some(&e));
                     set_disabled(&button, false);
                 }
             }
@@ -85,6 +87,8 @@ pub async fn render() {
     let others: Vec<Value> = members.iter().filter(|m| !b(m, "me")).cloned().collect();
     let name_of = |uid: &str| members.iter().find(|m| s(m, "uid") == uid).map(|m| s(m, "displayName"));
     let connected = b(&team, "connected");
+    let active_id = s(&team, "activeTeamId");
+    let my_uid = members.iter().find(|m| b(m, "me")).map(|m| s(m, "uid"));
 
     // 팀 약속
     let pl = by_id("proposals").unwrap();
@@ -101,12 +105,18 @@ pub async fn render() {
         let id = s(p, "id");
         let title = format!("{} · {}", s(p, "label"), if agreed { "팀 약속".to_string() } else { format!("동의 {}/{}명", s(p, "agree"), s(p, "memberCount")) });
         let id2 = id.clone();
+        let args = json!({"id": id, "teamId": active_id});
+        let remove = if b(p, "custom") && my_uid.as_deref().is_some_and(|me| p["by"] == me) {
+            remove_control("약속 삭제", "팀원 모두의 약속 목록과 팀 톡에서 이 제안을 삭제할까요?", "team:withdraw-promise", args)
+        } else {
+            remove_control("내 목록에서 삭제", "이 기기의 약속 목록과 고양이 알림에서 이 항목을 지울까요?", "team:hide-promise", args)
+        };
         let item = el("div")
             .cls(if agreed { "item agreed" } else { "item" })
             .kid(el("div").cls("main").kid(el("div").cls("title").text(&title)).kid(el("div").cls("sub").text(&s(p, "text")).attr("title", &s(p, "text"))))
             .kid(if mine == "agree" { el("span").cls("status-pill sent").text("동의함") } else { el("button").cls("primary").text("좋아요").click(move |_| redo("team:respond", json!({ "proposalId": id, "response": "agree" }))) })
             .maybe(if mine.is_empty() { Some(el("button").cls("link").text("나중에").click(move |_| redo("team:respond", json!({ "proposalId": id2, "response": "later" })))) } else { None });
-        let _ = pl.append_child(&item.0);
+        let _ = pl.append_child(&item.kid(remove).0);
     }
 
     // 공유 대기함
@@ -173,7 +183,19 @@ pub async fn render() {
         let team_tag = if many_teams && !s(it, "teamName").is_empty() { format!("[{}] ", s(it, "teamName")) } else { String::new() };
         let has_controls = controls.child_element_count() > 0;
         let pill = if connected || status != "queued" { status_text(&status) } else { "팀 연결 전" };
-        let id2 = id.clone();
+        let delivered = matches!(status.as_str(), "sent" | "held");
+        let remove = if delivered {
+            remove_control("내 기록 삭제", "이 기기의 공유 기록을 삭제할까요? 전달된 내용은 상대에게 남습니다.", "share:remove",
+                json!({"itemId":id,"teamId":it["teamId"],"delivered":true}))
+        } else {
+            remove_control("전송 취소", "이 항목의 전송을 취소하고 대기함에서 지울까요?", "share:remove",
+                json!({"itemId":id,"teamId":it["teamId"],"delivered":false}))
+        };
+        let withdraw = if delivered && b(it, "custom") && target == "person" && teams.iter().any(|t| t["teamId"] == it["teamId"]) {
+            Some(remove_control("전달 철회", "보낸 문안을 팀 서버에서 삭제할까요? 받는 사람의 앱은 다음 동기화 때 반영해요.", "share:withdraw-advice",
+                json!({"id":id,"teamId":it["teamId"]})))
+        } else { None };
+        let last_error = s(it, "lastError");
         let item = el("div")
             .cls("item")
             .kid(
@@ -182,11 +204,29 @@ pub async fn render() {
                     .kid(el("div").cls("title").text(&format!("{team_tag}{} · {}{to}", s(it, "label"), target_text(&target))))
                     .kid(el("div").cls("sub").text(&if target == "team" { s(it, "teamProposal") } else { s(it, "advice") }).attr("title", &s(it, "advice")))
                     .maybe(if status == "held" { Some(el("div").cls("hint").text("상대가 자기 사정을 이야기해서 이 조언은 멈췄어요. 한쪽 이야기만으로 교정하지 않도록, 팀 약속으로 함께 맞춰 보는 걸 추천해요.")) } else { None })
+                    .maybe(if b(it, "custom") && !delivered && !last_error.is_empty() {
+                        Some(el("div").cls("hint err").text(&format!("전송 대기 · {last_error}")))
+                    } else { None })
                     .maybe(if has_controls { Some(El(controls)) } else { None }),
             )
             .kid(el("span").cls(&format!("status-pill {status}")).text(pill))
-            .maybe(if status == "sent" || status == "held" { None } else { Some(el("button").cls("link").text("빼기").click(move |_| redo("share:remove", json!(id2)))) });
+            .maybe(withdraw).kid(remove);
         let _ = ob.append_child(&item.0);
+    }
+
+    if let (Some(section), Some(list)) = (by_id("receivedAdviceSection"), by_id("receivedAdvice")) {
+        let advice = arr(&team, "receivedAdvice");
+        clear(&list);
+        toggle(&section, "hidden", advice.is_empty());
+        for a in advice {
+            let item = el("div").cls("item")
+                .kid(el("div").cls("main")
+                    .kid(el("div").cls("title").text(&s(&a, "title")))
+                    .kid(el("div").cls("received-advice-text").text(&s(&a, "text"))))
+                .kid(remove_control("내 목록에서 삭제", "이 기기의 받은 조언 목록과 고양이 알림에서 이 항목을 지울까요?",
+                    "team:hide-advice", json!({"id":a["id"],"teamId":active_id})));
+            let _ = list.append_child(&item.0);
+        }
     }
 
     // 저장된 대화
@@ -234,6 +274,10 @@ async fn view_session(id: String) {
     let _ = view.append_child(&bx);
     if sx["summary"].is_object() {
         super::talk::render_summary(sx["summary"].clone(), &s(&sx, "id"), &view, false);
+    } else if sx["mode"] == "complaint" && sx["safetyHold"].is_null() && arr(&sx, "turns").iter().any(|t| t["role"] == "user") {
+        let _ = view.append_child(&el("button").cls("primary").text("AI 공유 문안 만들기").click(move |_| {
+            spawn(super::talk::delivery::open("complaint", id.clone(), None, None));
+        }).0);
     }
     scroll_into_view(&view, true);
 }

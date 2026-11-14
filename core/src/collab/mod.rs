@@ -1,5 +1,6 @@
 //! 협업: 자기소개·프로젝트·작업을 팀 서버와 주고받고, 배분 제안·진행 확인을 계산한다.
 mod brief;
+mod removal;
 pub mod docs;
 pub mod planner;
 pub mod ai_plan;
@@ -106,15 +107,13 @@ impl Team {
             let f = b.list_files(&team_id, &p.s("id")).await.unwrap_or_default();
             files.insert(p.s("id"), json!(f));
         }
+        let current_uid = self.my_uid();
         self.collab_update(|d| {
             d["profiles"] = json!(profiles);
             d["projects"] = json!(projects);
             d["tasks"] = Value::Object(tasks);
             d["files"] = Value::Object(files);
-            let active = d.s("activeProjectId");
-            if !projects.iter().any(|p| p.s("id") == active) {
-                d["activeProjectId"] = projects.first().map(|p| p["id"].clone()).unwrap_or(Value::Null);
-            }
+            removal::select_visible(d, &current_uid);
         });
         Ok(())
     }
@@ -151,11 +150,10 @@ impl Team {
             "deliverable": clean(&input.s("deliverable"), 200),
             "deadline": if crate::time::parse_deadline(&deadline).is_some() { deadline } else { String::new() },
         });
-        let id = self.backend()?.create_project(&team_id, p.clone()).await?;
+        let project = self.backend()?.create_project_record(&team_id, p).await?;
+        let id = project.s("id");
         self.collab_update(|d| {
-            let mut np = p.clone();
-            np["id"] = json!(id);
-            arr_mut(d, "projects").push(np);
+            arr_mut(d, "projects").push(project);
             d["tasks"][&id] = json!([]);
             d["activeProjectId"] = json!(id);
         });
