@@ -229,11 +229,19 @@ pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {
             q.push_str(&format!("&{k}={}", sai_core::util::take_chars(&v, 100)));
         }
     }
-    let _ = WebviewWindowBuilder::new(app, "chat", WebviewUrl::App(q.into()))
-        .title("사이와 이야기")
-        .inner_size(520.0, 700.0)
-        .min_inner_size(380.0, 520.0)
-        // 파일을 끌어다 놓으면 화면(협업 탭의 팀 자료)이 직접 받는다
-        .disable_drag_drop_handler()
-        .build();
+    // 창 만들기는 메뉴·트레이 이벤트 처리 안에서 바로 하면 Windows 에서 멈춘다 (WebView2 교착, tauri#4121).
+    // 그래서 따로 떨어진 작업으로 넘겨 만든다.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if app.get_webview_window("chat").is_some() {
+            return;
+        }
+        let _ = WebviewWindowBuilder::new(&app, "chat", WebviewUrl::App(q.into()))
+            .title("사이와 이야기")
+            .inner_size(520.0, 700.0)
+            .min_inner_size(380.0, 520.0)
+            // 파일을 끌어다 놓으면 화면(협업 탭의 팀 자료)이 직접 받는다
+            .disable_drag_drop_handler()
+            .build();
+    });
 }
