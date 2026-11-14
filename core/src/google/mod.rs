@@ -155,8 +155,9 @@ impl Google {
     }
 
     // ---------- 다른 컴퓨터로 옮기기 (Drive 숨김 폴더) ----------
+    /// 지금 버전에 필요한 Drive 권한(숨김 폴더 + 내 드라이브)을 모두 받았는지. 예전 로그인이면 다시 로그인해야 한다
     pub fn has_drive(&self) -> bool {
-        self.auth().ok().and_then(|a| a.tokens()).map(|t| t.s("scope").contains("drive.appdata")).unwrap_or(false)
+        self.auth().ok().and_then(|a| a.tokens()).map(|t| scope_ok(&t.s("scope"))).unwrap_or(false)
     }
 
     fn record_account(&self, patch: Value) {
@@ -253,6 +254,33 @@ impl Google {
             return err("Drive 를 쓰려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
         }
         self.auth()
+    }
+
+    pub async fn list_drive(&self, mode: &str, folder: &str, query: &str, page: &str) -> Result<Value> {
+        let a = self.drive_auth()?;
+        drive::list(&a, mode, folder, query, page).await
+    }
+
+    /// 내 드라이브(또는 공유 문서함)의 파일을 팀에 보낼 준비: 공유할 수 있으면 링크 권한을 맞춘다.
+    /// 돌려주는 값: 파일 정보 + access ("edit" | "view" | "link": 공유 설정을 바꿀 수 없어 원래 권한 그대로)
+    pub async fn prepare_send(&self, id: &str, edit: bool) -> Result<Value> {
+        let a = self.drive_auth()?;
+        let mut f = drive::get(&a, id).await?;
+        let access = if f["capabilities"].b("canShare") {
+            match drive::set_access(&a, id, edit).await {
+                Ok(()) => if edit { "edit" } else { "view" },
+                Err(_) => "link",
+            }
+        } else {
+            "link"
+        };
+        f["access"] = json!(access);
+        Ok(f)
+    }
+
+    pub async fn copy_to_mine(&self, id: &str, name: &str) -> Result<Value> {
+        let a = self.drive_auth()?;
+        drive::copy_to_mine(&a, id, name).await
     }
 
     pub async fn set_file_access(&self, drive_id: &str, edit: bool) -> Result<()> {
@@ -415,7 +443,7 @@ impl Google {
             "lastSync": s.i("lastSync"),
             "lastResult": s.get("lastResult").cloned().unwrap_or(Value::Null),
             "lastError": s.get("lastError").cloned().unwrap_or(Value::Null),
-            "drive": t.as_ref().map(|t| t.s("scope").contains("drive.appdata")).unwrap_or(false),
+            "drive": t.as_ref().map(|t| scope_ok(&t.s("scope"))).unwrap_or(false),
         })
     }
 
@@ -429,4 +457,9 @@ impl Google {
         *self.0.auth.lock().unwrap() = None;
         Ok(c)
     }
+}
+
+fn scope_ok(scope: &str) -> bool {
+    let s: Vec<&str> = scope.split_whitespace().collect();
+    s.contains(&"https://www.googleapis.com/auth/drive.appdata") && s.contains(&"https://www.googleapis.com/auth/drive")
 }

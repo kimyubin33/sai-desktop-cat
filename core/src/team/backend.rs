@@ -420,6 +420,19 @@ impl Backend {
 
     // ---------- 외부 연결 ----------
     /// 팀 공용 연결 정보 (예: telegram 봇 토큰) — 팀원만 읽는다
+    // ---------- 팀 Drive 함 (파일·메시지 주고받기) ----------
+    pub async fn add_share(&self, team_id: &str, data: Value) -> Result<String> {
+        self.create_doc(&format!("teams/{team_id}/shares"), None, data).await
+    }
+
+    pub async fn list_shares(&self, team_id: &str) -> Result<Vec<Value>> {
+        self.list_docs(&format!("teams/{team_id}/shares")).await
+    }
+
+    pub async fn delete_share(&self, team_id: &str, id: &str) -> Result<()> {
+        self.delete_doc(&format!("teams/{team_id}/shares/{id}")).await
+    }
+
     // ---------- 팀 자료 (Drive 링크) ----------
     pub async fn add_file(&self, team_id: &str, project_id: &str, data: Value) -> Result<String> {
         self.create_doc(&format!("teams/{team_id}/projects/{project_id}/files"), None, data).await

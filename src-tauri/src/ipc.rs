@@ -289,6 +289,40 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             });
             Ok(json!({ "applied": n, "view": collab_view(a) }))
         }
+        // ---------- 팀 Drive 함 ----------
+        "drive:feed" => Ok(drive_feed(a).await),
+        "drive:send-text" => {
+            hub.active().add_share(&json!({ "text": x.s("text") })).await?;
+            Ok(drive_feed(a).await)
+        }
+        "drive:send-local" => {
+            use base64::Engine;
+            let t = hub.active();
+            let bytes = base64::engine::general_purpose::STANDARD.decode(x.s("data")).map_err(|_| "파일을 읽지 못했어요.".to_string())?;
+            let edit = x.b("edit");
+            let f = a.google.upload_file(&t.name(), &x.s("name"), &x.s("mime"), bytes, edit).await?;
+            t.add_share(&json!({ "text": x.s("text"), "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "access": if edit { "edit" } else { "view" } })).await?;
+            Ok(drive_feed(a).await)
+        }
+        "drive:send-drive" => {
+            let t = hub.active();
+            let f = a.google.prepare_send(&x.s("fileId"), x.b("edit")).await?;
+            t.add_share(&json!({ "text": x.s("text"), "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "access": f.s("access") })).await?;
+            Ok(drive_feed(a).await)
+        }
+        "drive:list" => a.google.list_drive(&x.s("mode"), &x.s("folder"), &x.s("q"), &x.s("page")).await,
+        "drive:save" => {
+            let s = hub.active().share(&x.s("id")).ok_or("그 파일을 찾을 수 없어요.")?;
+            if s.s("driveId").is_empty() {
+                return Err("이 파일은 사본을 만들 수 없어요. 열어서 Drive 에서 직접 저장해 주세요.".into());
+            }
+            let f = a.google.copy_to_mine(&s.s("driveId"), &s.s("name")).await?;
+            Ok(json!({ "name": f.s("name"), "url": f.s("webViewLink") }))
+        }
+        "drive:delete" => {
+            hub.active().delete_share(&x.s("id")).await?;
+            Ok(drive_feed(a).await)
+        }
         "collab:upload-file" => {
             use base64::Engine;
             let t = hub.active();
@@ -637,6 +671,22 @@ fn collab_view(a: &Arc<App>) -> Value {
         }).unwrap_or_default(),
         "google": { "signedIn": a.google.is_ready(), "drive": a.google.has_drive() },
         "objectionReasons": OBJECTION_REASONS,
+    })
+}
+
+async fn drive_feed(a: &Arc<App>) -> Value {
+    let t = a.hub.active();
+    if !t.is_connected() {
+        return json!({ "connected": false });
+    }
+    let (list, error) = t.shares().await;
+    json!({
+        "connected": true,
+        "teamName": t.name(),
+        "memberCount": t.members(true).len(),
+        "google": { "signedIn": a.google.is_ready(), "drive": a.google.has_drive(), "email": a.google.status()["email"] },
+        "items": t.shares_view(&list),
+        "error": error,
     })
 }
 

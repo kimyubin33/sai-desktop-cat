@@ -1,7 +1,8 @@
 //! Google Drive: 계정 백업(사이 전용 숨김 폴더) · 팀 자료 올리기 · 공유 링크 읽기.
-//! 권한은 두 가지뿐이다.
-//!  - drive.appdata: 사이만 보는 숨김 폴더. 내 Drive 의 다른 파일은 볼 수 없다
-//!  - drive.file: 사이로 올리거나 사이에서 연 파일만. 내 Drive 전체는 볼 수 없다
+//! 권한
+//!  - drive.appdata: 사이만 보는 숨김 폴더 (팀 목록 맡기기)
+//!  - drive: 내 드라이브·공유 문서함을 둘러보고, 내가 고른 파일만 팀에 보내거나 공유 설정을 바꾼다
+//!    (고르지 않은 파일은 읽거나 바꾸지 않는다)
 use super::oauth::GoogleAuth;
 use crate::http::{client, json_body};
 use crate::util::J;
@@ -165,6 +166,37 @@ pub fn drive_id(url: &str) -> Option<String> {
 /// 붙여 넣은 링크의 이름 (사이가 볼 수 없는 파일이면 None)
 pub async fn meta(a: &GoogleAuth, id: &str) -> Option<Value> {
     send(a, client().get(format!("{API}/files/{id}")).query(&[("fields", FIELDS), ("supportsAllDrives", "true")])).await.ok()
+}
+
+const LIST_FIELDS: &str = "nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink,iconLink,shared,ownedByMe,owners(displayName),sharingUser(displayName),capabilities(canShare,canCopy))";
+
+/// 둘러보기. mode: "my"(내 드라이브, folder 안), "shared"(공유 문서함), "recent"(최근), "search"(이름 검색)
+pub async fn list(a: &GoogleAuth, mode: &str, folder: &str, query: &str, page: &str) -> Result<Value> {
+    let qs = query.replace('\\', " ").replace('\'', " ");
+    let (q, order) = match mode {
+        "shared" => ("sharedWithMe = true and trashed = false".to_string(), "sharedWithMeTime desc"),
+        "recent" => ("trashed = false and mimeType != 'application/vnd.google-apps.folder'".to_string(), "viewedByMeTime desc"),
+        "search" => (format!("name contains '{qs}' and trashed = false"), "modifiedTime desc"),
+        _ => {
+            let f = if folder.is_empty() { "root".to_string() } else { folder.replace('\'', "") };
+            (format!("'{f}' in parents and trashed = false"), "folder,name")
+        }
+    };
+    let mut params = vec![("q", q.as_str()), ("fields", LIST_FIELDS), ("orderBy", order), ("pageSize", "50"), ("supportsAllDrives", "true"), ("includeItemsFromAllDrives", "true")];
+    if !page.is_empty() {
+        params.push(("pageToken", page));
+    }
+    send(a, client().get(format!("{API}/files")).query(&params)).await
+}
+
+pub async fn get(a: &GoogleAuth, id: &str) -> Result<Value> {
+    send(a, client().get(format!("{API}/files/{id}")).query(&[("fields", "id,name,mimeType,size,webViewLink,ownedByMe,capabilities(canShare,canCopy)"), ("supportsAllDrives", "true")])).await
+}
+
+/// 받은 파일을 내 드라이브의 "사이에서 받은 파일" 폴더에 사본으로
+pub async fn copy_to_mine(a: &GoogleAuth, id: &str, name: &str) -> Result<Value> {
+    let parent = folder(a, "사이에서 받은 파일").await?;
+    send(a, client().post(format!("{API}/files/{id}/copy")).query(&[("fields", FIELDS), ("supportsAllDrives", "true")]).json(&json!({ "name": name, "parents": [parent] }))).await
 }
 
 #[cfg(test)]

@@ -128,6 +128,19 @@ service cloud.firestore {
         }
       }
 
+      // ---------- 팀 Drive 함: 파일 링크·메시지 주고받기 ----------
+      match /shares/{shareId} {
+        allow read: if isMember(teamId);
+        allow create: if isMember(teamId)
+          && request.resource.data.keys().hasOnly(['text', 'name', 'url', 'driveId', 'mimeType', 'size', 'access', 'by', 'at'])
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.text is string && request.resource.data.text.size() <= 1000
+          && (!('url' in request.resource.data)
+              || (request.resource.data.url is string && request.resource.data.url.size() <= 500
+                  && request.resource.data.url.matches('https://.*')));
+        allow delete: if isMember(teamId) && resource.data.by == request.auth.uid;
+      }
+
       // ---------- 외부 연결 (5단계) ----------
       // 팀 공용 연결 정보 (Telegram 봇 토큰 등): 팀원만 읽고 쓴다
       match /integrations/{name} {

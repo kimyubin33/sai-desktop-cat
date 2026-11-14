@@ -18,6 +18,7 @@ pub mod account;
 pub mod backend;
 pub mod claude;
 pub mod codec;
+pub mod shares;
 
 pub use backend::Backend;
 

@@ -1,5 +1,6 @@
 //! 대화창: 대화 · 정리함 · 협업 · 설정 탭.
 mod collab;
+mod drive;
 mod ext;
 mod notes;
 pub mod schedule;
@@ -107,6 +108,7 @@ pub fn show_tab(tab: &str) {
     match tab {
         "notes" => spawn(notes::render()),
         "collab" => collab::render(true),
+        "drive" => drive::render(),
         "settings" => {
             spawn(settings::load());
             spawn(settings::render_team(None));
