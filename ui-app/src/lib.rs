@@ -10,6 +10,8 @@ pub mod dom;
 mod cat;
 #[cfg(target_arch = "wasm32")]
 mod chat;
+#[cfg(target_arch = "wasm32")]
+mod peek;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
@@ -18,6 +20,7 @@ pub fn main() {
     match which.as_str() {
         "cat" => cat::start(),
         "chat" => chat::start(),
+        "peek" => peek::start(),
         _ => {}
     }
 }

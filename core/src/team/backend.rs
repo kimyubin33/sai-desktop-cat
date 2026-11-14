@@ -18,6 +18,8 @@ use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+pub const RECENT_SHARE_LIMIT: usize = 32;
+
 const CODE_CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 pub fn random_code(len: usize) -> String {
@@ -633,6 +635,35 @@ impl Backend {
 
     pub async fn list_shares(&self, team_id: &str) -> Result<Vec<Value>> {
         self.list_docs(&format!("teams/{team_id}/shares")).await
+    }
+
+    /// 알림은 전체 대화방 대신 시각 인덱스의 마지막 일부만 읽는다.
+    /// 시각은 보낸 쪽 PC에서 지정하므로 화면 알림은 이 범위에서 문서 ID로 새 톡을 찾는다.
+    pub async fn recent_shares(&self, team_id: &str, since: Option<i64>) -> Result<Vec<Value>> {
+        match self {
+            Backend::Firebase(f) => {
+                let mut query = json!({
+                    "from": [{ "collectionId": "shares" }],
+                    "orderBy": [{ "field": { "fieldPath": "at" }, "direction": "DESCENDING" }],
+                    "limit": RECENT_SHARE_LIMIT
+                });
+                if let Some(at) = since {
+                    query["where"] = json!({ "fieldFilter": {
+                        "field": { "fieldPath": "at" }, "op": "GREATER_THAN_OR_EQUAL",
+                        "value": { "integerValue": at.to_string() }
+                    }});
+                }
+                let rows = f.req("POST", &format!("/teams/{team_id}:runQuery"), Some(json!({ "structuredQuery": query })), "").await?;
+                let rows = rows.as_ref().and_then(Value::as_array).ok_or_else(|| "톡 알림을 읽지 못했어요.".to_string())?;
+                Ok(rows.iter().rev().filter_map(|r| r.get("document").and_then(decode_doc)).collect())
+            }
+            Backend::Memory(_) => {
+                let mut rows = self.list_shares(team_id).await?;
+                rows.retain(|row| since.map_or(true, |at| row.i("at") >= at));
+                rows.sort_by_key(|r| (r.i("at"), r.s("id")));
+                Ok(rows.split_off(rows.len().saturating_sub(RECENT_SHARE_LIMIT)))
+            }
+        }
     }
 
     pub async fn delete_share(&self, team_id: &str, id: &str) -> Result<()> {

@@ -114,6 +114,14 @@ async fn firebase_contract() {
     match a.add_share(&team, json!({ "text": "기획안이에요", "name": "기획안.pdf", "url": "https://drive.google.com/file/d/abc/view", "driveId": "abc", "mimeType": "application/pdf", "size": 3, "access": "edit", "by": ua, "at": 2 })).await {
         Ok(sid) => {
             assert_eq!(b.list_shares(&team).await.unwrap().len(), 1);
+            let talk = a.add_share(&team, json!({ "text": "회의실에서 만나요", "by": ua, "at": 3 })).await.unwrap();
+            let recent = b.recent_shares(&team, None).await.expect("팀원이 톡 알림용 기록을 읽을 수 있어야 해요");
+            let ids: Vec<_> = recent.iter().map(|row| row.s("id")).collect();
+            assert_eq!(ids, [sid.clone(), talk.clone()]);
+            let updates = b.recent_shares(&team, Some(3)).await.unwrap();
+            assert_eq!(updates.iter().map(|row| row.s("id")).collect::<Vec<_>>(), [talk.clone()]);
+            assert!(b.recent_shares(&team, Some(4)).await.unwrap().is_empty());
+            a.delete_share(&team, &talk).await.unwrap();
             assert!(b.delete_share(&team, &sid).await.is_err(), "다른 팀원이 지우면 거절돼야 해요");
             assert!(b.add_share(&team, json!({ "text": "x", "by": ua, "at": 3 })).await.is_err(), "남의 이름으로 보내면 거절돼야 해요");
             a.delete_share(&team, &sid).await.unwrap();

@@ -10,8 +10,9 @@ mod talk;
 use crate::api::{call, listen};
 use crate::dom::*;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
+use std::rc::Rc;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, HtmlElement};
 
@@ -143,6 +144,7 @@ pub fn update_engine(s: &Value) {
 
 /// 머리말의 팀 고르기 (팀이 둘 이상일 때)
 pub fn refresh_team_switch(info: &Value) {
+    drive::switch_team(&s(info, "activeTeamId"));
     let Some(sel) = by_id("teamSwitch") else { return };
     clear(&sel);
     let teams = arr(info, "teams");
@@ -173,6 +175,26 @@ pub fn start() {
         });
     }
     listen("chat:show-tab", |v| show_tab(v.as_str().unwrap_or("chat")));
+    let opened_from_peek = Rc::new(Cell::new(false));
+    let opened = opened_from_peek.clone();
+    listen("chat:team-talk", move |notice| {
+        let Some(team) = notice.as_str().or_else(|| notice["teamId"].as_str()) else { return };
+        opened.set(true);
+        drive::switch_team(team);
+        if let Some(select) = by_id("teamSwitch") {
+            set_val(&select, team);
+        }
+        drive::select_talk();
+        show_tab("drive");
+        let team = team.to_owned();
+        spawn(async move {
+            if let Ok(info) = call("team:status", Value::Null).await {
+                if drive::viewing(&team) && s(&info, "activeTeamId") == team {
+                    refresh_team_switch(&info);
+                }
+            }
+        });
+    });
     listen("chat:start-explain", |v| {
         show_tab("chat");
         let t = v.as_str().map(String::from);
@@ -187,10 +209,17 @@ pub fn start() {
         let sel2 = sel.clone();
         on(&sel, "change", move |_| {
             let id = val(&sel2);
+            drive::switch_team(&id);
             spawn(async move {
-                if let Ok(info) = call("team:switch", json!(id)).await {
-                    refresh_team_switch(&info);
-                    show_tab(&current_tab());
+                let info = match call("team:switch", json!(id)).await {
+                    Ok(info) => Ok(info),
+                    Err(_) => call("team:status", Value::Null).await,
+                };
+                if let Ok(info) = info {
+                    if drive::viewing(&id) {
+                        refresh_team_switch(&info);
+                        show_tab(&current_tab());
+                    }
                 }
             });
         });
@@ -200,7 +229,7 @@ pub fn start() {
     drive::bind();
     settings::bind();
 
-    spawn(async {
+    spawn(async move {
         let topics = call("topics:list", Value::Null).await.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
         st(|s| s.topics = topics);
         if let Ok(set) = call("settings:get", Value::Null).await {
@@ -208,7 +237,12 @@ pub fn start() {
             update_engine(&set);
         }
         if let Ok(info) = call("team:status", Value::Null).await {
-            refresh_team_switch(&info);
+            if !opened_from_peek.get() {
+                refresh_team_switch(&info);
+            }
+        }
+        if opened_from_peek.get() {
+            return;
         }
         if let Some(t) = query_param("task") {
             collab::focus(&t);

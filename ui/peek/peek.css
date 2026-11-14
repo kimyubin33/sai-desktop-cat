@@ -1,0 +1,86 @@
+:root {
+  color-scheme: light;
+  font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+  color: #382e2c;
+}
+
+html, body, #peek, #peekOpen { width: 100%; height: 100%; margin: 0; }
+html, body { overflow: hidden; background: transparent; }
+#peek { position: relative; }
+button { color: inherit; font: inherit; cursor: pointer; }
+#peekOpen { border: 0; padding: 0; text-align: start; background: transparent; }
+
+.bubble {
+  box-sizing: border-box;
+  position: absolute;
+  left: 8px;
+  right: 84px;
+  top: 10px;
+  min-height: 63px;
+  padding: 9px 12px 10px;
+  border: 2px solid #493c38;
+  border-radius: 14px;
+  background: #fffaf2;
+  box-shadow: 2px 3px 0 rgba(55, 42, 37, .19);
+}
+.bubble::after {
+  position: absolute;
+  right: -7px;
+  top: 21px;
+  width: 9px;
+  height: 9px;
+  border-top: 2px solid #493c38;
+  border-right: 2px solid #493c38;
+  transform: rotate(45deg);
+  background: #fffaf2;
+  content: '';
+}
+.heading { display: flex; gap: 7px; align-items: baseline; padding-right: 19px; }
+#sender, #team { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sender { font-size: 13px; line-height: 18px; }
+#team { max-width: 45%; color: #806d61; font-size: 11px; }
+#message {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  margin-top: 3px;
+  font-size: 14px;
+  line-height: 20px;
+}
+#face {
+  position: absolute;
+  right: -17px;
+  top: -6px;
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+}
+#peekClose {
+  position: absolute;
+  right: 89px;
+  top: 13px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0;
+  background: transparent;
+  color: #806d61;
+  font-size: 17px;
+}
+#peekClose:hover { background: #f2e7db; }
+#peekOpen:focus-visible { outline: none; }
+#peekOpen:focus-visible .bubble, #peekClose:focus-visible { outline: 2px solid #884c28; outline-offset: 1px; }
+
+.shown #face { animation: lean-in .48s ease-out both, lean-out .28s 8s ease-in forwards; }
+.shown .bubble, .shown #peekClose { animation: say .23s .20s ease-out both, hush .2s 8s ease-in forwards; }
+@keyframes lean-in { 0% { transform: translateX(110%); } 72% { transform: translateX(-4px); } 100% { transform: translateX(0); } }
+@keyframes lean-out { to { transform: translateX(110%); } }
+@keyframes say { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes hush { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .shown #face, .shown .bubble, .shown #peekClose { animation: none; }
+}

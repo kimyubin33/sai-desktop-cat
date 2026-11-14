@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ko" data-window="peek">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>사이 · 새 팀 톡</title>
+  <link rel="stylesheet" href="peek.css">
+</head>
+<body>
+  <div id="peek" hidden>
+    <button id="peekOpen" type="button" title="팀 톡 열기" aria-labelledby="sender team message">
+      <span class="bubble" role="status" aria-live="polite" aria-atomic="true">
+        <span class="heading"><strong id="sender"></strong><span id="team"></span></span>
+        <span id="message"></span>
+      </span>
+      <canvas id="face" width="96" height="96" aria-hidden="true"></canvas>
+    </button>
+    <button id="peekClose" type="button" aria-label="알림 닫기" title="닫기">×</button>
+  </div>
+  <script type="module" src="../pkg/boot.js"></script>
+</body>
+</html>

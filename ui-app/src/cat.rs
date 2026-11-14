@@ -5,11 +5,11 @@ use crate::api::{cat_event, listen};
 use crate::dom::*;
 use crate::sprite;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{HtmlCanvasElement, MouseEvent};
+use web_sys::{HtmlCanvasElement, MouseEvent, PointerEvent};
 
 struct St {
     state: String,
@@ -18,6 +18,8 @@ struct St {
     last_frame_at: f64,
     blink_until: f64,
     bubble: Option<Value>,
+    reaction: Option<&'static str>,
+    reaction_until: f64,
     last_regions: String,
 }
 
@@ -28,7 +30,7 @@ fn frame_ms(state: &str) -> f64 {
         "loaf" => 1200.0,
         "sleep" => 900.0,
         "talk" => 220.0,
-        "drag" => 200.0,
+        "drag" | "dizzy" | "hurt" => 160.0,
         _ => 500.0,
     }
 }
@@ -37,29 +39,53 @@ pub fn start() {
     let canvas: HtmlCanvasElement = by_id("cat").unwrap().unchecked_into();
     let bubble = by_id("bubble").unwrap();
     let zz = by_id("zz").unwrap();
-    let st = Rc::new(RefCell::new(St { state: "sit".into(), facing: 1, frame: 0, last_frame_at: 0.0, blink_until: 0.0, bubble: None, last_regions: String::new() }));
+    let reaction = by_id("reaction").unwrap();
+    let st = Rc::new(RefCell::new(St { state: "sit".into(), facing: 1, frame: 0, last_frame_at: 0.0, blink_until: 0.0, bubble: None, reaction: None, reaction_until: 0.0, last_regions: String::new() }));
 
     // 그리기: 매 프레임
     {
         let st = st.clone();
         let canvas = canvas.clone();
+        let reaction = reaction.clone();
         let f: Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>> = Rc::new(RefCell::new(None));
         let g = f.clone();
         *g.borrow_mut() = Some(Closure::new(move |t: f64| {
             {
                 let mut s = st.borrow_mut();
-                if t - s.last_frame_at > frame_ms(&s.state) {
+                if s.reaction.is_some() && now() >= s.reaction_until {
+                    s.reaction = None;
+                    reaction.set_hidden(true);
+                }
+                if t - s.last_frame_at > frame_ms(s.reaction.unwrap_or(&s.state)) {
                     s.frame += 1;
                     s.last_frame_at = t;
                     if (s.state == "sit" || s.state == "loaf") && js_sys::Math::random() < 0.08 {
                         s.blink_until = t + 160.0;
                     }
                 }
-                sprite::render(&canvas, &s.state, s.frame, s.facing, t >= s.blink_until);
+                sprite::render(&canvas, s.reaction.unwrap_or(&s.state), s.frame, s.facing, t >= s.blink_until);
             }
             let _ = window().request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref());
         }));
         let _ = window().request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref());
+    }
+    {
+        let st = st.clone();
+        listen("cat:reaction", move |event| {
+            let (pose, line) = match event["pose"].as_str() {
+                Some("dizzy") => ("dizzy", "어지러..."),
+                Some("hurt") => ("hurt", "아야!"),
+                _ => return,
+            };
+            let mut s = st.borrow_mut();
+            s.reaction = Some(pose);
+            s.reaction_until = now() + 1300.0;
+            s.frame = 0;
+            reaction.set_text_content(Some(line));
+            toggle(&reaction, "below", event["below"].as_bool().unwrap_or(false));
+            toggle(&reaction, "left", event["left"].as_bool().unwrap_or(false));
+            reaction.set_hidden(false);
+        });
     }
 
     // 앱 → 상태
@@ -138,39 +164,47 @@ pub fn start() {
         });
     }).ok();
 
+    let holding = Rc::new(Cell::new(None));
     {
         let st = st.clone();
         let c2 = canvas.clone();
-        on(&canvas, "mousedown", move |e| {
-            let me: &MouseEvent = e.unchecked_ref();
-            if !hit_cat(&c2, &st.borrow(), me) {
+        let holding = holding.clone();
+        on(&canvas, "pointerdown", move |e| {
+            let pointer: &PointerEvent = e.unchecked_ref();
+            if !pointer.is_primary() || !hit_cat(&c2, &st.borrow(), pointer) {
                 return;
             }
             // 오른쪽 버튼은 눌렀을 때 바로 메뉴 (contextmenu 이벤트는 투명 창에서 오지 않을 때가 있다)
-            if me.button() == 2 {
+            if pointer.button() == 2 {
                 e.prevent_default();
                 cat_event("context-menu", Value::Null);
                 return;
             }
-            if me.button() != 0 {
+            if pointer.button() != 0 || holding.get().is_some() {
                 return;
             }
             e.prevent_default();
+            let _ = c2.set_pointer_capture(pointer.pointer_id());
+            holding.set(Some(pointer.pointer_id()));
             cat_event("drag-start", Value::Null);
         });
     }
-    on(&window(), "mouseup", |e| {
-        let me: &MouseEvent = e.unchecked_ref();
-        if me.button() == 0 {
-            cat_event("drag-end", Value::Null);
-        }
-    });
+    for ev in ["pointerup", "pointercancel", "lostpointercapture"] {
+        let holding = holding.clone();
+        on(&window(), ev, move |e| {
+            let pointer: &PointerEvent = e.unchecked_ref();
+            if holding.get() == Some(pointer.pointer_id()) {
+                holding.set(None);
+                cat_event("drag-end", json!(ev != "pointerup"));
+            }
+        });
+    }
     on(&canvas, "contextmenu", |e| e.prevent_default());
     cat_event("ready", Value::Null);
 }
 
 fn pixels(s: &St) -> Vec<u8> {
-    sprite::draw(&s.state, s.frame, true)
+    sprite::draw(s.reaction.unwrap_or(&s.state), s.frame, true)
 }
 
 /// 32x32 도트에서 그려진 칸 (좌우 반전 반영)
