@@ -3,6 +3,11 @@ use super::{arr, b, fmt_date, n, s};
 use crate::api::call;
 use crate::dom::*;
 use serde_json::{json, Value};
+use std::cell::Cell;
+
+thread_local! {
+    static RENDER_ID: Cell<u64> = const { Cell::new(0) };
+}
 
 fn status_text(st: &str) -> &'static str {
     match st {
@@ -31,10 +36,51 @@ fn redo(ch: &'static str, args: Value) {
     });
 }
 
+fn held_action(item: &Value, teams: &[Value], outbox: &[Value]) -> El {
+    let id = s(item, "id");
+    let team_id = s(item, "teamId");
+    let Some(team) = teams.iter().find(|t| !team_id.is_empty() && t["teamId"] == team_id) else {
+        return el("span").cls("hint").text("이 항목의 팀에 연결해야 약속을 제안할 수 있어요.");
+    };
+    let name = s(team, "name");
+    if let Some(link) = item["heldProposalId"].as_str() {
+        if let Some(proposal) = outbox.iter().find(|p| p["id"] == link && p["teamId"] == team_id && p["target"] == "team") {
+            let status = status_text(&s(proposal, "status"));
+            return el("span").cls("hint").attr("role", "status").text(&format!("‘{name}’ 팀 약속 제안 · {status}"));
+        }
+    }
+    let message = el("span").cls("hint").attr("role", "status").build();
+    let status = message.clone();
+    let button = el("button").text(&format!("‘{name}’에 팀 약속 제안")).click(move |e| {
+        let Some(button) = event_target(&e) else { return };
+        if button.has_attribute("disabled") { return; }
+        set_disabled(&button, true);
+        status.set_class_name("hint");
+        status.set_text_content(Some("제안을 등록하는 중이에요…"));
+        let args = json!({ "teamId": team_id, "itemId": id });
+        let status = status.clone();
+        spawn(async move {
+            let result = call("share:propose-held", args).await;
+            if !button.is_connected() { return; }
+            match result {
+                Ok(_) => render().await,
+                Err(error) => {
+                    status.set_class_name("hint err");
+                    status.set_text_content(Some(&error));
+                    set_disabled(&button, false);
+                }
+            }
+        });
+    });
+    el("div").cls("controls").kid(button).child(message)
+}
+
 pub async fn render() {
+    let request = RENDER_ID.with(|id| { id.set(id.get() + 1); id.get() });
     let outbox = call("share:outbox", Value::Null).await.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
     let sessions = call("chat:list", Value::Null).await.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
     let team = call("team:status", Value::Null).await.unwrap_or(Value::Null);
+    if !RENDER_ID.with(|id| id.get() == request) { return; }
     let members = arr(&team, "members");
     let others: Vec<Value> = members.iter().filter(|m| !b(m, "me")).cloned().collect();
     let name_of = |uid: &str| members.iter().find(|m| s(m, "uid") == uid).map(|m| s(m, "displayName"));
@@ -69,7 +115,8 @@ pub async fn render() {
     if outbox.is_empty() {
         let _ = ob.append_child(&el("div").cls("empty").text("아직 공유하기로 한 주제가 없어요.").0);
     }
-    let many_teams = arr(&team, "teams").len() > 1;
+    let teams = arr(&team, "teams");
+    let many_teams = teams.len() > 1;
     for it in &outbox {
         let mut status = s(it, "status");
         if status.is_empty() {
@@ -119,11 +166,10 @@ pub async fn render() {
                     })
                     .0,
             );
-        } else if status == "held" {
-            let topic = s(it, "topic");
-            let _ = controls.append_child(&el("button").text("팀 약속으로 맞춰 보자고 제안").click(move |_| redo("team:propose", json!(topic))).0);
+        } else if status == "held" && target == "person" {
+            let _ = controls.append_child(&held_action(it, &teams, &outbox).0);
         }
-        let to = if target == "person" { name_of(&s(it, "toMember")).filter(|_| !s(it, "toMember").is_empty()).map(|n| format!(" → {n}")).unwrap_or_default() } else { String::new() };
+        let to = if target == "person" && here { name_of(&s(it, "toMember")).filter(|_| !s(it, "toMember").is_empty()).map(|n| format!(" → {n}")).unwrap_or_default() } else { String::new() };
         let team_tag = if many_teams && !s(it, "teamName").is_empty() { format!("[{}] ", s(it, "teamName")) } else { String::new() };
         let has_controls = controls.child_element_count() > 0;
         let pill = if connected || status != "queued" { status_text(&status) } else { "팀 연결 전" };
