@@ -137,6 +137,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
     let a_sync = a.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(3)).await;
+        account_startup(&a_sync).await;
         loop {
             sync_now(&a_sync).await;
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
@@ -157,6 +158,34 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         a.updater.start(&a);
     }
     Ok(a)
+}
+
+/// Google 계정에 맡겨 둔 팀: 이 컴퓨터에서 처음이면 되찾고, 아니면 지금 목록을 맡겨 둔다
+pub async fn account_startup(a: &Arc<App>) {
+    if a.local_mode {
+        return;
+    }
+    let st = a.google.account_status();
+    if !st.b("ready") {
+        return;
+    }
+    // 처음이거나 이 컴퓨터에 팀이 하나도 없으면 되찾기부터
+    if st.b("checked") && !a.hub.teams().is_empty() {
+        let _ = a.google.backup_account(false).await;
+    } else if a.google.restore_account().await.is_ok() {
+        on_settings_changed(a);
+    }
+}
+
+/// 팀 목록이 바뀐 뒤 Google 계정에도 맡겨 둔다 (뒤에서)
+pub fn backup_later(a: &Arc<App>, allow_empty: bool) {
+    if a.local_mode {
+        return;
+    }
+    let a = a.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = a.google.backup_account(allow_empty).await;
+    });
 }
 
 /// 모든 팀 동기화 + Google 할 일
@@ -204,5 +233,7 @@ pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {
         .title("사이와 이야기")
         .inner_size(520.0, 700.0)
         .min_inner_size(380.0, 520.0)
+        // 파일을 끌어다 놓으면 화면(협업 탭의 팀 자료)이 직접 받는다
+        .disable_drag_drop_handler()
         .build();
 }

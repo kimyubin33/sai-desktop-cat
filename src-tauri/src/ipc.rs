@@ -289,6 +289,30 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             });
             Ok(json!({ "applied": n, "view": collab_view(a) }))
         }
+        "collab:upload-file" => {
+            use base64::Engine;
+            let t = hub.active();
+            let bytes = base64::engine::general_purpose::STANDARD.decode(x.s("data")).map_err(|_| "파일을 읽지 못했어요.".to_string())?;
+            let f = a.google.upload_file(&t.name(), &x.s("name"), &x.s("mime"), bytes).await?;
+            t.add_file(&x.s("projectId"), &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId") })).await?;
+            Ok(collab_view(a))
+        }
+        "collab:link-file" => {
+            let t = hub.active();
+            let url = x.s("url").trim().to_string();
+            if !url.starts_with("https://") {
+                return Err("https:// 로 시작하는 Drive 공유 링크를 붙여 넣어 주세요.".into());
+            }
+            let meta = a.google.link_meta(&url).await.unwrap_or(Value::Null);
+            let typed = x.s("name").trim().to_string();
+            let name = if !typed.is_empty() { typed } else if !meta.s("name").is_empty() { meta.s("name") } else { "Drive 파일".into() };
+            t.add_file(&x.s("projectId"), &json!({ "name": name, "url": url, "driveId": meta.s("id"), "mimeType": meta.s("mimeType"), "size": meta.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId") })).await?;
+            Ok(collab_view(a))
+        }
+        "collab:delete-file" => {
+            hub.active().delete_file(&x.s("projectId"), &x.s("id")).await?;
+            Ok(collab_view(a))
+        }
         c if c.starts_with("collab:") => {
             let t = hub.active();
             match c {
@@ -359,7 +383,32 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
         }
         "g:login" => {
             a.google.login().await?;
-            Ok(ext_view(a))
+            // 다른 컴퓨터에서 쓰던 팀이 Google 계정에 있으면 바로 가져온다
+            let text = if a.local_mode {
+                None
+            } else {
+                match a.google.restore_account().await {
+                    Ok(t) => {
+                        on_settings_changed(a);
+                        Some(t)
+                    }
+                    Err(e) => Some(format!("Google 과 연결됐어요. 다만 팀 되찾기는 하지 못했어요: {e}")),
+                }
+            };
+            Ok(json!({ "view": ext_view(a), "text": text }))
+        }
+        "account:restore" => {
+            let text = a.google.restore_account().await?;
+            on_settings_changed(a);
+            Ok(json!({ "text": text, "team": team_view(a) }))
+        }
+        "app:open-url" => {
+            let u = x.as_str().unwrap_or("");
+            if !u.starts_with("https://") {
+                return Err("열 수 없는 주소예요.".into());
+            }
+            crate::system::open_url(u);
+            Ok(Value::Null)
         }
         "g:logout" => {
             a.google.logout().await?;
@@ -459,6 +508,8 @@ fn public_settings(a: &Arc<App>) -> Value {
 
 fn after_team(a: &Arc<App>) -> R {
     on_settings_changed(a);
+    // 팀을 만들거나 들어가거나 나가면 Google 계정에도 맡겨 둔다 (나가서 0개가 된 것도 반영)
+    crate::app::backup_later(a, true);
     Ok(team_view(a))
 }
 
@@ -496,6 +547,8 @@ fn team_view(a: &Arc<App>) -> Value {
         .collect::<Vec<_>>());
     v["proposals"] = json!(t.proposals());
     v["inboxCount"] = json!(c.arr("inbox").len());
+    v["account"] = if a.local_mode { Value::Null } else { a.google.account_status() };
+    v["googleSignedIn"] = json!(a.google.is_ready());
     v
 }
 
@@ -533,6 +586,16 @@ fn collab_view(a: &Arc<App>) -> Value {
         "projects": d.arr("projects"),
         "project": project,
         "tasks": tasks,
+        "files": project.as_ref().map(|p| {
+            let me = t.my_uid();
+            t.files_of(&p.s("id")).into_iter().map(|mut f| {
+                let by = f.s("by");
+                f["byName"] = json!(name_of.get(&by).cloned().unwrap_or_else(|| "나간 팀원".into()));
+                f["mine"] = json!(by == me);
+                f
+            }).collect::<Vec<_>>()
+        }).unwrap_or_default(),
+        "google": { "signedIn": a.google.is_ready(), "drive": a.google.has_drive() },
         "objectionReasons": OBJECTION_REASONS,
     })
 }

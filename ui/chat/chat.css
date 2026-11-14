@@ -904,3 +904,32 @@ select.team-pick {
 .msg.user.queued { opacity: 0.55; }
 .msg { overflow-wrap: anywhere; }
 .team-key { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 6px; }
+
+/* 팀 자료: 파일 끌어다 놓기 */
+.drop-zone {
+  margin: 8px 0;
+  padding: 18px 12px;
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+}
+.drop-zone.over {
+  border-color: var(--accent);
+  background: var(--user);
+  color: var(--ink);
+}
+.files .inline input[type="url"] { flex: 2; min-width: 0; }
+.files .inline input[type="text"] { flex: 1; min-width: 0; }
+.account-box { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.files input[type="url"], .files input[type="text"] {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--ink);
+}

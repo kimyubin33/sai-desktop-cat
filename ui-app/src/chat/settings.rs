@@ -90,6 +90,42 @@ pub async fn render_team(info: Option<Value>) {
     if !s(&info, "lastError").is_empty() {
         let _ = stx.append_child(&el("div").cls("err").text(&format!("연결 문제: {}", s(&info, "lastError"))).0);
     }
+    // 다른 컴퓨터로 옮기기 (Google 계정)
+    let acc = &info["account"];
+    if acc.is_object() && configured {
+        let bx = el("div").cls("account-box").build();
+        let line = |e: El| {
+            let _ = bx.append_child(&e.0);
+        };
+        if !b(&info, "googleSignedIn") {
+            line(el("div").cls("hint").txt("Google 로 로그인해 두면 다른 컴퓨터에서도 같은 Google 계정으로 로그인만 하면 팀이 그대로 돌아와요. ").kid(el("button").cls("link").text("외부 연결에서 로그인").click(|_| {
+                if let Some(x) = by_id("extRoot") {
+                    x.scroll_into_view();
+                }
+            })));
+        } else if !b(acc, "ready") {
+            line(el("div").cls("hint warn").text("다른 컴퓨터로 팀을 옮기려면 Google 로그인을 한 번 더 해 주세요 (외부 연결 → 로그아웃 → Google 로 로그인). Drive 권한이 새로 필요해요."));
+        } else {
+            let saved = n(acc, "savedAt");
+            line(el("div").cls("hint").text(&if saved > 0.0 { format!("Google 계정에 팀 목록을 맡겨 뒀어요 ({}). 다른 컴퓨터에서 같은 Google 계정으로 로그인하면 팀·맡은 작업이 그대로 돌아와요.", super::fmt_date(saved)) } else { "Google 계정과 연결돼 있어요. 팀이 생기면 목록을 맡겨 둘게요.".into() }));
+            if !s(acc, "error").is_empty() {
+                line(el("div").cls("err").text(&s(acc, "error")));
+            }
+            line(el("div").cls("inline").kid(el("button").text("Google 계정에서 팀 불러오기").click(|_| {
+                set_text("teamMsg", "Google 계정에서 팀을 찾는 중…");
+                spawn(async {
+                    match call("account:restore", Value::Null).await {
+                        Ok(r) => {
+                            set_text("teamMsg", &s(&r, "text"));
+                            render_team(Some(r["team"].clone())).await;
+                        }
+                        Err(e) => set_text("teamMsg", &e),
+                    }
+                });
+            })));
+        }
+        let _ = stx.append_child(&bx);
+    }
 
     let cfg = by_id("teamConfig").unwrap();
     let editing = cfg.get_attribute("data-editing").as_deref() == Some("1");

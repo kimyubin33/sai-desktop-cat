@@ -10,6 +10,7 @@ default-run = "sai"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
 sai-core = { path = "../core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"

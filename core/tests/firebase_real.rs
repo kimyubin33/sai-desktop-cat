@@ -81,6 +81,25 @@ async fn firebase_contract() {
         Err(e) => panic!("{e}"),
     }
 
+    // 팀 자료 (Drive 링크): 올린 사람만 지운다 (규칙을 아직 배포하지 않았으면 경고만)
+    match b.add_file(&team, &proj, json!({ "name": "발표.pdf", "url": "https://drive.google.com/file/d/abc/view", "driveId": "abc", "mimeType": "application/pdf", "size": 10, "taskId": task, "by": ub, "at": 1 })).await {
+        Ok(fid) => {
+            assert_eq!(a.list_files(&team, &proj).await.unwrap().len(), 1);
+            assert!(a.delete_file(&team, &proj, &fid).await.is_err(), "다른 팀원이 지우면 거절돼야 해요");
+            assert!(a.add_file(&team, &proj, json!({ "name": "x", "url": "https://drive.google.com/x", "driveId": "", "mimeType": "", "size": 0, "taskId": "", "by": ub, "at": 1 })).await.is_err(), "남의 이름으로 올리면 거절돼야 해요");
+            b.delete_file(&team, &proj, &fid).await.unwrap();
+            println!("✓ 팀 자료: 올린 사람 본인 이름으로만, 지우기도 본인만");
+        }
+        Err(e) if e.contains("403") => println!("::warning::팀 자료 규칙이 서버에 아직 없어요. Firebase 콘솔 → Firestore → 규칙에 저장소의 firestore.rules 를 붙여 넣고 게시해 주세요."),
+        Err(e) => panic!("{e}"),
+    }
+
+    // 다른 컴퓨터로 옮기기: 같은 로그인 정보로 새 기기에서 같은 계정·팀을 이어 쓴다
+    let moved = Backend::firebase(&cfg(), b.session(), Box::new(|_| {})).unwrap();
+    assert_eq!(moved.sign_in().await.unwrap(), ub, "옮긴 기기도 같은 계정이어야 해요");
+    assert!(moved.list_members(&team).await.unwrap().iter().any(|m| m.s("uid") == ub));
+    println!("✓ 다른 컴퓨터로 옮기기: 같은 계정으로 팀을 이어 씀");
+
     b.leave_team(&team).await.unwrap();
     a.leave_team(&team).await.unwrap();
     // 나간 사람은 더 이상 팀 데이터를 볼 수 없다

@@ -96,13 +96,18 @@ impl Team {
         let profiles = b.list_profiles(&team_id).await?;
         let projects = b.list_projects(&team_id).await?;
         let mut tasks = Map::new();
+        let mut files = Map::new();
         for p in projects.iter().take(10) {
             tasks.insert(p.s("id"), json!(b.list_tasks(&team_id, &p.s("id")).await?));
+            // 팀 자료: 서버 규칙을 아직 게시하지 않았으면 권한 오류가 나므로 조용히 비워 둔다
+            let f = b.list_files(&team_id, &p.s("id")).await.unwrap_or_default();
+            files.insert(p.s("id"), json!(f));
         }
         self.collab_update(|d| {
             d["profiles"] = json!(profiles);
             d["projects"] = json!(projects);
             d["tasks"] = Value::Object(tasks);
+            d["files"] = Value::Object(files);
             let active = d.s("activeProjectId");
             if !projects.iter().any(|p| p.s("id") == active) {
                 d["activeProjectId"] = projects.first().map(|p| p["id"].clone()).unwrap_or(Value::Null);
@@ -195,6 +200,63 @@ impl Team {
 
     pub fn tasks_of(&self, project_id: &str) -> Vec<Value> {
         self.collab_data()["tasks"].get(project_id).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+    }
+
+    // ---------- 팀 자료 ----------
+    pub fn files_of(&self, project_id: &str) -> Vec<Value> {
+        let mut v = self.collab_data()["files"].get(project_id).and_then(|v| v.as_array().cloned()).unwrap_or_default();
+        v.sort_by_key(|f| -f.i("at"));
+        v
+    }
+
+    /// Drive 파일 하나를 프로젝트 자료로 올린다 (task_id 가 있으면 그 작업의 자료)
+    pub async fn add_file(&self, project_id: &str, file: &Value) -> Result<()> {
+        let team_id = self.team_id()?;
+        let url = file.s("url");
+        if !url.starts_with("https://") {
+            return crate::err("https:// 로 시작하는 링크만 올릴 수 있어요.");
+        }
+        let data = json!({
+            "name": non_empty_name(&clean(&file.s("name"), 200)),
+            "url": clean(&url, 500),
+            "driveId": clean(&file.s("driveId"), 100),
+            "mimeType": clean(&file.s("mimeType"), 100),
+            "size": file.i("size").max(0),
+            "taskId": clean(&file.s("taskId"), 60),
+            "by": self.my_uid(),
+            "at": self.now(),
+        });
+        let b = self.backend()?;
+        let id = b.add_file(&team_id, project_id, data.clone()).await.map_err(|e| {
+            if e.contains("403") || e.contains("PERMISSION") || e.contains("권한") {
+                "팀 서버 규칙에 아직 자료 공유가 없어요. Firebase 콘솔에서 firestore.rules 를 게시해 주세요.".to_string()
+            } else {
+                e
+            }
+        })?;
+        self.collab_update(|d| {
+            if !d["files"].is_object() {
+                d["files"] = json!({});
+            }
+            let mut f = data;
+            f["id"] = json!(id);
+            let list = d["files"].as_object_mut().unwrap().entry(project_id.to_string()).or_insert_with(|| json!([]));
+            if let Some(a) = list.as_array_mut() {
+                a.push(f);
+            }
+        });
+        Ok(())
+    }
+
+    pub async fn delete_file(&self, project_id: &str, file_id: &str) -> Result<()> {
+        let team_id = self.team_id()?;
+        self.backend()?.delete_file(&team_id, project_id, file_id).await?;
+        self.collab_update(|d| {
+            if let Some(a) = d["files"].get_mut(project_id).and_then(|v| v.as_array_mut()) {
+                a.retain(|f| f.s("id") != file_id);
+            }
+        });
+        Ok(())
     }
 
     // ---------- 작업 ----------
@@ -445,5 +507,13 @@ mod tests {
         tb.set_status(&poster, "done").await.unwrap();
         a.sync_team(&ta).await;
         assert_eq!(ta.find_task(&poster).unwrap().1["status"], "done");
+    }
+}
+
+fn non_empty_name(s: &str) -> String {
+    if s.trim().is_empty() {
+        "이름 없는 파일".into()
+    } else {
+        s.to_string()
     }
 }

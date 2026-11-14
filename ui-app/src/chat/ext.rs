@@ -33,12 +33,17 @@ fn act<F: Future<Output = Result<Value, String>> + 'static>(fut: F, ok: &'static
         match fut.await {
             Ok(r) => {
                 if r.get("teamConnected").is_some() {
-                    VIEW.with(|v| *v.borrow_mut() = Some(r));
+                    VIEW.with(|v| *v.borrow_mut() = Some(r.clone()));
                 } else if r["view"].is_object() {
                     VIEW.with(|v| *v.borrow_mut() = Some(r["view"].clone()));
                 }
                 draw();
-                set_msg(ok, false);
+                // 로그인처럼 결과 문장을 돌려주는 요청은 그 문장을 보여 준다
+                let text = s(&r, "text");
+                set_msg(if text.is_empty() { ok } else { &text }, false);
+                if !text.is_empty() {
+                    spawn(super::settings::render_team(None));
+                }
             }
             Err(e) => {
                 draw();
@@ -141,7 +146,7 @@ fn start_link() {
 
 fn google_box(view: &Value) -> HtmlElement {
     let g = &view["google"];
-    let bx = el("div").cls("ext-item").kid(el("div").cls("ext-title").text("Google 캘린더 · 할 일")).kid(el("p").cls("hint").text("캘린더는 바쁜 시간만 읽어요 (일정 제목·내용은 못 봐요). 계산한 빈 시간은 이 컴퓨터에서만 쓰고, 팀에는 내가 저장한 \"주간 가능 시간\"만 보여요. 할 일에는 내가 수락한 작업만 올라가요.")).build();
+    let bx = el("div").cls("ext-item").kid(el("div").cls("ext-title").text("Google 캘린더 · 할 일")).kid(el("p").cls("hint").text("캘린더는 바쁜 시간만 읽어요 (일정 제목·내용은 못 봐요). 계산한 빈 시간은 이 컴퓨터에서만 쓰고, 팀에는 내가 저장한 \"주간 가능 시간\"만 보여요. 할 일에는 내가 수락한 작업만 올라가요. Drive 는 사이 전용 숨김 폴더(팀 목록 맡기기)와 사이로 올린 파일만 다뤄요 — 내 Drive 의 다른 파일은 못 봐요.")).build();
     let add = |e: El| {
         let _ = bx.append_child(&e.0);
     };
@@ -160,6 +165,9 @@ fn google_box(view: &Value) -> HtmlElement {
     } else {
         let email = s(g, "email");
         add(state_line(true, &format!("{} 연결됨", if email.is_empty() { "Google 계정".into() } else { email })));
+        if !b(g, "drive") {
+            add(el("div").cls("hint warn").text("새 기능(다른 컴퓨터로 팀 옮기기, 팀 자료 Drive 올리기)을 쓰려면 아래 \"로그아웃\" 후 다시 로그인해 주세요. Drive 권한이 새로 필요해요."));
+        }
         let lr = s(g, "lastResult");
         add(el("div").cls("hint").text(&format!("마지막 할 일 동기화: {}{}", when(n(g, "lastSync")), if lr.is_empty() { String::new() } else { format!(" — {lr}") })));
         add(el("div")

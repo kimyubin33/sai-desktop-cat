@@ -21,6 +21,9 @@ pub const SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/calendar.freebusy",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/tasks",
+    // 사이 전용 숨김 폴더 (다른 컴퓨터에서 내 팀을 되찾기), 사이로 올린 파일만
+    "https://www.googleapis.com/auth/drive.appdata",
+    "https://www.googleapis.com/auth/drive.file",
 ];
 
 pub fn pkce() -> (String, String) {

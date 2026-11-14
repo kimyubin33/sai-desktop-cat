@@ -110,6 +110,18 @@ service cloud.firestore {
                     && resource.data.assignee == request.resource.data.assignee));
           allow delete: if isMember(teamId);
         }
+
+        // 팀 자료: Google Drive 링크. 올린 사람 본인으로만 만들고, 지우기도 올린 사람만
+        match /files/{fileId} {
+          allow read: if isMember(teamId);
+          allow create: if isMember(teamId)
+            && request.resource.data.keys().hasOnly(['name', 'url', 'driveId', 'mimeType', 'size', 'taskId', 'by', 'at'])
+            && request.resource.data.by == request.auth.uid
+            && request.resource.data.name is string && request.resource.data.name.size() <= 200
+            && request.resource.data.url is string && request.resource.data.url.size() <= 500
+            && request.resource.data.url.matches('https://.*');
+          allow delete: if isMember(teamId) && resource.data.by == request.auth.uid;
+        }
       }
 
       // ---------- 외부 연결 (5단계) ----------

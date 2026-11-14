@@ -14,6 +14,7 @@
 //!   sent            전송됨 (remoteId 로 상태 확인)
 //!   held            받은 사람이 "내 사정도 있어요"로 보류함
 //! 서버로는 주제 id, 받는 사람 uid, 주(週)만 간다. 문안은 받는 쪽 앱의 일반 문안을 쓴다.
+pub mod account;
 pub mod backend;
 pub mod claude;
 pub mod codec;

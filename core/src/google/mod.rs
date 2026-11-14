@@ -1,5 +1,6 @@
 //! Google 캘린더·할 일 연결: 로그인 창 열기, 빈 시간 계산, 할 일 동기화, 시간표 일정 반영.
 pub mod calendar;
+pub mod drive;
 pub mod oauth;
 pub mod tasks;
 
@@ -153,6 +154,118 @@ impl Google {
         Ok(())
     }
 
+    // ---------- 다른 컴퓨터로 옮기기 (Drive 숨김 폴더) ----------
+    pub fn has_drive(&self) -> bool {
+        self.auth().ok().and_then(|a| a.tokens()).map(|t| t.s("scope").contains("drive.appdata")).unwrap_or(false)
+    }
+
+    fn record_account(&self, patch: Value) {
+        self.0.team_cache.update(|c| {
+            if !c["account"].is_object() {
+                c["account"] = json!({});
+            }
+            if let Some(o) = patch.as_object() {
+                for (k, v) in o {
+                    c["account"][k] = v.clone();
+                }
+            }
+        });
+    }
+
+    /// 팀 목록이 바뀌면 Google 계정에 맡겨 둔다.
+    /// 이 컴퓨터에서 한 번이라도 되찾기를 확인한 뒤에만 쓴다 (새 컴퓨터의 빈 목록으로 덮어쓰지 않도록)
+    /// allow_empty: 이 컴퓨터에서 마지막 팀을 나갔을 때만 참. 그 밖에는 팀이 없는 목록으로 덮어쓰지 않는다
+    pub async fn backup_account(&self, allow_empty: bool) -> Result<bool> {
+        if !self.is_ready() || !self.has_drive() || !self.0.team_cache.read(|c| c["account"].b("checked")) {
+            return Ok(false);
+        }
+        let Some(snap) = self.0.hub.account_snapshot() else { return Ok(false) };
+        if snap.arr("teams").is_empty() && !allow_empty {
+            return Ok(false);
+        }
+        let a = self.auth()?;
+        match drive::appdata_write(&a, crate::team::account::FILE, &snap).await {
+            Ok(()) => {
+                self.record_account(json!({ "savedAt": now_ms(), "teams": snap.arr("teams").len(), "error": null }));
+                Ok(true)
+            }
+            Err(e) => {
+                self.record_account(json!({ "error": e }));
+                Err(e)
+            }
+        }
+    }
+
+    /// Google 계정에 맡겨 둔 팀을 이 컴퓨터로 가져온다. 결과 문장을 돌려준다
+    pub async fn restore_account(&self) -> Result<String> {
+        if !self.is_ready() {
+            return err("먼저 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
+        }
+        if !self.has_drive() {
+            return err("팀을 옮기려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
+        }
+        let a = self.auth()?;
+        let snap = match drive::appdata_read(&a, crate::team::account::FILE).await {
+            Ok(s) => s,
+            Err(e) => {
+                self.record_account(json!({ "error": e }));
+                return Err(e);
+            }
+        };
+        let text = match snap {
+            None => "Google 계정에 맡겨 둔 팀이 아직 없어요. 지금 이 컴퓨터의 팀을 맡겨 둘게요.".to_string(),
+            // 맡겨 둔 목록에 팀이 없으면 이 컴퓨터의 팀을 그대로 둔다
+            Some(snap) if snap.arr("teams").is_empty() => "Google 계정에 맡겨 둔 팀이 없어요. 지금 이 컴퓨터의 팀을 맡겨 둘게요.".to_string(),
+            Some(snap) => {
+                let r = self.0.hub.restore_account(&snap).await?;
+                let restored: Vec<String> = r.arr("restored").iter().map(|x| x.as_str().unwrap_or("").to_string()).collect();
+                let rejoined: Vec<String> = r.arr("rejoined").iter().map(|x| x.as_str().unwrap_or("").to_string()).collect();
+                let mut parts = vec![];
+                if !restored.is_empty() {
+                    parts.push(format!("팀 {}개를 되찾았어요: {}", restored.len(), restored.join(", ")));
+                }
+                if !rejoined.is_empty() {
+                    parts.push(format!("이 컴퓨터에만 있던 {}에도 같은 계정으로 다시 들어갔어요", rejoined.join(", ")));
+                }
+                if parts.is_empty() {
+                    "이미 Google 계정의 팀과 같아요.".into()
+                } else {
+                    parts.join(". ") + "."
+                }
+            }
+        };
+        self.record_account(json!({ "checked": true, "restoredAt": now_ms(), "error": null }));
+        let _ = self.backup_account(false).await;
+        Ok(text)
+    }
+
+    pub fn account_status(&self) -> Value {
+        let c = self.0.team_cache.read(|c| c["account"].clone());
+        json!({ "ready": self.is_ready() && self.has_drive(), "checked": c.b("checked"), "savedAt": c.i("savedAt"), "error": c.get("error").cloned().unwrap_or(Value::Null) })
+    }
+
+    // ---------- 팀 자료 (Drive) ----------
+    pub async fn upload_file(&self, team_name: &str, name: &str, mime: &str, bytes: Vec<u8>) -> Result<Value> {
+        if !self.is_ready() {
+            return err("파일을 올리려면 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
+        }
+        if !self.has_drive() {
+            return err("Drive 에 올리려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
+        }
+        let a = self.auth()?;
+        drive::upload(&a, &format!("사이 - {team_name}"), name, mime, bytes).await
+    }
+
+    /// 붙여 넣은 Drive 링크의 파일 정보 (볼 수 없으면 None)
+    pub async fn link_meta(&self, url: &str) -> Option<Value> {
+        let id = drive::drive_id(url)?;
+        if !self.is_ready() {
+            return None;
+        }
+        let a = self.auth().ok()?;
+        drive::meta(&a, &id).await
+    }
+
     // ---------- 캘린더 ----------
     /// 이번 7일, 그리고 마감까지의 빈 시간 (9~22시 기준). 이 기기에서만 계산·표시한다
     pub async fn availability(&self, project_id: Option<&str>) -> Result<Value> {
@@ -282,6 +395,7 @@ impl Google {
             "lastSync": s.i("lastSync"),
             "lastResult": s.get("lastResult").cloned().unwrap_or(Value::Null),
             "lastError": s.get("lastError").cloned().unwrap_or(Value::Null),
+            "drive": t.as_ref().map(|t| t.s("scope").contains("drive.appdata")).unwrap_or(false),
         })
     }
 

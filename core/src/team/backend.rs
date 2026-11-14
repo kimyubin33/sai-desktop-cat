@@ -117,6 +117,14 @@ impl Backend {
     }
 
     // ---------- 인증 ----------
+    /// 지금 로그인 정보 { uid, refreshToken } (다른 컴퓨터로 옮길 때)
+    pub fn session(&self) -> Option<Value> {
+        match self {
+            Backend::Firebase(f) => f.session.lock().unwrap().as_ref().map(|(u, r)| json!({ "uid": u, "refreshToken": r })),
+            Backend::Memory(m) => Some(json!({ "uid": m.uid, "refreshToken": "" })),
+        }
+    }
+
     pub async fn sign_in(&self) -> Result<String> {
         match self {
             Backend::Memory(m) => Ok(m.uid.clone()),
@@ -412,6 +420,19 @@ impl Backend {
 
     // ---------- 외부 연결 ----------
     /// 팀 공용 연결 정보 (예: telegram 봇 토큰) — 팀원만 읽는다
+    // ---------- 팀 자료 (Drive 링크) ----------
+    pub async fn add_file(&self, team_id: &str, project_id: &str, data: Value) -> Result<String> {
+        self.create_doc(&format!("teams/{team_id}/projects/{project_id}/files"), None, data).await
+    }
+
+    pub async fn list_files(&self, team_id: &str, project_id: &str) -> Result<Vec<Value>> {
+        self.list_docs(&format!("teams/{team_id}/projects/{project_id}/files")).await
+    }
+
+    pub async fn delete_file(&self, team_id: &str, project_id: &str, file_id: &str) -> Result<()> {
+        self.delete_doc(&format!("teams/{team_id}/projects/{project_id}/files/{file_id}")).await
+    }
+
     pub async fn set_integration(&self, team_id: &str, name: &str, data: Value) -> Result<()> {
         self.upsert(&format!("teams/{team_id}/integrations"), name, data).await
     }

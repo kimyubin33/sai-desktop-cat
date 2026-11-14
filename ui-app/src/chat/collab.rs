@@ -141,6 +141,7 @@ fn draw() {
     if v["project"].is_object() {
         add(plan_section(&v));
         add(task_section(&v));
+        add(files_section(&v));
         add(task_form(&v));
     }
     if let Some(id) = cs(|c| c.focus.take()) {
@@ -609,4 +610,190 @@ fn task_form(v: &Value) -> HtmlElement {
         None => "작업 추가".into(),
     };
     el("details").cls("block").flag("open", t.is_some() || tasks.is_empty()).kid(el("summary").kid(el("strong").text(&title))).child(form).build()
+}
+
+// ---------- 팀 자료 (Google Drive) ----------
+const MAX_MB: f64 = 25.0;
+
+fn size_text(n: f64) -> String {
+    if n <= 0.0 {
+        String::new()
+    } else if n < 1024.0 * 1024.0 {
+        format!(" · {}KB", (n / 1024.0).ceil() as i64)
+    } else {
+        format!(" · {:.1}MB", n / 1024.0 / 1024.0)
+    }
+}
+
+fn open_url(url: String) {
+    spawn(async move {
+        if let Err(e) = call("app:open-url", json!(url)).await {
+            flash(&e, true);
+        }
+    });
+}
+
+/// 고른(또는 끌어다 놓은) 파일을 읽어 앱으로 보낸다. 앱이 내 Drive 에 올리고 팀 자료에 붙인다
+fn upload_files(files: web_sys::FileList, project_id: String, task_id: String) {
+    let list: Vec<web_sys::File> = (0..files.length()).filter_map(|i| files.get(i)).collect();
+    if list.is_empty() {
+        return;
+    }
+    spawn(async move {
+        for f in list {
+            let name = f.name();
+            if f.size() > MAX_MB * 1024.0 * 1024.0 {
+                flash(&format!("{name}: {MAX_MB}MB 보다 커요. Drive 에 직접 올린 뒤 공유 링크를 붙여 넣어 주세요."), true);
+                continue;
+            }
+            flash(&format!("{name} 을(를) Drive 에 올리는 중…"), false);
+            let buf = match wasm_bindgen_futures::JsFuture::from(f.array_buffer()).await {
+                Ok(b) => js_sys::Uint8Array::new(&b).to_vec(),
+                Err(_) => {
+                    flash(&format!("{name} 을(를) 읽지 못했어요."), true);
+                    continue;
+                }
+            };
+            use base64::Engine;
+            let data = base64::engine::general_purpose::STANDARD.encode(&buf);
+            let args = json!({ "projectId": project_id, "taskId": task_id, "name": name, "mime": f.type_(), "data": data });
+            match call("collab:upload-file", args).await {
+                Ok(v) => {
+                    cs(|c| c.view = Some(v));
+                    draw();
+                    flash(&format!("{name} 을(를) 올렸어요. 팀원 모두 볼 수 있어요."), false);
+                }
+                Err(e) => {
+                    flash(&e, true);
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn files_section(v: &Value) -> HtmlElement {
+    let pid = s(&v["project"], "id");
+    let tasks = arr(v, "tasks");
+    let title_of: HashMap<String, String> = tasks.iter().map(|t| (s(t, "id"), s(t, "title"))).collect();
+    let signed = b(&v["google"], "signedIn");
+    let drive = b(&v["google"], "drive");
+
+    let bx = el("div")
+        .cls("block files")
+        .id("filesBox")
+        .kid(el("strong").text("팀 자료 (Google Drive)"))
+        .kid(el("p").cls("hint").text("파일을 여기에 끌어다 놓거나 골라 올리면 내 Google Drive 의 \"사이 - 팀 이름\" 폴더에 들어가고, 링크가 있는 사람은 볼 수 있게 바뀌어 팀원 모두의 사이에 보여요. 이미 Drive 에 있는 파일은 공유 링크를 붙여 넣으면 돼요."))
+        .build();
+    let add = |e: El| {
+        let _ = bx.append_child(&e.0);
+    };
+    if !signed {
+        add(el("div").cls("warn").txt("파일을 올리려면 Google 로그인이 필요해요. ").kid(el("button").cls("link").text("설정 → 외부 연결").click(|_| super::show_tab("settings"))));
+    } else if !drive {
+        add(el("div").cls("warn").txt("Drive 권한이 새로 필요해요. 설정 → 외부 연결에서 로그아웃 후 다시 로그인해 주세요. (링크 붙여 넣기는 지금도 돼요) ").kid(el("button").cls("link").text("설정 열기").click(|_| super::show_tab("settings"))));
+    }
+
+    // 목록
+    let files = arr(v, "files");
+    if files.is_empty() {
+        add(el("div").cls("empty").text("아직 올린 자료가 없어요."));
+    }
+    let list = el("div").cls("list").build();
+    for f in &files {
+        let url = s(f, "url");
+        let task = title_of.get(&s(f, "taskId")).map(|t| format!(" · {t}")).unwrap_or_default();
+        let when = n(f, "at");
+        let sub = format!("{}{task}{}{}", s(f, "byName"), size_text(n(f, "size")), if when > 0.0 { format!(" · {}", super::fmt_date(when)) } else { String::new() });
+        let (u2, fid, p2) = (url.clone(), s(f, "id"), pid.clone());
+        let name = s(f, "name");
+        let item = el("div")
+            .cls("item")
+            .kid(el("div").cls("main").kid(el("div").cls("title").text(&name).attr("title", &url)).kid(el("div").cls("sub").text(&sub)))
+            .kid(el("button").text("열기").click(move |_| open_url(u2.clone())))
+            .maybe(if b(f, "mine") {
+                Some(el("button").cls("link").text("빼기").attr("title", "팀 자료에서만 빼요. Drive 의 파일은 그대로 있어요.").click(move |_| {
+                    if confirm(&format!("\"{name}\"을(를) 팀 자료에서 뺄까요? Drive 의 파일은 지워지지 않아요.")) {
+                        act(c("collab:delete-file", json!({ "projectId": p2, "id": fid })), ok("팀 자료에서 뺐어요."));
+                    }
+                }))
+            } else {
+                None
+            });
+        let _ = list.append_child(&item.0);
+    }
+    let _ = bx.append_child(&list);
+
+    // 어느 작업의 자료인지
+    let task_sel = el("select").cls("file-task").kid(el("option").attr("value", "").text("프로젝트 전체")).build();
+    for t in &tasks {
+        let _ = task_sel.append_child(&el("option").attr("value", &s(t, "id")).text(&s(t, "title")).0);
+    }
+
+    // 올리기: 고르기 + 끌어다 놓기
+    let input = el("input").attr("type", "file").flag("multiple", true).cls("hidden").build();
+    {
+        let (i2, p2, ts) = (input.clone(), pid.clone(), task_sel.clone());
+        on(&input, "change", move |_| {
+            let inp: &web_sys::HtmlInputElement = i2.unchecked_ref();
+            if let Some(fl) = inp.files() {
+                upload_files(fl, p2.clone(), val(&ts));
+            }
+            inp.set_value("");
+        });
+    }
+    let i3 = input.clone();
+    let drop = el("div")
+        .cls("drop-zone")
+        .flag("disabled", !drive)
+        .txt("여기에 파일을 끌어다 놓거나 ")
+        .kid(el("button").cls("link").text("파일 고르기").flag("disabled", !drive).click(move |_| i3.click()))
+        .txt(&format!(" (한 번에 {MAX_MB}MB 까지)"))
+        .build();
+    {
+        let d2 = drop.clone();
+        on(&drop, "dragover", move |e| {
+            e.prevent_default();
+            toggle(&d2, "over", true);
+        });
+        let d3 = drop.clone();
+        on(&drop, "dragleave", move |_| toggle(&d3, "over", false));
+        let (d4, p2, ts) = (drop.clone(), pid.clone(), task_sel.clone());
+        on(&drop, "drop", move |e| {
+            e.prevent_default();
+            toggle(&d4, "over", false);
+            if !drive {
+                flash("Drive 권한이 필요해요. 설정 → 외부 연결에서 다시 로그인해 주세요.", true);
+                return;
+            }
+            let de: &web_sys::DragEvent = e.unchecked_ref();
+            if let Some(fl) = de.data_transfer().and_then(|d| d.files()) {
+                upload_files(fl, p2.clone(), val(&ts));
+            }
+        });
+    }
+    let _ = bx.append_child(&el("div").cls("inline").kid(el("span").text("어느 작업의 자료인가요?")).child(task_sel.clone()).0);
+    let _ = bx.append_child(&drop);
+    let _ = bx.append_child(&input);
+
+    // 링크 붙여 넣기
+    let url_in = el("input").attr("type", "url").attr("placeholder", "Drive 공유 링크 (https://drive.google.com/…)").attr("maxlength", "500").build();
+    let name_in = el("input").attr("type", "text").attr("placeholder", "이름 (비우면 자동)").attr("maxlength", "200").build();
+    let (u2, n2, ts, p2) = (url_in.clone(), name_in.clone(), task_sel.clone(), pid.clone());
+    let _ = bx.append_child(
+        &el("div")
+            .cls("inline wrap")
+            .child(url_in)
+            .child(name_in)
+            .kid(el("button").text("링크 추가").click(move |_| {
+                let url = val(&u2);
+                if url.trim().is_empty() {
+                    flash("Drive 공유 링크를 붙여 넣어 주세요.", true);
+                    return;
+                }
+                act(c("collab:link-file", json!({ "projectId": p2, "taskId": val(&ts), "url": url, "name": val(&n2) })), ok("자료를 붙였어요."));
+            }))
+            .0,
+    );
+    bx
 }
