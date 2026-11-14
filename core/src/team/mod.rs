@@ -26,7 +26,7 @@ pub use backend::Backend;
 
 use crate::store::Store;
 use crate::time::{iso_week, DAY};
-use crate::topics::topic;
+use crate::topics::{topic, Topic};
 use crate::util::{arr_mut, clean, to_base36, J};
 use crate::{err, Result};
 use rand::Rng;
@@ -306,6 +306,28 @@ impl Hub {
         targets.iter().filter_map(|t| t.propose_team(topic_id)).collect()
     }
 
+    /// 보류된 개인 조언에서 제안할 때는 해당 공유 항목에 기록된 팀과 주제만 사용한다.
+    pub fn propose_held_item(&self, item_id: &str, team_id: &str) -> Result<String> {
+        if item_id.is_empty() || team_id.is_empty() {
+            return err("공유 항목의 팀을 확인할 수 없어요.");
+        }
+        let team = self.team(Some(team_id)).ok_or("해당 공유 항목의 팀에 연결되어 있지 않아요.")?;
+        team.outbox_update(|items| {
+            let index = items.iter().position(|item| item["id"] == item_id && item["status"] == "held" && item["target"] == "person")
+                .ok_or("이 팀에서 보류된 공유 항목을 찾을 수 없어요.")?;
+            let source = &items[index];
+            let subject = topic(&source.s("topic")).ok_or("공유 항목의 주제를 찾을 수 없어요.")?;
+            if let Some(link) = source["heldProposalId"].as_str() {
+                if items.iter().any(|item| item["id"] == link && item["target"] == "team" && item["topic"] == subject.id) {
+                    return Ok(link.to_owned());
+                }
+            }
+            let id = team.queue_team_proposal(items, subject);
+            items[index]["heldProposalId"] = json!(id);
+            Ok(id)
+        })
+    }
+
     pub fn find_task_team(&self, task_id: &str) -> Option<Team> {
         self.all().into_iter().find(|t| t.find_task(task_id).is_some())
     }
@@ -461,20 +483,20 @@ impl Team {
     /// "내 사정"을 들은 뒤, 개인 조언 대신 팀 약속으로 맞춰 보자고 제안
     pub fn propose_team(&self, topic_id: &str) -> Option<String> {
         let t = topic(topic_id)?;
-        if let Some(x) = self.outbox_items().iter().find(|x| x.s("topic") == topic_id && x.s("target") == "team" && x.s("status") != "sent") {
-            return Some(x.s("id"));
+        Some(self.outbox_update(|items| self.queue_team_proposal(items, t)))
+    }
+
+    fn queue_team_proposal(&self, items: &mut Vec<Value>, t: &Topic) -> String {
+        if let Some(x) = items.iter().find(|x| x["topic"] == t.id && x["target"] == "team" && x["status"] != "sent") {
+            return x.s("id");
         }
         let id = format!("o{}{}", to_base36(self.now() as u64), to_base36(rand::thread_rng().gen_range(0..1_000_000)));
-        let after = self.send_after();
-        let week = iso_week(self.now());
-        self.outbox_update(|items| {
-            items.push(json!({
-                "id": id, "topic": topic_id, "label": t.label, "scope": "auto", "target": "team",
-                "advice": t.advice[0], "teamProposal": t.team_proposal, "week": week,
-                "toMember": null, "status": "queued", "sendAfter": after
-            }))
-        });
-        Some(id)
+        items.push(json!({
+            "id": id, "topic": t.id, "label": t.label, "scope": "auto", "target": "team",
+            "advice": t.advice[0], "teamProposal": t.team_proposal, "week": iso_week(self.now()),
+            "toMember": null, "status": "queued", "sendAfter": self.send_after()
+        }));
+        id
     }
 
     pub async fn send_due(&self) -> Result<usize> {
@@ -742,6 +764,57 @@ mod tests {
             Arc::new(crate::time::now_ms),
         );
         (hub, st)
+    }
+
+    #[tokio::test]
+    async fn held_item_proposes_only_to_its_own_team() {
+        let shared = Backend::new_shared_memory();
+        let (sender, _) = hub_for(shared.clone(), "sender");
+        let (recipient, _) = hub_for(shared, "recipient");
+        let info = sender.create_team("A", "보낸 이").await.unwrap();
+        let source_team = sender.active();
+        let source_id = source_team.team_id().unwrap();
+        recipient.join_team(&info.s("joinCode"), "받는 이").await.unwrap();
+        let source_recipient = recipient.active();
+        let other = sender.create_team("B", "보낸 이").await.unwrap();
+        let other_team = sender.active();
+        recipient.join_team(&other.s("joinCode"), "받는 이").await.unwrap();
+        let other_recipient = recipient.active();
+        let other_id = other_team.team_id().unwrap();
+        recipient.backend().unwrap().create_signal(&other_id, "time_promise", "sender", &iso_week(sender.now())).await.unwrap();
+        assert!(other_team.sync().await.b("ok"));
+        assert!(other_team.boosts().contains_key("time_promise"));
+
+        let advice = source_team.prepare_items(vec![json!({
+            "id": "original", "target": "person", "scope": "auto", "topic": "time_promise", "toMember": "recipient"
+        })]);
+        source_team.outbox_update(|items| items.extend(advice));
+        assert!(source_team.sync().await.b("ok"));
+        assert!(sender.propose_held_item("original", &source_id).is_err());
+        assert!(source_recipient.sync().await.b("ok"));
+        assert_eq!(source_recipient.hold_topic("time_promise").await, 1);
+        assert!(source_team.sync().await.b("ok"));
+        assert!(sender.propose_held_item("original", &other_id).is_err());
+        assert!(sender.propose_held_item("missing", &source_id).is_err());
+        assert!(sender.propose_held_item("original", "").is_err());
+        let first = sender.propose_held_item("original", &source_id).unwrap();
+        assert_eq!(sender.propose_held_item("original", &source_id).unwrap(), first);
+        assert!(sender.propose_held_item(&first, &source_id).is_err());
+        // 전송 전에 제안을 직접 뺐으면 보류 항목에서 다시 제안할 수 있다.
+        source_team.outbox_update(|items| items.retain(|item| item["id"] != first));
+        let proposal = sender.propose_held_item("original", &source_id).unwrap();
+        assert_eq!(source_team.send_due().await.unwrap(), 1);
+        assert_eq!(sender.propose_held_item("original", &source_id).unwrap(), proposal);
+        assert_eq!(source_team.send_due().await.unwrap(), 0);
+        assert!(other_team.outbox_items().is_empty());
+        assert!(source_recipient.sync().await.b("ok"));
+        assert!(other_recipient.sync().await.b("ok"));
+        assert_eq!(source_recipient.proposals().len(), 1);
+        assert_eq!(source_recipient.proposals()[0]["topic"], "time_promise");
+        assert!(other_recipient.proposals().is_empty());
+        sender.leave_team(&source_id).await.unwrap();
+        assert!(sender.propose_held_item("original", &source_id).is_err());
+        assert!(other_team.outbox_items().is_empty());
     }
 
     #[tokio::test]

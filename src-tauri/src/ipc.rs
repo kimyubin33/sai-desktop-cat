@@ -180,6 +180,16 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             });
             ok()
         }
+        "share:propose-held" => {
+            let team_id = x.s("teamId");
+            let proposal_item_id = hub.propose_held_item(&x.s("itemId"), &team_id)?;
+            if let Some(team) = hub.team(Some(&team_id)) {
+                tauri::async_runtime::spawn(async move {
+                    team.sync().await;
+                });
+            }
+            Ok(json!({ "proposalItemId": proposal_item_id }))
+        }
         "share:outbox" => {
             let names: HashMap<String, String> = hub.teams().iter().map(|t| (t.s("teamId"), t.s("name"))).collect();
             Ok(json!(a
