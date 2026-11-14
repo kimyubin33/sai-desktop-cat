@@ -13,14 +13,16 @@
 //!   queued          보낼 준비 완료. sendAfter 이후 전송 (보낸 시각으로 발언자를 짐작하기 어렵게 늦춰 보냄)
 //!   sent            전송됨 (remoteId 로 상태 확인)
 //!   held            받은 사람이 "내 사정도 있어요"로 보류함
-//! 서버로는 주제 id, 받는 사람 uid, 주(週)만 간다. 문안은 받는 쪽 앱의 일반 문안을 쓴다.
+//! 기존 신호는 주제만 공유하고, AI 초안은 승인된 문안을 선택한 대상에게 전달한다.
 pub mod account;
 #[cfg(test)]
 mod admin_tests;
 pub mod backend;
 pub mod claude;
 pub mod codec;
+mod delivery;
 pub mod shares;
+mod removal;
 
 pub use backend::Backend;
 
@@ -216,6 +218,24 @@ impl Hub {
         Ok(team.state().unwrap_or(Value::Null))
     }
 
+    pub async fn dissolve_team(&self, id: &str, confirmed_name: &str) -> Result<()> {
+        let lock = self.lock_for(id);
+        let _guard = lock.lock().await;
+        let t = self.team(Some(id)).ok_or("이 팀에 연결되어 있지 않아요.")?;
+        if self.active().id != t.id || t.name() != confirmed_name {
+            return err("선택한 팀이 바뀌었어요. 팀 이름을 다시 확인해 주세요.");
+        }
+        let code = t.state().unwrap_or(Value::Null).s("joinCode");
+        self.backend()?.dissolve_team(id, &code).await?;
+        self.clear_team_data(id);
+        Ok(())
+    }
+
+    fn clear_team_data(&self, id: &str) {
+        self.0.outbox.update(|d| arr_mut(d, "items").retain(|r| r["teamId"] != id));
+        self.remove_team(id);
+    }
+
     pub async fn leave_team(&self, team_id: &str) -> Result<()> {
         if let Ok(b) = self.backend() {
             if let Err(e) = b.leave_team(team_id).await {
@@ -224,8 +244,7 @@ impl Hub {
             }
         }
         // 이 팀으로 가려던 공유 항목과 캐시도 함께 지운다
-        self.0.outbox.update(|d| arr_mut(d, "items").retain(|x| x.s("teamId") != team_id));
-        self.remove_team(team_id);
+        self.clear_team_data(team_id);
         Ok(())
     }
 
@@ -510,6 +529,12 @@ impl Team {
         for it in due {
             let week = iso_week(self.now());
             let r: Result<String> = async {
+                if it.b("custom") {
+                    if it["target"] == "person" && !member_ids.contains(&it.s("toMember")) {
+                        return Err("__recipient".to_string());
+                    }
+                    return self.send_custom(&b, &team_id, &it).await;
+                }
                 if it.s("target") == "team" {
                     // 같은 주제의 제안이 이미 있으면 새로 만들지 않고 동의만 한다 (여러 명의 의견처럼 부풀리지 않기)
                     let existing = self.cache_get().arr("proposals").into_iter().find(|p| p.s("topic") == it.s("topic") && p.s("week") == week);
@@ -541,6 +566,7 @@ impl Team {
                         x["remoteId"] = json!(remote);
                         x["week"] = json!(week);
                         x.as_object_mut().unwrap().remove("sendAfter");
+                        x.as_object_mut().unwrap().remove("lastError");
                     });
                     sent += 1;
                 }
@@ -561,7 +587,7 @@ impl Team {
         match self.sync_inner().await {
             Ok(()) => json!({ "ok": true }),
             Err(e) => {
-                self.cache_update(|c| c["lastError"] = json!(e));
+                if self.is_connected() { self.cache_update(|c| c["lastError"] = json!(e)); }
                 json!({ "ok": false, "error": e })
             }
         }
@@ -571,9 +597,16 @@ impl Team {
         let team_id = self.team_id().map_err(|_| "not-connected".to_string())?;
         let b = self.backend()?;
         let my_uid = b.sign_in().await?;
+        let code = self.state().unwrap_or(Value::Null).s("joinCode");
+        if b.code_closed(&code).await? {
+            self.hub.clear_team_data(&team_id);
+            return err("개설자가 해산한 팀이에요. 이 기기에서 팀 연결을 정리했어요.");
+        }
         let members = b.list_members(&team_id).await?;
-        let proposals = b.list_proposals(&team_id).await?;
+        let proposals = delivery::resolve_proposals(&b, &team_id, b.list_proposals(&team_id).await?).await?;
+        let creator = if self.cache_get()["createdBy"].is_null() { b.team_creator(&team_id).await.ok() } else { None };
         self.cache_update(|c| {
+            if let Some(uid) = creator { c["createdBy"] = json!(uid); }
             c["members"] = json!(members);
             c["proposals"] = json!(proposals);
             c["myUid"] = json!(my_uid);
@@ -586,7 +619,7 @@ impl Team {
         let admin = b.admin_state(&team_id).await;
         self.cache_update(|c| c["admin"] = admin);
         self.send_due().await?;
-        let inbox = b.list_signals_for_me(&team_id).await?;
+        let inbox = delivery::resolve_inbox(&b, &team_id, b.list_signals_for_me(&team_id).await?).await?;
         // 내가 보낸 신호가 보류되었는지 확인
         for it in self.outbox_items().into_iter().filter(|x| x.s("status") == "sent" && x.s("target") == "person" && !x.s("remoteId").is_empty()) {
             if let Ok(Some(s)) = b.get_signal(&team_id, &it.s("remoteId")).await {
@@ -597,7 +630,7 @@ impl Team {
         }
         let now = self.now();
         self.cache_update(|c| {
-            c["inbox"] = json!(inbox.iter().map(|s| json!({ "id": s.s("id"), "topic": s.s("topic"), "week": s.s("week"), "held": s.b("held") })).collect::<Vec<_>>());
+            c["inbox"] = json!(inbox);
             c["lastSync"] = json!(now);
             c["lastError"] = Value::Null;
         });
@@ -612,7 +645,7 @@ impl Team {
             return out;
         }
         let cutoff = iso_week(self.now() - BOOST_WINDOW_DAYS * DAY);
-        for s in self.cache_get().arr("inbox") {
+        for s in self.visible_advice() {
             if !s.b("held") && topic(&s.s("topic")).is_some() && s.s("week") >= cutoff {
                 out.insert(s.s("topic"), true);
             }
@@ -653,17 +686,23 @@ impl Team {
             .arr("proposals")
             .iter()
             .filter_map(|p| {
-                let t = topic(&p.s("topic"))?;
+                let (label, text) = if p.b("custom") {
+                    (p.s("label"), p.s("text"))
+                } else {
+                    let t = topic(&p.s("topic"))?;
+                    (t.label.into(), t.team_proposal.into())
+                };
                 let responses = p.obj("responses");
                 let agree = responses.iter().filter(|(uid, r)| member_ids.contains(*uid) && r.as_str() == Some("agree")).count();
                 Some(json!({
-                    "id": p.s("id"), "topic": t.id, "label": t.label, "text": t.team_proposal, "week": p.s("week"),
+                    "id": p.s("id"), "topic": p["topic"], "label": label, "text": text, "week": p.s("week"), "custom":p.b("custom"), "by":p["by"],
                     "agree": agree, "memberCount": member_ids.len(),
                     "agreedByAll": member_ids.len() > 1 && agree >= member_ids.len(),
                     "mine": responses.get(&my).cloned().unwrap_or(Value::Null),
                 }))
             })
             .collect();
+        out.retain(|p| !c["hiddenProposals"][&my][p.s("id")].as_bool().unwrap_or(false));
         out.sort_by(|a, b| b.s("week").cmp(&a.s("week")));
         out
     }

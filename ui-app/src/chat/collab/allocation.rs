@@ -177,6 +177,32 @@ fn panel(view: &Value, project: &Project) -> web_sys::HtmlElement {
         .kid(el("button").attr("type", "button").flag("disabled", busy).text(if brief.is_some() { "파일 바꾸기" } else { "파일 선택" }).click(move |_| chooser.click()))
         .child(input);
     if let Some(brief) = brief {
+        if b(brief, "canDelete") || !b(brief, "shared") {
+            let project = project.clone();
+            let snapshot = brief.clone();
+            file_row = file_row.kid(el("button").cls("link danger").flag("disabled", busy).text("기획서 삭제").click(move |_| {
+                let scope = if b(&snapshot, "shared") { "팀 프로젝트에서" } else { "이 기기에서" };
+                if !confirm(&format!("‘{}’ 기획서를 {scope} 삭제할까요?", s(&snapshot, "name"))) || !start(&project, "기획서를 삭제하는 중…") { return; }
+                let project = project.clone();
+                let mut payload = args(&project);
+                payload["expected"] = snapshot.clone();
+                spawn(async move {
+                    let result = call("collab:delete-brief", payload).await;
+                    if !current(&project) { return; }
+                    match result {
+                        Ok(_) => {
+                            let mut p = project.borrow_mut();
+                            p.plan = None;
+                            p.selected.clear();
+                            p.brief = Some(Value::Null);
+                            drop(p);
+                            finish(&project, "기획서를 삭제했어요.".into(), false);
+                        }
+                        Err(e) => finish(&project, e, true),
+                    }
+                });
+            }));
+        }
         file_row = file_row.kid(el("details").cls("allocation-brief")
             .kid(el("summary").text("기획서 내용 보기"))
             .kid(el("pre").text(&s(brief, "text"))));

@@ -4,9 +4,7 @@ use crate::app::{on_settings_changed, sync_now, App};
 use crate::cat;
 use sai_core::advice::{dnd_span_minutes, MAX_DND_MINUTES};
 use sai_core::collab::OBJECTION_REASONS;
-use sai_core::privacy::{build_preview, create_outbox_items, leaks_raw_text, merge_into_outbox};
 use sai_core::team::backend::parse_firebase_config;
-use sai_core::time::now_ms;
 use sai_core::topics::{topic, TOPICS};
 use sai_core::util::{arr_mut, J};
 use serde_json::{json, Value};
@@ -89,81 +87,19 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
         "topics:list" => Ok(json!(TOPICS.iter().map(|t| json!({ "id": t.id, "label": t.label })).collect::<Vec<_>>())),
 
         // ---------- 공유 (여러 팀) ----------
-        "share:preview" => {
-            let Some(s) = a.chat.find(&x.s("id")) else { return Ok(json!({ "items": [] })) };
-            let Some(summary) = s.summary.clone() else { return Ok(json!({ "items": [] })) };
-            // 받을 팀원 목록이 오래됐으면 먼저 새로 받아 온다
-            let stale = hub.all().iter().any(|t| now_ms() - t.cache_get().i("lastSync") > 2 * 60 * 1000);
-            if !hub.all().is_empty() && stale {
-                sync_now(a).await;
+        "delivery:view" | "delivery:generate" | "delivery:approve" | "delivery:discard" => {
+            let team = hub.active();
+            if x.get("teamId").is_some_and(|id| id != team.id.as_deref().unwrap_or("")) {
+                return Err("선택한 팀이 바뀌었어요. 원래 팀에서 다시 열어 주세요.".into());
             }
-            let mut preview = build_preview(&summary, &s.id);
-            let teams: Vec<Value> = hub
-                .all()
-                .iter()
-                .map(|t| json!({ "teamId": t.id, "name": t.name(), "memberCount": t.members(true).len(), "members": t.members(false) }))
-                .collect();
-            let active = hub.active();
-            let info = teams.iter().find(|t| t["teamId"] == json!(active.id)).cloned();
-            preview["teams"] = json!(teams);
-            preview["defaultTeamId"] = json!(active.id);
-            preview["team"] = info.as_ref().map(|i| json!({ "name": i["name"], "memberCount": i["memberCount"] })).unwrap_or(Value::Null);
-            preview["members"] = info.as_ref().map(|i| i["members"].clone()).unwrap_or(json!([]));
-            // 팀 규모와 상관없이 안내하되, 작은 팀이면 더 분명하게
-            if info.map(|i| i.i("memberCount") > 3).unwrap_or(false) {
-                preview["smallTeamWarning"] = Value::Null;
+            let view = a.chat.delivery(&team, ch, &x).await?;
+            if ch == "delivery:approve" {
+                tauri::async_runtime::spawn(async move { team.sync().await; });
             }
-            Ok(preview)
+            Ok(view)
         }
-        "share:save" => {
-            let Some(s) = a.chat.find(&x.s("id")) else { return Ok(json!({ "saved": 0 })) };
-            let Some(summary) = s.summary.clone().filter(|_| s.safety_hold.is_none()) else { return Ok(json!({ "saved": 0 })) };
-            let t = hub.team(x.os("teamId").as_deref().or(hub.active().id.as_deref())).unwrap_or_else(|| hub.active());
-            let raw: Vec<String> = s.turns.iter().filter(|t| t.role == "user").map(|t| t.text.clone()).collect();
-            let choices = x.arr("choices");
-            let recipients: HashMap<String, Value> = choices.iter().map(|c| (c.s("topic"), c.get("toMember").cloned().unwrap_or(Value::Null))).collect();
-            let items: Vec<Value> = create_outbox_items(&summary, &choices, now_ms(), &s.id)
-                .into_iter()
-                .map(|mut it| {
-                    it["toMember"] = if it.s("target") == "person" { recipients.get(&it.s("topic")).cloned().unwrap_or(Value::Null) } else { Value::Null };
-                    it
-                })
-                // 혹시라도 원문 조각이 섞였다면 다른 일반 문안으로 바꾸고, 그래도 겹치면 저장하지 않는다
-                .filter_map(|mut it| {
-                    if !leaks_raw_text(&it, &raw, 12) {
-                        return Some(it);
-                    }
-                    let tp = topic(&it.s("topic"))?;
-                    let alt = tp.advice.iter().find(|adv| {
-                        let mut c = it.clone();
-                        c["advice"] = json!(adv);
-                        !leaks_raw_text(&c, &raw, 12)
-                    })?;
-                    it["advice"] = json!(alt);
-                    Some(it)
-                })
-                .collect();
-            let items: Vec<Value> = t
-                .prepare_items(items)
-                .into_iter()
-                .map(|mut it| {
-                    it["teamId"] = json!(t.id);
-                    it
-                })
-                .collect();
-            let n = items.len();
-            a.stores.shared_outbox.update(|d| {
-                let merged = merge_into_outbox(&d.arr("items"), &items);
-                d["items"] = json!(merged);
-            });
-            if t.is_connected() {
-                let a2 = a.clone();
-                tauri::async_runtime::spawn(async move {
-                    sync_now(&a2).await;
-                });
-            }
-            Ok(json!({ "saved": n, "connected": t.is_connected(), "teamName": t.name() }))
-        }
+        "share:preview" | "share:save" | "share:propose-held" | "team:propose" =>
+            Err("대화에서 AI 공유 문안 만들기 또는 팀 약속 잡기를 열어 주세요.".into()),
         "share:confirm" | "share:set-recipient" => {
             let item_id = x.s("itemId");
             let team_id = a.stores.shared_outbox.read(|d| d.arr("items").into_iter().find(|i| i.s("id") == item_id).and_then(|i| i.os("teamId")));
@@ -179,16 +115,6 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
                 sync_now(&a2).await;
             });
             ok()
-        }
-        "share:propose-held" => {
-            let team_id = x.s("teamId");
-            let proposal_item_id = hub.propose_held_item(&x.s("itemId"), &team_id)?;
-            if let Some(team) = hub.team(Some(&team_id)) {
-                tauri::async_runtime::spawn(async move {
-                    team.sync().await;
-                });
-            }
-            Ok(json!({ "proposalItemId": proposal_item_id }))
         }
         "share:outbox" => {
             let names: HashMap<String, String> = hub.teams().iter().map(|t| (t.s("teamId"), t.s("name"))).collect();
@@ -207,8 +133,25 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
                 .collect::<Vec<_>>()))
         }
         "share:remove" => {
-            let id = x.as_str().unwrap_or("").to_string();
-            a.stores.shared_outbox.update(|d| arr_mut(d, "items").retain(|i| i.s("id") != id));
+            if let Some(id) = x.as_str() {
+                // 예전 정리함의 ‘빼기’ 요청은 아직 보내지 않은 항목만 취소한다.
+                let tid = a.stores.shared_outbox.read(|d| d.arr("items").into_iter().find(|r| r["id"] == id).and_then(|r| r.os("teamId")));
+                hub.remove_outbox(tid.as_deref(), id, false).await?;
+            } else {
+                hub.remove_outbox(x["teamId"].as_str(), &x.s("itemId"), x.b("delivered")).await?;
+            }
+            ok()
+        }
+        "share:withdraw-advice" | "team:withdraw-promise" | "team:hide-promise" | "team:hide-advice" => {
+            let tid = x["teamId"].as_str().ok_or("항목의 팀을 확인해 주세요.")?;
+            let t = hub.team(Some(tid)).ok_or("이 항목의 팀에 연결되어 있지 않아요.")?;
+            let id = x.s("id");
+            match ch {
+                "share:withdraw-advice" => t.withdraw_advice(&id).await?,
+                "team:withdraw-promise" => t.withdraw_promise(&id).await?,
+                "team:hide-advice" => t.hide_received(&id, true)?,
+                _ => t.hide_received(&id, false)?,
+            }
             ok()
         }
 
@@ -268,6 +211,10 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             hub.join_team(&x.s("code"), &x.s("displayName")).await?;
             after_team(a)
         }
+        "team:dissolve" => {
+            hub.dissolve_team(&x.s("teamId"), &x.s("teamName")).await?;
+            after_team(a)
+        }
         "team:leave" => {
             let id = x.as_str().map(String::from).or(hub.active().id);
             if let Some(id) = id {
@@ -288,17 +235,6 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             after_team(a)
         }
         "team:hold-topic" => Ok(json!({ "held": hub.hold_topic(x.as_str().unwrap_or("")).await })),
-        "team:propose" => {
-            let ids = hub.propose_team(x.as_str().unwrap_or(""));
-            if !ids.is_empty() {
-                let a2 = a.clone();
-                tauri::async_runtime::spawn(async move {
-                    sync_now(&a2).await;
-                });
-            }
-            Ok(json!({ "queued": !ids.is_empty(), "connected": !hub.all().is_empty() }))
-        }
-
         // ---------- 협업 ----------
         "collab:get-brief" | "collab:save-brief" => {
             let team = hub.active();
@@ -311,6 +247,26 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             } else {
                 team.save_project_brief(&project, &x.s("name"), &x.s("text")).await
             }
+        }
+        "collab:delete-profile" | "collab:delete-project" | "collab:hide-project" | "collab:restore-project" | "collab:delete-brief" => {
+            let team = hub.active();
+            let tid = team.team_id()?;
+            if x["teamId"] != tid { return Err("팀이 바뀌었어요. 대상 팀을 다시 확인해 주세요.".into()); }
+            let pid = x.s("projectId");
+            match ch {
+                "collab:delete-profile" => team.delete_my_profile().await?,
+                "collab:restore-project" => team.set_project_hidden(&pid, false)?,
+                _ => {
+                    team.check_allocation_project(&pid)?;
+                    match ch {
+                        "collab:delete-project" => team.delete_project(&pid).await?,
+                        "collab:delete-brief" => team.delete_project_brief(&pid, &x["expected"]).await?,
+                        _ => team.set_project_hidden(&pid, true)?,
+                    }
+                    a.allocation_plans.lock().unwrap().remove(&(tid, pid));
+                }
+            }
+            Ok(collab_view(a))
         }
         "collab:view" => {
             if x.b("refresh") && hub.active().is_connected() {
@@ -469,7 +425,12 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
                 "collab:set-active" => t.set_active_project(&x.s("id")),
                 "collab:add-task" => drop(t.add_task(&x.s("projectId"), &x).await?),
                 "collab:edit-task" => t.edit_task(&x.s("projectId"), &x.s("id"), &x).await?,
-                "collab:delete-task" => t.delete_task(&x.s("projectId"), &x.s("id")).await?,
+                "collab:delete-task" => {
+                    if x["teamId"].as_str().is_some_and(|id| Some(id) != t.id.as_deref()) { return Err("팀이 바뀌었어요.".into()); }
+                    let pid = x.s("projectId");
+                    t.check_allocation_project(&pid)?;
+                    t.delete_task(&pid, &x.s("id")).await?;
+                }
                 "collab:accept" => {
                     t.accept(&x.s("id")).await?;
                     // 작업을 맡으면 내 시간표를 다시 짠다
@@ -623,7 +584,7 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
         "settings:reset-dampened" => ok(),
         "ai:set-key" => {
             a.ai.set_key(x.as_str().unwrap_or(""));
-            ok()
+            Ok(public_settings(a))
         }
         "ai:test" => Ok(a.ai.test().await),
         "ai:set-openai" => {
@@ -695,6 +656,7 @@ fn team_view(a: &Arc<App>) -> Value {
         })
         .collect::<Vec<_>>());
     v["activeTeamId"] = json!(t.id);
+    v["canDissolve"] = json!(!me.is_empty() && c["createdBy"] == me);
     v["members"] = json!(t
         .members(true)
         .into_iter()
@@ -704,7 +666,17 @@ fn team_view(a: &Arc<App>) -> Value {
         })
         .collect::<Vec<_>>());
     v["proposals"] = json!(t.proposals());
-    v["inboxCount"] = json!(c.arr("inbox").len());
+    let advice: Vec<_> = t.visible_advice().into_iter().map(|mut r| {
+        if !r.b("custom") {
+            if let Some(t) = topic(&r.s("topic")) {
+                r["title"] = json!(t.label);
+                r["text"] = json!(t.advice[0]);
+            }
+        }
+        r
+    }).collect();
+    v["inboxCount"] = json!(advice.len());
+    v["receivedAdvice"] = json!(advice);
     v["account"] = if a.local_mode { Value::Null } else { a.google.account_status() };
     v["googleSignedIn"] = json!(a.google.is_ready());
     v
@@ -716,6 +688,9 @@ fn collab_view(a: &Arc<App>) -> Value {
         return json!({ "connected": false });
     }
     let d = t.collab_data();
+    let uid = t.my_uid();
+    let hidden = d["hiddenProjects"][&uid].as_object();
+    let (hidden_projects, projects): (Vec<_>, Vec<_>) = d.arr("projects").into_iter().partition(|p| hidden.is_some_and(|h| h.contains_key(&p.s("id"))));
     let members = t.collab_members();
     let name_of: HashMap<String, String> = members.iter().map(|m| (m.s("uid"), m.s("name"))).collect();
     let project = t.active_project();
@@ -742,7 +717,7 @@ fn collab_view(a: &Arc<App>) -> Value {
         "myUid": t.my_uid(),
         "myProfile": t.my_profile(),
         "members": members,
-        "projects": d.arr("projects"),
+        "projects": projects, "hiddenProjects": hidden_projects, "isAdmin": t.is_admin(),
         "project": project,
         "tasks": tasks,
         "files": project.as_ref().map(|p| {

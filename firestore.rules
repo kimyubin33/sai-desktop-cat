@@ -2,7 +2,7 @@ rules_version = '2';
 
 // 사이 — 팀 연결용 Firestore 보안 규칙
 // 원칙
-//  - 대화 원문·문안은 서버에 올라오지 않는다. 주제 id, 받는 사람, 주(週), 보류 여부만 오간다.
+//  - 상담 원문은 공유하지 않는다. 승인한 개인 AI 문안은 별도 보호 문서로 전달한다.
 //  - 조언 신호(signals)에는 보낸 사람 정보가 없다. 받는 사람만 목록으로 볼 수 있고,
 //    보낸 사람은 자기가 받은 문서 id 로만 상태(보류 여부)를 확인할 수 있다.
 //  - 팀원만 팀 데이터에 접근한다.
@@ -13,13 +13,17 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function inOpenTeam(teamId) {
+      return signedIn() && !get(/databases/$(database)/documents/teams/$(teamId)).data.get('closed', false);
+    }
+
     function isMember(teamId) {
-      return signedIn() && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      return inOpenTeam(teamId) && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
 
     // 팀 관리자: 관리자 아이디·비밀번호로 로그인한 기기 (admins/<uid> 문서가 있다)
     function isAdmin(teamId) {
-      return signedIn() && exists(/databases/$(database)/documents/teams/$(teamId)/admins/$(request.auth.uid));
+      return inOpenTeam(teamId) && exists(/databases/$(database)/documents/teams/$(teamId)/admins/$(request.auth.uid));
     }
 
     function validTopic(t) {
@@ -38,7 +42,12 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['teamId', 'teamName'])
         && get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.createdBy == request.auth.uid
         && get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.joinCode == code;
-      allow update, delete: if false;
+      // 해산 시 기존 코드를 빈 표식으로 바꿔 재사용과 재참여를 막는다.
+      allow update: if signedIn() && request.resource.data == {'closed': true}
+        && get(/databases/$(database)/documents/teams/$(resource.data.teamId)).data.createdBy == request.auth.uid
+        && get(/databases/$(database)/documents/teams/$(resource.data.teamId)).data.joinCode == code
+        && getAfter(/databases/$(database)/documents/teams/$(resource.data.teamId)).data == {'closed': true};
+      allow delete: if false;
     }
 
     match /teams/{teamId} {
@@ -46,41 +55,45 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['name', 'joinCode', 'createdBy'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.name is string && request.resource.data.name.size() <= 60;
-      allow get: if isMember(teamId) || (signedIn() && resource.data.createdBy == request.auth.uid);
-      allow list, update, delete: if false;
+      allow get: if isMember(teamId) || (inOpenTeam(teamId) && resource.data.createdBy == request.auth.uid);
+      allow update: if isMember(teamId) && resource.data.createdBy == request.auth.uid
+        && request.resource.data == {'closed': true}
+        && get(/databases/$(database)/documents/joinCodes/$(resource.data.joinCode)).data.teamId == teamId
+        && getAfter(/databases/$(database)/documents/joinCodes/$(resource.data.joinCode)).data == {'closed': true};
+      allow list, delete: if false;
 
       match /members/{memberId} {
-        allow get: if (signedIn() && request.auth.uid == memberId) || isMember(teamId);
+        allow get: if (inOpenTeam(teamId) && request.auth.uid == memberId) || isMember(teamId);
         allow list: if isMember(teamId);
         // 참여 코드를 알아야 들어올 수 있고, 같은 이름의 팀원이 없어야 한다 (names/<이름> 을 내가 잡고 있어야 함)
-        allow create: if signedIn() && request.auth.uid == memberId
+        allow create: if inOpenTeam(teamId) && request.auth.uid == memberId
           && request.resource.data.keys().hasOnly(['displayName', 'joinCode', 'nameKey'])
           && request.resource.data.displayName is string && request.resource.data.displayName.size() <= 30
           && request.resource.data.joinCode == get(/databases/$(database)/documents/teams/$(teamId)).data.joinCode
           && request.resource.data.nameKey is string
           && getAfter(/databases/$(database)/documents/teams/$(teamId)/names/$(request.resource.data.nameKey)).data.uid == request.auth.uid;
-        allow update: if signedIn() && request.auth.uid == memberId
+        allow update: if inOpenTeam(teamId) && request.auth.uid == memberId
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'nameKey'])
           && request.resource.data.displayName is string && request.resource.data.displayName.size() <= 30
           && request.resource.data.nameKey is string
           && getAfter(/databases/$(database)/documents/teams/$(teamId)/names/$(request.resource.data.nameKey)).data.uid == request.auth.uid;
         // 나가기는 본인, 내보내기는 관리자만
-        allow delete: if signedIn() && (request.auth.uid == memberId || isAdmin(teamId));
+        allow delete: if inOpenTeam(teamId) && (request.auth.uid == memberId || isAdmin(teamId));
       }
 
       // 이름 잡아 두기: 한 팀에 같은 이름은 한 명만. 문서 id 가 이름이고, 먼저 잡은 사람의 것이다
       match /names/{nameKey} {
         // 들어오기 전에 이름이 비었는지 확인할 수 있어야 한다
-        allow get: if signedIn();
+        allow get: if inOpenTeam(teamId);
         allow list: if isMember(teamId);
         // 팀원(또는 지금 함께 팀원이 되는 사람)만 자기 이름으로 잡는다
-        allow create: if signedIn()
+        allow create: if inOpenTeam(teamId)
           && request.resource.data.keys().hasOnly(['uid'])
           && request.resource.data.uid == request.auth.uid
           && existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
         allow update: if false;
         // 본인, 관리자, 또는 잡아 둔 사람이 이미 팀을 나갔을 때 팀원 누구나
-        allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin(teamId)
+        allow delete: if inOpenTeam(teamId) && (resource.data.uid == request.auth.uid || isAdmin(teamId)
           || (isMember(teamId) && !exists(/databases/$(database)/documents/teams/$(teamId)/members/$(resource.data.uid))));
       }
 
@@ -107,13 +120,13 @@ service cloud.firestore {
       }
       // 관리자로 로그인한 기기. 맞는 값을 내야만 만들 수 있다
       match /admins/{memberId} {
-        allow get: if signedIn() && request.auth.uid == memberId;
+        allow get: if inOpenTeam(teamId) && request.auth.uid == memberId;
         allow list: if false;
         allow create: if isMember(teamId) && request.auth.uid == memberId
           && request.resource.data.keys().hasOnly(['key'])
           && existsAfter(/databases/$(database)/documents/teams/$(teamId)/adminKeys/$(request.resource.data.key));
         allow update: if false;
-        allow delete: if signedIn() && (request.auth.uid == memberId || isAdmin(teamId));
+        allow delete: if inOpenTeam(teamId) && (request.auth.uid == memberId || isAdmin(teamId));
       }
 
       match /signals/{signalId} {
@@ -132,7 +145,36 @@ service cloud.firestore {
         allow update: if isMember(teamId) && resource.data.toMember == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['held'])
           && request.resource.data.held == true;
-        allow delete: if false;
+        function signalPath() {
+          return /databases/$(database)/documents/teams/$(teamId)/signals/$(signalId);
+        }
+        function ownerPath() {
+          return /databases/$(database)/documents/teams/$(teamId)/signals/$(signalId)/owner/sender;
+        }
+        function bodyPath() {
+          return /databases/$(database)/documents/teams/$(teamId)/signals/$(signalId)/private/body;
+        }
+        function isSender() {
+          return isMember(teamId) && get(ownerPath()).data.uid == request.auth.uid;
+        }
+        allow delete: if isSender() && !existsAfter(bodyPath()) && !existsAfter(ownerPath());
+
+        match /private/body {
+          allow get: if isMember(teamId) && (resource.data.toMember == request.auth.uid || isSender());
+          allow create: if isMember(teamId) && !exists(signalPath())
+            && getAfter(signalPath()).data.toMember == request.resource.data.toMember
+            && getAfter(ownerPath()).data.uid == request.auth.uid
+            && request.resource.data.keys().hasOnly(['toMember', 'title', 'text'])
+            && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 80
+            && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 400;
+          allow delete: if isSender() && !existsAfter(signalPath());
+        }
+        match /owner/sender {
+          allow get: if isMember(teamId) && resource.data.uid == request.auth.uid;
+          allow create: if isMember(teamId) && !exists(signalPath()) && existsAfter(bodyPath())
+            && request.resource.data.keys().hasOnly(['uid']) && request.resource.data.uid == request.auth.uid;
+          allow delete: if isSender() && !existsAfter(signalPath());
+        }
       }
 
       // ---------- 협업 (4단계) ----------
@@ -144,22 +186,43 @@ service cloud.firestore {
           && (!('pr' in request.resource.data) || request.resource.data.pr.size() <= 500)
           && (!('weeklyHours' in request.resource.data) || (request.resource.data.weeklyHours is number
               && request.resource.data.weeklyHours >= 0 && request.resource.data.weeklyHours <= 80));
-        allow delete: if signedIn() && (request.auth.uid == memberId || isAdmin(teamId));
+        allow delete: if inOpenTeam(teamId) && (request.auth.uid == memberId || isAdmin(teamId));
       }
 
       match /projects/{projectId} {
+        function parentPath() {
+          return /databases/$(database)/documents/teams/$(teamId)/projects/$(projectId);
+        }
+        function projectOpen() {
+          return exists(parentPath()) && !get(parentPath()).data.get('deleting', false);
+        }
+        function canRemove(p) {
+          return isMember(teamId) && (p.get('createdBy', '') == request.auth.uid || isAdmin(teamId));
+        }
+        function removingProject() {
+          return get(parentPath()).data.get('deleting', false) && canRemove(get(parentPath()).data);
+        }
+        function validProject(p) {
+          return p.keys().hasOnly(['title', 'goal', 'deliverable', 'deadline', 'createdBy', 'deleting'])
+            && p.title is string && p.title.size() <= 80;
+        }
         allow read: if isMember(teamId);
-        allow create, update: if isMember(teamId)
-          && request.resource.data.keys().hasOnly(['title', 'goal', 'deliverable', 'deadline'])
-          && request.resource.data.title is string && request.resource.data.title.size() <= 80;
-        allow delete: if false;
+        allow create: if isMember(teamId) && validProject(request.resource.data)
+          && request.resource.data.get('createdBy', request.auth.uid) == request.auth.uid
+          && !('deleting' in request.resource.data);
+        allow update: if isMember(teamId) && validProject(request.resource.data)
+          && request.resource.data.get('createdBy', '') == resource.data.get('createdBy', '')
+          && ((!resource.data.get('deleting', false) && !('deleting' in request.resource.data))
+            || (canRemove(resource.data) && request.resource.data.deleting == true
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleting'])));
+        allow delete: if canRemove(resource.data) && resource.data.get('deleting', false);
 
         // 각 프로젝트가 공유하는 업무 배분용 기획서 한 개
         match /briefs/current {
           allow get: if isMember(teamId)
             && exists(/databases/$(database)/documents/teams/$(teamId)/projects/$(projectId));
-          allow create, update: if isMember(teamId)
-            && exists(/databases/$(database)/documents/teams/$(teamId)/projects/$(projectId))
+          allow delete: if isMember(teamId) && (resource.data.by == request.auth.uid || isAdmin(teamId) || removingProject());
+          allow create, update: if isMember(teamId) && projectOpen()
             && request.resource.data.keys().hasOnly(['name', 'text', 'by', 'updatedAt'])
             && request.resource.data.by == request.auth.uid
             && request.resource.data.updatedAt is int
@@ -171,7 +234,7 @@ service cloud.firestore {
 
         match /tasks/{taskId} {
           allow read: if isMember(teamId);
-          allow create, update: if isMember(teamId)
+          allow create, update: if isMember(teamId) && projectOpen()
             && request.resource.data.keys().hasOnly(['title', 'estimateHours', 'difficulty', 'skills', 'dependsOn',
                  'doneCriteria', 'prep', 'reviewer', 'assignee', 'accepted', 'status', 'startedAt', 'doneAt', 'objections'])
             && request.resource.data.title is string && request.resource.data.title.size() <= 80
@@ -187,17 +250,17 @@ service cloud.firestore {
         // 팀 자료: Google Drive 링크. 올린 사람 본인으로만 만들고, 지우기도 올린 사람만
         match /files/{fileId} {
           allow read: if isMember(teamId);
-          allow create: if isMember(teamId)
+          allow create: if isMember(teamId) && projectOpen()
             && request.resource.data.keys().hasOnly(['name', 'url', 'driveId', 'mimeType', 'size', 'taskId', 'access', 'kind', 'by', 'at'])
             && request.resource.data.by == request.auth.uid
             && request.resource.data.name is string && request.resource.data.name.size() <= 200
             && request.resource.data.url is string && request.resource.data.url.size() <= 500
             && request.resource.data.url.matches('https://.*');
           // 올린 사람만 팀원 편집 허용을 켜고 끈다
-          allow update: if isMember(teamId) && resource.data.by == request.auth.uid
+          allow update: if isMember(teamId) && projectOpen() && resource.data.by == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['access'])
             && request.resource.data.access in ['edit', 'view'];
-          allow delete: if isMember(teamId) && resource.data.by == request.auth.uid;
+          allow delete: if isMember(teamId) && (resource.data.by == request.auth.uid || removingProject());
         }
       }
 
@@ -242,7 +305,7 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['chatId', 'teamAlerts'])
           && request.resource.data.chatId is int
           && request.resource.data.teamAlerts is bool;
-        allow delete: if signedIn() && request.auth.uid == memberId;
+        allow delete: if inOpenTeam(teamId) && request.auth.uid == memberId;
       }
 
       match /proposals/{proposalId} {
@@ -257,7 +320,9 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['responses'])
           && request.resource.data.responses.diff(resource.data.responses).affectedKeys().hasOnly([request.auth.uid])
           && request.resource.data.responses[request.auth.uid] in ['agree', 'later'];
-        allow delete: if false;
+        allow delete: if isMember(teamId) && resource.data.topic == 'ai_promise'
+          && get(/databases/$(database)/documents/teams/$(teamId)/shares/$(proposalId)).data.by == request.auth.uid
+          && !existsAfter(/databases/$(database)/documents/teams/$(teamId)/shares/$(proposalId));
       }
     }
   }

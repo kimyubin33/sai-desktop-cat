@@ -136,7 +136,7 @@ pub fn update_engine(s: &Value) {
                 "Claude 연결됨"
             }
         } else if b(s, "hasOpenAiKey") {
-            "GPT 연결됨 (프로젝트 업무 배분)"
+            "GPT 연결됨"
         } else {
             "기본 상담 흐름"
         },
@@ -149,6 +149,7 @@ pub fn refresh_team_switch(info: &Value) {
     let team = s(info, "activeTeamId");
     drive::switch_team(&team);
     collab::switch_team(&team);
+    talk::delivery::switch_team(&team);
     let Some(sel) = by_id("teamSwitch") else { return };
     clear(&sel);
     let teams = arr(info, "teams");
@@ -186,6 +187,7 @@ pub fn start() {
         opened.set(true);
         drive::switch_team(team);
         collab::switch_team(team);
+        talk::delivery::switch_team(team);
         if let Some(select) = by_id("teamSwitch") {
             set_val(&select, team);
         }
@@ -216,6 +218,7 @@ pub fn start() {
             let id = val(&sel2);
             drive::switch_team(&id);
             collab::switch_team(&id);
+            talk::delivery::switch_team(&id);
             spawn(async move {
                 let info = match call("team:switch", json!(id)).await {
                     Ok(info) => Ok(info),

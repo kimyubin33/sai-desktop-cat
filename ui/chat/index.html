@@ -25,20 +25,24 @@
   <!-- 대화 -->
   <section id="tab-chat" class="tab active">
     <div class="privacy-note">
-      여기서 한 말은 이 컴퓨터에만 저장되고, 원문과 이름은 다른 팀원에게 가지 않아요.
+      대화 기록은 이 컴퓨터에 보관해요. 팀원에게는 내가 확인한 문안만 전달돼요.
     </div>
     <div id="messages" class="messages" aria-live="polite"></div>
     <div id="modePicker" class="mode-picker">
       <p>어떤 이야기를 해 볼까요?</p>
       <button data-mode="complaint">팀원 일로 속상해요</button>
+      <button id="promiseMode" data-mode="promise">팀 약속 잡기</button>
       <button data-mode="explain">내 사정을 이야기하고 싶어요</button>
       <button data-mode="free">그냥 이야기할래요</button>
       <button data-mode="schedule">일정 조정하기</button>
     </div>
+    <section id="deliveryPanel" class="delivery-panel hidden" aria-label="AI 공유 문안 작성"></section>
     <footer id="composer" class="composer hidden">
       <div class="helpers">
         <button id="skipBtn" class="link">이 질문 건너뛰기</button>
         <button id="summarizeBtn" class="link">지금까지 정리하기</button>
+        <button id="complaintDelivery" class="link hidden">AI 공유 문안 만들기</button>
+        <button id="clearScheduleChat" class="link hidden">일정 대화 삭제</button>
         <button id="newBtn" class="link">새 대화</button>
       </div>
       <div class="row">
@@ -51,11 +55,16 @@
   <!-- 정리함 -->
   <section id="tab-notes" class="tab">
     <h2>팀 약속</h2>
-    <p class="hint">누가 제안했는지는 보이지 않아요. 팀원 모두가 동의하면 팀 약속이 돼요.</p>
+    <p class="hint">대화에서 AI와 약속을 작성해 팀에 제안할 수 있어요. 두 명 이상인 팀에서 모두 동의하면 팀 약속이 돼요.</p>
+    <div><button id="notesPromise">팀 약속 잡기</button></div>
     <div id="proposals" class="list"></div>
     <h2>공유 대기함</h2>
-    <p class="hint">다른 팀원의 고양이 조언에 반영될 일반 주제예요. 원문·이름·날짜는 들어 있지 않고, 보낸 시각으로 짐작하기 어렵도록 조금 늦춰 보내요.</p>
+    <p class="hint">대화에서 AI와 작성하고 승인한 문안의 전송 상태를 확인하세요. 승인한 문안은 AI 연결이 끊겨도 팀 동기화 때 전달됩니다.</p>
     <div id="outbox" class="list"></div>
+    <section id="receivedAdviceSection" class="hidden">
+      <h2>받은 조언</h2>
+      <div id="receivedAdvice" class="list"></div>
+    </section>
     <h2>나의 대화 기록</h2>
     <p class="hint">이 컴퓨터에만 저장돼요. 보관 기간이 지나면 자동으로 지워져요.</p>
     <div id="sessions" class="list"></div>
@@ -200,6 +209,7 @@
         </label>
         <div class="inline">
           <button type="button" id="testAi">Claude 연결 확인</button>
+          <button type="button" id="removeClaude" class="link hidden">내 Claude 키 삭제</button>
           <span id="aiStatus" class="status"></span>
         </div>
         <div id="teamKey" class="team-key"></div>
@@ -211,16 +221,17 @@
         </label>
         <div class="inline">
           <button type="button" id="testOpenAi">GPT 연결 확인</button>
+          <button type="button" id="removeOpenAi" class="link hidden">내 GPT 키 삭제</button>
           <span id="openAiStatus" class="status" role="status"></span>
         </div>
-        <p class="hint">협업 → 프로젝트에서 업무 배분에 쓸 AI를 선택해요. 계산할 때 기획서와 팀원이 등록한 프로필이 선택한 API로 전송되며, 사용료는 해당 키의 계정에 청구돼요.</p>
+        <p class="hint">공유 문안·팀 약속을 작성할 때는 해당 대화를, 프로젝트 업무를 배분할 때는 기획서와 팀 프로필을 선택한 AI에 보냅니다. 사용료는 해당 키의 계정에 청구돼요.</p>
       </fieldset>
 
       <fieldset>
         <legend>사이가 하는 일</legend>
         <p class="hint">
           사이의 조언에는 일반적인 협업 원칙과, 팀원들이 공유를 허용한 고민에서 정리한 일반적인 주제가 반영될 수 있어요.
-          개인 대화 원문과 발언자 이름은 다른 팀원에게 보여 주지 않아요. 다만 두 명뿐인 팀처럼 상황만으로 짐작될 수 있는 경우도 있어서, 완전한 익명을 약속하지는 않아요.
+          팀 약속 제안은 내 이름으로 팀 톡에도 올라갑니다. 개인에게 보낸 조언도 작은 팀에서는 상황을 통해 보낸 사람을 짐작할 수 있어요.
           화면 감시, 키 입력 수집, 다른 메신저 내용 열람은 하지 않아요.
         </p>
       </fieldset>
@@ -239,12 +250,12 @@
       </div>
       <dl class="fields"></dl>
       <div class="topics-block">
-        <div class="label">반영할 수 있는 일반 주제 <span class="hint">(눌러서 고르기)</span></div>
+        <div class="label">상담 주제 <span class="hint">(눌러서 수정)</span></div>
         <div class="chips"></div>
       </div>
       <div class="card-actions">
         <button class="edit link">내용 고치기</button>
-        <button class="share primary">공유 범위 정하기</button>
+        <button class="share primary">AI 공유 문안 만들기</button>
       </div>
     </div>
   </template>

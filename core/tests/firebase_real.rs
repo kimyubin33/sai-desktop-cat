@@ -194,9 +194,133 @@ async fn firebase_contract() {
     assert!(moved.list_members(&team).await.unwrap().iter().any(|m| m.s("uid") == ub));
     println!("✓ 다른 컴퓨터로 옮기기: 같은 계정으로 팀을 이어 씀");
 
+    // 구형 서버는 프로젝트에 작성자를 저장하지 못한다. 새 규칙에서는 권한·연결 자료 정리를 검증한다.
+    let project = a.list_projects(&team).await.unwrap().into_iter().find(|p| p["id"] == proj).unwrap();
+    if project["createdBy"] == ua {
+        assert!(b.delete_project_tree(&team, &proj).await.is_err());
+        b.add_file(&team, &proj, json!({"name":"참고자료", "url":"https://example.org/sample", "by":ub, "at":15})).await.unwrap();
+        let changed = json!({"name":"최종.txt","text":"내용","by":ub,"updatedAt":15});
+        b.put_brief(&team, &proj, changed).await.unwrap();
+        let snapshot = a.get_brief(&team,&proj).await.unwrap().unwrap();
+        b.delete_brief_version(&team,&proj,snapshot).await.unwrap();
+        let own_brief = json!({"name":"소유.txt","text":"내 기획서","by":ua,"updatedAt":15});
+        a.put_brief(&team,&proj,own_brief).await.unwrap();
+        let snapshot = a.get_brief(&team,&proj).await.unwrap().unwrap();
+        assert!(b.delete_brief_version(&team,&proj,snapshot.clone()).await.is_err());
+        a.delete_brief_version(&team,&proj,snapshot).await.unwrap();
+        assert!(a.get_brief(&team,&proj).await.unwrap().is_none());
+        b.put_brief(&team, &proj, json!({"name":"또.txt","text":"내용","by":ub,"updatedAt":16})).await.unwrap();
+        a.delete_project_tree(&team,&proj).await.expect("다른 팀원의 작업·자료 링크·기획서를 포함한 프로젝트 삭제");
+        assert!(a.list_projects(&team).await.unwrap().iter().all(|p| p["id"] != proj));
+        assert!(b.list_tasks(&team,&proj).await.unwrap().is_empty());
+        assert!(b.list_files(&team,&proj).await.unwrap().is_empty());
+        assert!(b.create_task(&team,&proj,json!({"title":"고아 작업","status":"todo"})).await.is_err());
+    } else {
+        not_deployed("팀 프로젝트 삭제");
+    }
+    a.delete_own_profile(&team).await.expect("내 자기소개 삭제");
+    assert!(b.list_profiles(&team).await.unwrap().iter().all(|p| p["uid"] != ua));
+
     b.leave_team(&team).await.unwrap();
     a.leave_team(&team).await.unwrap();
     // 나간 사람은 더 이상 팀 데이터를 볼 수 없다
     assert!(b.list_members(&team).await.is_err());
     println!("✓ 나가기 후에는 볼 수 없음\n모두 통과했어요.");
+}
+
+/// 승인 이후의 큐와 수신 동기화에는 Claude/GPT를 만들거나 연결할 필요가 없다.
+#[tokio::test]
+#[ignore]
+async fn approved_ai_delivery() {
+    use sai_core::{store::Stores, team::Hub};
+    use std::sync::Arc;
+    fn hub() -> Hub {
+        let stores = Stores::memory();
+        Hub::new(stores.settings, stores.shared_outbox, stores.team_cache, Box::new(|| Some(backend())), Some(0), Arc::new(sai_core::time::now_ms))
+    }
+    let a = hub();
+    let b = hub();
+    let team = a.create_team("AI 문안 점검", "작성자").await.unwrap();
+    b.join_team(&team.s("joinCode"), "팀원").await.unwrap();
+    let author = a.active();
+    let member = b.active();
+    assert!(author.sync().await.b("ok"));
+    let mut draft = json!({"kind":"draft","target":"team","topic":"time_promise","title":"회의 전 공유","text":"회의 전에 진행한 일 한 가지를 알려 주세요."});
+    let id = author.queue_ai_delivery("approved-team", &draft, None).unwrap();
+    assert!(author.sync().await.b("ok"));
+    assert!(member.sync().await.b("ok"));
+    assert_eq!(member.proposals().iter().find(|p| p["id"] == id).unwrap()["text"], draft["text"]);
+    member.respond(&id, "agree").await.unwrap();
+    assert!(author.sync().await.b("ok"));
+    let proposal = author.proposals().into_iter().find(|p| p["id"] == id).unwrap();
+    assert!(proposal.b("agreedByAll"));
+    assert_eq!(proposal["by"], author.my_uid());
+    assert_eq!(author.queue_ai_delivery("approved-team", &draft, None).unwrap(), id);
+    assert_eq!(author.backend().unwrap().list_shares(&team.s("teamId")).await.unwrap().len(), 1);
+    draft["target"] = json!("person");
+    draft["text"] = json!("진행 속도를 조정해야 할 때 미리 한마디 부탁해요.");
+    let private = author.queue_ai_delivery("approved-private", &draft, Some(&member.my_uid())).unwrap();
+    assert!(author.sync().await.b("ok"));
+    let out = author.outbox_items().into_iter().find(|i| i["id"] == private).unwrap();
+    if out["status"] == "queued" {
+        assert!(out.s("lastError").contains("Firestore 규칙"));
+        assert!(member.backend().unwrap().list_signals_for_me(&team.s("teamId")).await.unwrap().is_empty());
+        not_deployed("AI 개인 문안 전송");
+    } else {
+        assert_eq!(out["status"], "sent");
+        assert!(member.sync().await.b("ok"));
+        let received = member.visible_advice().into_iter().find(|r| r["id"] == private).unwrap();
+        assert_eq!(received["text"], draft["text"]);
+        assert!(received.get("by").is_none());
+        let third = hub();
+        third.join_team(&team.s("joinCode"), "다른 팀원").await.unwrap();
+        let unrelated = third.active();
+        assert!(unrelated.backend().unwrap().get_private_body(&team.s("teamId"), &private).await.is_err());
+        assert!(unrelated.sync().await.b("ok"));
+        assert!(unrelated.visible_advice().is_empty());
+        third.leave_team(&team.s("teamId")).await.unwrap();
+        assert!(member.backend().unwrap().delete_personal_delivery(&team.s("teamId"), &private).await.is_err());
+        author.backend().unwrap().delete_personal_delivery(&team.s("teamId"), &private).await.unwrap();
+        assert!(member.sync().await.b("ok"));
+        assert!(member.visible_advice().is_empty());
+    }
+    println!("✓ 승인한 AI 전달 문안: 동의·대상 분리·중복 방지·오프라인 보존");
+    b.leave_team(&team.s("teamId")).await.unwrap();
+    a.leave_team(&team.s("teamId")).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
+async fn creator_can_close_team_atomically() {
+    let owner = backend();
+    let peer = backend();
+    let stranger = backend();
+    let t = owner.create_team("해산 점검 팀", "개설자").await.unwrap();
+    let id = t.s("teamId");
+    let code = t.s("joinCode");
+    peer.join_team(&code, "동료").await.unwrap();
+    let joined = peer.sign_in().await.unwrap();
+    let signal = owner.create_signal(&id, "workload", &joined, "2026-W46").await.unwrap();
+    assert!(peer.dissolve_team(&id, &code).await.is_err());
+    assert_eq!(peer.list_members(&id).await.unwrap().len(), 2);
+    match owner.dissolve_team(&id, &code).await {
+        Ok(()) => {
+            assert!(stranger.join_team(&code, "신입").await.is_err());
+            assert!(peer.list_members(&id).await.is_err());
+            assert!(owner.list_proposals(&id).await.is_err());
+            assert!(peer.get_signal(&id, &signal).await.is_err());
+            assert!(peer.get_integration(&id, "claude").await.is_err());
+            assert!(peer.create_proposal(&id, "workload", "2026-W46").await.is_err());
+            println!("✓ 해산: 이전 팀원·개설자의 자료 접근 차단 및 코드 폐쇄");
+        }
+        Err(e) if e.contains("팀 해산 규칙") => {
+            not_deployed("팀 해산");
+            assert_eq!(peer.list_members(&id).await.unwrap().len(), 2);
+            stranger.join_team(&code, "신입").await.unwrap();
+            stranger.leave_team(&id).await.unwrap();
+            peer.leave_team(&id).await.unwrap();
+            owner.leave_team(&id).await.unwrap();
+        }
+        Err(e) => panic!("팀 해산 요청 실패: {e}"),
+    }
 }
