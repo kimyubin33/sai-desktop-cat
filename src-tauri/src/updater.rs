@@ -51,6 +51,22 @@ pub fn native_arm64() -> bool {
     cfg!(target_arch = "aarch64")
 }
 
+/// 최신 릴리스 버전 (예: "0.9.4"). GitHub API 대신 최신 릴리스 주소가 넘어가는 곳으로 알아낸다 (호출 수 제한 없음)
+async fn latest_tag() -> Result<String, String> {
+    let res = client().get(RELEASES_URL).timeout(Duration::from_secs(30)).send().await.map_err(|e| format!("GitHub 에 연결하지 못했어요: {e}"))?;
+    let final_url = res.url().to_string();
+    let tag = final_url.rsplit("/tag/").next().filter(|t| *t != final_url).map(String::from);
+    let Some(tag) = tag else { return Err(format!("최신 버전을 알아내지 못했어요 (응답 {})", res.status())) };
+    Ok(tag.trim_start_matches('v').trim_end_matches('/').to_string())
+}
+
+fn newer(a: &str, b: &str) -> bool {
+    match (semver::Version::parse(a), semver::Version::parse(b)) {
+        (Ok(x), Ok(y)) => x > y,
+        _ => false,
+    }
+}
+
 pub fn supported() -> bool {
     // 개발용: SAI_UPDATE_TEST 가 있으면 다른 운영체제·개발 실행에서도 확인·내려받기까지 해 본다 (설치는 하지 않음)
     (cfg!(windows) && !cfg!(debug_assertions)) || std::env::var("SAI_UPDATE_TEST").is_ok()
@@ -105,6 +121,18 @@ impl Updater {
             }
             return self.state();
         }
+        // 받아 둔 버전보다 더 새 버전이 나왔으면 받아 둔 것은 버리고 새로 받는다
+        if self.is_ready() {
+            if let (Ok(remote), Some(have)) = (latest_tag().await, self.latest()) {
+                if newer(&remote, &have) {
+                    self.set(|s| {
+                        s.status = "idle".into();
+                        s.file = None;
+                        s.latest = None;
+                    });
+                }
+            }
+        }
         if self.is_ready() || self.st.lock().unwrap().status == "downloading" {
             if manual {
                 a.advisor.info(a, &format!("새 버전 {}을 이미 받고 있거나 받아 두었어요.", self.latest().unwrap_or_default()));
@@ -148,20 +176,9 @@ impl Updater {
     /// 새 버전이 있으면 내려받아 확인까지 마치고 버전을 돌려준다
     async fn check_inner(&self, _a: &Arc<App>) -> Result<Option<String>, String> {
         // GitHub API 는 시간당 호출 수 제한이 있어서, 최신 릴리스 주소가 넘어가는 곳(…/releases/tag/vX)으로 버전을 알아낸다
-        let res = client()
-            .get(RELEASES_URL)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| format!("GitHub 에 연결하지 못했어요: {e}"))?;
-        let final_url = res.url().to_string();
-        let tag = final_url.rsplit("/tag/").next().filter(|t| *t != final_url).map(String::from);
-        let Some(tag) = tag else { return Err(format!("최신 버전을 알아내지 못했어요 (응답 {})", res.status())) };
-        let latest = tag.trim_start_matches('v').trim_end_matches('/').to_string();
-        let newer = match (semver::Version::parse(&latest), semver::Version::parse(&self.current)) {
-            (Ok(l), Ok(c)) => l > c,
-            _ => false,
-        };
+        let latest = latest_tag().await?;
+        let tag = format!("v{latest}");
+        let newer = newer(&latest, &self.current);
         self.set(|s| s.last_check = now_ms());
         if !newer {
             return Ok(None);
@@ -239,12 +256,16 @@ impl Updater {
     /// 화면의 "업데이트 확인": 바로 돌아오고, 확인·내려받기는 뒤에서 한다 (화면은 상태를 자주 읽어 % 를 보여 준다)
     pub fn check_in_background(&self, a: &Arc<App>) -> Value {
         if supported() {
-            let busy = matches!(self.st.lock().unwrap().status.as_str(), "checking" | "downloading" | "ready");
+            // 받아 둔 버전이 있어도 더 새 버전이 나왔는지는 다시 본다
+            let status = self.st.lock().unwrap().status.clone();
+            let busy = matches!(status.as_str(), "checking" | "downloading");
             if !busy {
-                self.set(|s| {
-                    s.status = "checking".into();
-                    s.error = None;
-                });
+                if status != "ready" {
+                    self.set(|s| {
+                        s.status = "checking".into();
+                        s.error = None;
+                    });
+                }
                 let a2 = a.clone();
                 tauri::async_runtime::spawn(async move {
                     a2.updater.check(&a2, false).await;
@@ -299,7 +320,8 @@ impl Updater {
             const DETACHED: u32 = 0x0000_0008 | 0x0800_0000; // DETACHED_PROCESS | CREATE_NO_WINDOW
             let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
             // 사이가 꺼질 시간을 조금 준 뒤 설치하고, 필요하면 다시 켠다
-            let mut script = format!("timeout /t 2 /nobreak >nul & start \"\" /wait \"{}\" {}", file.display(), args.join(" "));
+            // (timeout 명령은 창 없는 프로세스에서 바로 끝나 버려서, 기다리는 데는 ping 을 쓴다)
+            let mut script = format!("ping -n 4 127.0.0.1 >nul & start \"\" /wait \"{}\" {}", file.display(), args.join(" "));
             if relaunch {
                 script.push_str(&format!(" & start \"\" \"{exe}\""));
             }
