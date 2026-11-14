@@ -154,6 +154,21 @@ service cloud.firestore {
           && request.resource.data.title is string && request.resource.data.title.size() <= 80;
         allow delete: if false;
 
+        // 각 프로젝트가 공유하는 업무 배분용 기획서 한 개
+        match /briefs/current {
+          allow get: if isMember(teamId)
+            && exists(/databases/$(database)/documents/teams/$(teamId)/projects/$(projectId));
+          allow create, update: if isMember(teamId)
+            && exists(/databases/$(database)/documents/teams/$(teamId)/projects/$(projectId))
+            && request.resource.data.keys().hasOnly(['name', 'text', 'by', 'updatedAt'])
+            && request.resource.data.by == request.auth.uid
+            && request.resource.data.updatedAt is int
+            && request.resource.data.name is string && request.resource.data.name.size() <= 200
+            && request.resource.data.name.matches('.+[.]([mM][dD]|[tT][xX][tT])')
+            && request.resource.data.text is string && request.resource.data.text.size() > 0
+            && request.resource.data.text.toUtf8().size() <= 49152;
+        }
+
         match /tasks/{taskId} {
           allow read: if isMember(teamId);
           allow create, update: if isMember(teamId)

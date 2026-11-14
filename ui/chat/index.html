@@ -189,20 +189,31 @@
       </fieldset>
 
       <fieldset>
-        <legend>AI 대화 (선택)</legend>
-        <p class="hint">Claude API 키를 넣으면 "그냥 이야기할래요"가 일반 Claude 대화처럼 길이 제한 없이 동작하고, 일정 조정도 자유롭게 말해도 알아들어요. 아래 체크는 상담 흐름(속상해요·내 사정)의 문장을 AI로 다듬을지 정해요. 키가 없어도 기본 흐름으로 동작해요. 키를 쓰면 대화 내용이 Anthropic API로 전송되고, 요금은 키 주인 계정에 나가요.</p>
+        <legend>AI 연결 (선택)</legend>
+        <p class="hint">Claude는 대화·일정 조정과 프로젝트 업무 배분에 사용해요. Claude로 대화하면 대화 내용이 Anthropic으로 전송돼요.</p>
         <label class="check"><input type="checkbox" name="aiEnabled" /> 상담 흐름 문장도 AI로 다듬기</label>
-        <label>API 키
+        <label>Claude API 키
           <input type="password" name="apiKey" placeholder="저장된 키가 있으면 비워 두세요" autocomplete="off" />
         </label>
-        <label>모델
+        <label>Claude 모델
           <input type="text" name="model" />
         </label>
         <div class="inline">
-          <button type="button" id="testAi">연결 확인</button>
+          <button type="button" id="testAi">Claude 연결 확인</button>
           <span id="aiStatus" class="status"></span>
         </div>
         <div id="teamKey" class="team-key"></div>
+        <label>GPT API 키 (OpenAI)
+          <input type="password" name="openAiKey" autocomplete="off" placeholder="OpenAI API 키 입력" />
+        </label>
+        <label>GPT 모델
+          <input type="text" name="openAiModel" maxlength="80" placeholder="OpenAI 모델 ID" />
+        </label>
+        <div class="inline">
+          <button type="button" id="testOpenAi">GPT 연결 확인</button>
+          <span id="openAiStatus" class="status" role="status"></span>
+        </div>
+        <p class="hint">협업 → 프로젝트에서 업무 배분에 쓸 AI를 선택해요. 계산할 때 기획서와 팀원이 등록한 프로필이 선택한 API로 전송되며, 사용료는 해당 키의 계정에 청구돼요.</p>
       </fieldset>
 
       <fieldset>

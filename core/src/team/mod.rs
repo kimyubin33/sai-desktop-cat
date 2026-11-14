@@ -786,6 +786,10 @@ mod tests {
         assert_eq!(tb.claude_status()["byName"], "유빈");
         assert!(tb.claude_share("sk-ant-other").await.is_err());
         assert!(tb.claude_unshare().await.is_err());
+        // 다른 팀의 프로젝트가 이 키로 계산되지 않도록, 프로젝트용 조회는 팀 하나로 한정한다.
+        b.create_team("다른 프로젝트 팀", "민수").await.unwrap();
+        assert_eq!(tb.project_claude_key().as_deref(), Some("sk-ant-test-123"));
+        assert!(b.active().project_claude_key().is_none());
         ta.claude_unshare().await.unwrap();
         b.sync_team(&tb).await;
         assert_eq!(b.shared_claude_key(), None);

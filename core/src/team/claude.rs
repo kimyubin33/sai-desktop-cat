@@ -9,6 +9,12 @@ use crate::{err, Result};
 use serde_json::{json, Value};
 
 impl Team {
+    /// 이 팀이 공유한 키만 반환한다. 다른 팀의 프로젝트에 과금되지 않게 한다.
+    pub(crate) fn project_claude_key(&self) -> Option<String> {
+        let team_id = self.id.as_ref()?;
+        self.hub.0.claude_keys.lock().unwrap().get(team_id).cloned()
+    }
+
     pub async fn claude_share(&self, api_key: &str) -> Result<()> {
         let key = api_key.trim();
         if !key.starts_with("sk-ant-") {

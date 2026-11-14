@@ -135,6 +135,8 @@ pub fn update_engine(s: &Value) {
             } else {
                 "Claude 연결됨"
             }
+        } else if b(s, "hasOpenAiKey") {
+            "GPT 연결됨 (프로젝트 업무 배분)"
         } else {
             "기본 상담 흐름"
         },
@@ -144,7 +146,9 @@ pub fn update_engine(s: &Value) {
 
 /// 머리말의 팀 고르기 (팀이 둘 이상일 때)
 pub fn refresh_team_switch(info: &Value) {
-    drive::switch_team(&s(info, "activeTeamId"));
+    let team = s(info, "activeTeamId");
+    drive::switch_team(&team);
+    collab::switch_team(&team);
     let Some(sel) = by_id("teamSwitch") else { return };
     clear(&sel);
     let teams = arr(info, "teams");
@@ -181,6 +185,7 @@ pub fn start() {
         let Some(team) = notice.as_str().or_else(|| notice["teamId"].as_str()) else { return };
         opened.set(true);
         drive::switch_team(team);
+        collab::switch_team(team);
         if let Some(select) = by_id("teamSwitch") {
             set_val(&select, team);
         }
@@ -210,6 +215,7 @@ pub fn start() {
         on(&sel, "change", move |_| {
             let id = val(&sel2);
             drive::switch_team(&id);
+            collab::switch_team(&id);
             spawn(async move {
                 let info = match call("team:switch", json!(id)).await {
                     Ok(info) => Ok(info),

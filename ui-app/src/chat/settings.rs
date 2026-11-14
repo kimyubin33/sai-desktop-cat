@@ -26,12 +26,22 @@ pub async fn load() {
     set_val(&field(&f, "retentionDays"), &s(&sx, "retentionDays"));
     set_checked(&field(&f, "aiEnabled"), b(&sx["ai"], "enabled"));
     set_val(&field(&f, "model"), &s(&sx["ai"], "model"));
+    set_val(&field(&f, "openAiModel"), &s(&sx, "openAiModel"));
     key_placeholder(&sx);
     update_engine(&sx);
 }
 
 fn key_placeholder(sx: &Value) {
-    let _ = field(&form(), "apiKey").set_attribute("placeholder", if b(sx, "hasApiKey") { "저장된 키가 있어요 (바꿀 때만 입력)" } else { "sk-ant-..." });
+    let f = form();
+    let _ = field(&f, "apiKey").set_attribute("placeholder", if b(sx, "hasOwnKey") { "저장된 키가 있어요 (바꿀 때만 입력)" } else { "sk-ant-..." });
+    let gpt_hint = if b(sx, "hasOpenAiKey") {
+        if b(sx, "openAiKeyPersistent") { "저장된 GPT 키가 있어요 (바꿀 때만 입력)" } else { "현재 실행 중에 사용할 GPT 키가 있어요" }
+    } else if b(sx, "openAiKeyPersistent") {
+        "OpenAI API 키 입력"
+    } else {
+        "OpenAI API 키 입력 (앱을 닫으면 지워져요)"
+    };
+    let _ = field(&f, "openAiKey").set_attribute("placeholder", gpt_hint);
 }
 
 // ---------- 팀 연결 ----------
@@ -319,12 +329,12 @@ pub fn render_team_key(sx: &Value) {
     let Some(bx) = by_id("teamKey") else { return };
     clear(&bx);
     if !b(sx, "teamConnected") {
-        let _ = bx.append_child(&el("p").cls("hint").text("팀에 연결하면 내 키를 팀원과 함께 쓸 수 있어요.").0);
+        let _ = bx.append_child(&el("p").cls("hint").text("팀에 연결하면 내 Claude 키를 팀원과 함께 쓸 수 있어요.").0);
         return;
     }
     let ts = &sx["teamShare"];
     let team_name = if s(sx, "teamName").is_empty() { "보고 있는 팀".into() } else { s(sx, "teamName") };
-    let _ = bx.append_child(&el("strong").text(&format!("팀 공유 ({team_name})")).0);
+    let _ = bx.append_child(&el("strong").text(&format!("Claude 키 팀 공유 ({team_name})")).0);
     let has_own = b(sx, "hasOwnKey");
     if b(ts, "shared") && b(ts, "mine") {
         let _ = bx.append_child(&el("p").cls("hint").text("내 키를 이 팀에 공유하고 있어요. 키가 없는 팀원도 AI 기능을 쓰고, 요금은 내 계정에 나가요.").0);
@@ -336,7 +346,7 @@ pub fn render_team_key(sx: &Value) {
         let _ = bx.append_child(
             &el("div")
                 .cls("inline")
-                .kid(el("button").attr("type", "button").text("이 팀에 내 키 공유하기").flag("disabled", !has_own).click(|_| {
+                .kid(el("button").attr("type", "button").text("이 팀에 내 Claude 키 공유하기").flag("disabled", !has_own).click(|_| {
                     if confirm("팀원 사용량이 내 계정으로 청구되고, 팀원은 키를 볼 수 있어요. 공유할까요?") {
                         key_action(async { call("ai:share-team", Value::Null).await }, "공유했어요. 팀원 앱은 다음 동기화(최대 5분) 때 키를 받아요.");
                     }
@@ -350,13 +360,43 @@ pub fn render_team_key(sx: &Value) {
     let _ = bx.append_child(&el("span").id("teamKeyStatus").cls("status").0);
 }
 
-async fn save_key_if_typed() {
+async fn save_key_if_typed() -> Result<(), String> {
     let k = field(&form(), "apiKey");
     let key = val(&k).trim().to_string();
     if !key.is_empty() {
-        let _ = call("ai:set-key", json!(key)).await;
-        set_val(&k, "");
+        call("ai:set-key", json!(key)).await?;
+        if val(&k).trim() == key {
+            set_val(&k, "");
+        }
     }
+    Ok(())
+}
+
+async fn save_openai_if_changed() -> Result<(), String> {
+    let f = form();
+    let input = field(&f, "openAiKey");
+    let key = val(&input).trim().to_owned();
+    let model = val(&field(&f, "openAiModel")).trim().to_owned();
+    let previous_model = st(|state| s(&state.settings, "openAiModel"));
+    if key.is_empty() && model == previous_model {
+        return Ok(());
+    }
+    let mut args = json!({ "model": model });
+    if !key.is_empty() {
+        args["key"] = json!(key);
+    }
+    let sx = call("ai:set-openai", args).await?;
+    if val(&input).trim() == key {
+        set_val(&input, "");
+    }
+    let model_input = field(&f, "openAiModel");
+    if val(&model_input).trim() == model {
+        set_val(&model_input, &s(&sx, "openAiModel"));
+    }
+    st(|state| state.settings = sx.clone());
+    update_engine(&sx);
+    key_placeholder(&sx);
+    Ok(())
 }
 
 fn click(id: &str, f: impl FnMut(web_sys::Event) + 'static) {
@@ -425,7 +465,14 @@ pub fn bind() {
     on(&f, "submit", |e| {
         e.prevent_default();
         spawn(async {
-            save_key_if_typed().await;
+            if let Err(e) = save_key_if_typed().await {
+                set_text("saveStatus", &e);
+                return;
+            }
+            if let Err(e) = save_openai_if_changed().await {
+                set_text("saveStatus", &e);
+                return;
+            }
             let f = form();
             let dnd = if checked(&field(&f, "dndOn")) { json!({ "start": val(&field(&f, "dndStart")), "end": val(&field(&f, "dndEnd")) }) } else { Value::Null };
             let model = val(&field(&f, "model")).trim().to_string();
@@ -449,7 +496,10 @@ pub fn bind() {
     });
     click("testAi", |_| {
         spawn(async {
-            save_key_if_typed().await;
+            if let Err(e) = save_key_if_typed().await {
+                set_text("aiStatus", &e);
+                return;
+            }
             set_text("aiStatus", "확인하는 중…");
             let t = match call("ai:test", Value::Null).await {
                 Ok(r) if b(&r, "ok") => "연결됐어요.".to_string(),
@@ -462,6 +512,24 @@ pub fn bind() {
                 update_engine(&sx);
                 key_placeholder(&sx);
             }
+        });
+    });
+    click("testOpenAi", |_| {
+        let button = by_id("testOpenAi").unwrap();
+        set_disabled(&button, true);
+        set_text("openAiStatus", "확인하는 중…");
+        spawn(async move {
+            let result = match save_openai_if_changed().await {
+                Ok(()) => call("ai:test-openai", Value::Null).await,
+                Err(e) => Err(e),
+            };
+            let msg = match result {
+                Ok(r) if b(&r, "ok") => "GPT에 연결됐어요.".to_owned(),
+                Ok(r) => format!("GPT 연결 실패 · {}", s(&r, "error")),
+                Err(e) => format!("GPT 연결 실패 · {e}"),
+            };
+            set_text("openAiStatus", &msg);
+            set_disabled(&button, false);
         });
     });
     click("deleteAll", |_| {

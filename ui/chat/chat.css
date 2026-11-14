@@ -978,3 +978,24 @@ select.team-pick {
 .team-create { margin-top: 6px; }
 .team-create > input { width: 100%; box-sizing: border-box; margin: 6px 0; }
 .team-create summary { cursor: pointer; color: var(--muted); }
+
+/* 프로젝트 기획서와 AI 업무 배분 */
+.collab .allocation { border-top: 3px solid var(--accent); }
+.allocation h2, .allocation h3 { font-size: 15px; margin: 0 0 9px; }
+.allocation h3 { font-size: 14px; }
+.allocation-file { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 9px; border-radius: 8px; background: var(--soft); }
+.allocation-file-info { display: grid; flex: 1 1 150px; min-width: 0; overflow-wrap: anywhere; }
+.allocation-brief { width: 100%; }
+.allocation-brief summary { cursor: pointer; font-size: 12px; }
+.allocation-brief pre { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; }
+.allocation-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
+.allocation-controls select { min-width: 90px; font: inherit; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.allocation-setup, .allocation-status { font-size: 12px; }
+.allocation-help, .allocation-status:not(:empty), .allocation-setup { margin: 8px 0; }
+.allocation-status.err { color: var(--danger); }
+.allocation-review { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }
+.allocation-proposal { border-bottom: 1px solid var(--line); padding: 8px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.allocation-proposal label { display: flex; align-items: baseline; gap: 5px; cursor: pointer; }
+.allocation-proposal p { margin: 3px 0; font-size: 13px; }
+.allocation-meta { font-size: 12px; color: var(--muted); }
+#allocationApply { margin-top: 9px; }

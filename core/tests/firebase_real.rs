@@ -60,11 +60,37 @@ async fn firebase_contract() {
     a.set_profile(&team, json!({ "pr": "", "skills": { "영상편집": 3 }, "learn": [], "weeklyHours": 10.5, "days": [] })).await.expect("자기소개");
     assert_eq!(b.list_profiles(&team).await.unwrap().len(), 1);
     let proj = a.create_project(&team, json!({ "title": "점검 프로젝트", "goal": "", "deliverable": "", "deadline": "2099-12-01" })).await.unwrap();
+    let brief = json!({ "name": "점검.MD", "text": "# 공유 기획서", "by": ua, "updatedAt": 100 });
+    match a.put_brief(&team, &proj, brief.clone()).await {
+        Ok(()) => {
+            assert_eq!(b.get_brief(&team, &proj).await.unwrap().unwrap().s("text"), "# 공유 기획서");
+            assert!(b.put_brief(&team, &proj, brief.clone()).await.is_err(), "다른 팀원의 이름으로 덮어쓸 수 없어요");
+            let mut too_large = brief.clone();
+            too_large["text"] = json!("가".repeat(16_385));
+            assert!(a.put_brief(&team, &proj, too_large).await.is_err());
+            assert!(a.put_brief(&team, "missing-project", brief.clone()).await.is_err());
+            assert!(backend().get_brief(&team, &proj).await.is_err(), "팀 밖에서는 기획서를 읽을 수 없어요");
+        }
+        Err(e) if e.contains("(403)") => not_deployed("프로젝트 공유 기획서"),
+        Err(e) => panic!("{e}"),
+    }
     let task = a
         .create_task(&team, &proj, json!({ "title": "점검 작업", "estimateHours": 2, "difficulty": 2, "skills": [], "dependsOn": [], "doneCriteria": "", "prep": [], "reviewer": null, "status": "todo", "assignee": null, "accepted": false, "objections": {} }))
         .await
         .unwrap();
-    a.update_task(&team, &proj, &task, json!({ "assignee": ub, "accepted": false })).await.unwrap();
+    let before = a.list_tasks(&team, &proj).await.unwrap().into_iter().find(|t| t["id"] == task).unwrap();
+    let mut new_task = before.clone();
+    new_task.as_object_mut().unwrap().remove("id");
+    new_task["title"] = json!("기획서에서 제안한 일");
+    new_task["assignee"] = json!(ua);
+    a.commit_allocation(&team, &proj, vec![("ai-first".into(), new_task.clone())], vec![(before.clone(), ub.clone())])
+        .await.expect("AI 제안의 신규 업무 생성·기존 업무 배정");
+    assert!(a.commit_allocation(&team, &proj, vec![("ai-second".into(), new_task.clone())], vec![(before, ua.clone())]).await.is_err());
+    assert!(a.commit_allocation(&team, &proj, vec![("ai-first".into(), new_task)], vec![]).await.is_err());
+    let tasks = b.list_tasks(&team, &proj).await.unwrap();
+    assert_eq!(tasks.len(), 2);
+    assert_eq!(tasks.iter().find(|t| t["id"] == task).unwrap()["assignee"], ub);
+    println!("✓ AI 업무 배분: 신규·기존 작업 동시 등록, 변경 충돌·중복 등록 방지");
     // 다른 사람이 대신 수락할 수 없다
     assert!(a.update_task(&team, &proj, &task, json!({ "accepted": true })).await.is_err(), "다른 사람이 수락하면 거절돼야 해요");
     b.update_task(&team, &proj, &task, json!({ "accepted": true })).await.expect("본인 수락");
