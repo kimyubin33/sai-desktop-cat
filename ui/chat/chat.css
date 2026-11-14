@@ -937,6 +937,12 @@ select.team-pick {
 
 /* ---------- Drive 탭: 팀원과 파일 주고받기 (대화방) ---------- */
 .drive { display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative; }
+.drive-modes { display: flex; gap: 4px; padding: 7px 14px; border-bottom: 1px solid var(--line); }
+.drive-modes button { padding: 5px 16px; }
+.drive-modes button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.drive-content { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.drive-composer .status:empty { display: none; }
+.drive-composer .check { font-size: 12px; }
 .drive-head { padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--soft); font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
 .drive-feed { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .drive-feed.over { outline: 3px dashed var(--accent); outline-offset: -8px; background: var(--user); }
@@ -958,7 +964,7 @@ select.team-pick {
 .drive-composer .row.small { font-size: 12px; justify-content: space-between; align-items: center; }
 .drive-composer textarea { min-height: 38px; max-height: 120px; }
 .icon-btn { padding: 8px 10px; font-size: 13px; }
-.drive-picker { position: absolute; inset: 0 0 auto 0; bottom: 92px; background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0,0,0,.12); padding: 10px 14px; overflow-y: auto; z-index: 5; display: flex; flex-direction: column; gap: 6px; }
+.drive-picker { position: absolute; inset: 0; background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0,0,0,.12); padding: 10px 14px; overflow-y: auto; z-index: 5; display: flex; flex-direction: column; gap: 6px; }
 .drive-picker.hidden { display: none; }
 .pick-head { display: flex; justify-content: space-between; align-items: center; }
 .drive-picker .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

@@ -197,6 +197,7 @@ pub fn start() {
     }
 
     talk::bind();
+    drive::bind();
     settings::bind();
 
     spawn(async {

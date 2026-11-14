@@ -69,7 +69,34 @@
 
   <!-- 팀 Drive 함 -->
   <section id="tab-drive" class="tab">
-    <div id="driveRoot" class="drive"></div>
+    <div id="driveRoot" class="drive">
+      <div class="drive-modes" role="group" aria-label="팀 공간 보기">
+        <button id="driveChatMode" aria-pressed="true" aria-controls="driveFeed">톡</button>
+        <button id="driveFilesMode" aria-pressed="false" aria-controls="driveFeed">파일 공유</button>
+      </div>
+      <div id="driveHead" class="drive-head"></div>
+      <div class="drive-content">
+        <div id="driveFeed" class="drive-feed" role="region" aria-labelledby="driveChatMode"></div>
+        <div id="drivePicker" class="drive-picker hidden"></div>
+      </div>
+      <div id="driveChatComposer" class="drive-composer">
+        <div class="row">
+          <textarea id="driveText" rows="1" maxlength="1000" aria-label="팀 메시지" placeholder="메시지 작성…"></textarea>
+          <button id="driveSend" class="primary">보내기</button>
+        </div>
+        <span id="driveChatStatus" class="status" role="status"></span>
+      </div>
+      <div id="driveFilesComposer" class="drive-composer hidden">
+        <textarea id="driveCaption" rows="1" maxlength="1000" aria-label="파일 설명 (선택)" placeholder="파일과 함께 보낼 설명 (선택)"></textarea>
+        <div class="row">
+          <button id="driveChooseLocal">내 컴퓨터에서 선택</button>
+          <button id="driveChooseGoogle">Google Drive에서 선택</button>
+          <input id="driveFileInput" type="file" multiple hidden>
+        </div>
+        <label class="check"><input id="driveEdit" type="checkbox" checked> 받은 팀원도 고칠 수 있게 (끄면 보기만)</label>
+        <span id="driveFilesStatus" class="status" role="status"></span>
+      </div>
+    </div>
   </section>
 
   <!-- 설정 -->
