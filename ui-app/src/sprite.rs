@@ -1,198 +1,264 @@
-//! 사이의 도트 스프라이트를 코드로 그린다 (32x32 도트, 오른쪽을 바라보는 기준).
-//! 외부 그림 파일 없이 모양을 조절할 수 있도록 타원·삼각형 도형을 도트 단위로 찍는다.
-//! 그림 계산은 순수 Rust(32x32 RGBA)이고, 마지막에 캔버스로 크게 옮긴다.
+//! 32×32 도트 고양이. 각 포즈가 같은 얼굴, 팔레트, 꼬리를 쓴다.
+//! 캔버스 렌더링과 클릭 판정은 같은 RGBA 데이터를 사용한다.
 
 pub const SIZE: usize = 32;
 
 type Rgba = [u8; 4];
+const INK: Rgba = [0x30, 0x2d, 0x33, 255];
+const STRIPE: Rgba = [0x55, 0x54, 0x5c, 255];
+const SHADOW: Rgba = [0x80, 0x7d, 0x83, 255];
+const FUR: Rgba = [0xaa, 0xa9, 0xad, 255];
+const LIGHT: Rgba = [0xc3, 0xc1, 0xc4, 255];
+const BLUSH: Rgba = [0xf6, 0xa8, 0xbb, 255];
+const TONGUE: Rgba = [0xc8, 0x7e, 0x92, 255];
+const EYE: Rgba = [0x20, 0x1f, 0x28, 255];
 
-const LINE: Rgba = [0x3b, 0x2f, 0x2f, 255];
-const FUR: Rgba = [0xf2, 0xa6, 0x5a, 255];
-const STRIPE: Rgba = [0xd6, 0x80, 0x3a, 255];
-const LIGHT: Rgba = [0xfb, 0xe3, 0xc4, 255];
-const PINK: Rgba = [0xf7, 0xb2, 0xb7, 255];
-const EYE: Rgba = [0x2b, 0x2b, 0x2b, 255];
-const SHINE: Rgba = [0xff, 0xff, 0xff, 255];
-const MOUTH: Rgba = [0xc9, 0x6a, 0x6a, 255];
+const HEAD: &[&[u8]] = &[
+    b"...XX...........XX...",
+    b"..XggX.........XggX..",
+    b"..XsssX.......XsssX..",
+    b"..XpsssX.....XssspX..",
+    b"..XsssggXXXXXggsssX..",
+    b".XgggggddgdggdgggggX.",
+    b".XgggggdggdggggggggX.",
+    b"XggghhhgggggggggggggX",
+    b"XggghgggggggggggggggX",
+    b"XsssgggggggggggggsssX",
+    b"XssgggggggggggggggssX",
+    b".XpppgggggggggggpppX.",
+    b".XssshhhggggggggsssX.",
+    b"..XXgggghhhhhhgggXX..",
+    b"....XXgggggggggXX....",
+    b"......XXXXXXXXX......",
+];
 
-pub struct Canvas(pub Vec<u8>);
+const SITTING: &[&[u8]] = &[
+    b"........XXXXXXXX........",
+    b".......XggggggggX.......",
+    b"......XggggggggggX......",
+    b".....XggggggggggggX.....",
+    b"....XggggggggggggggX....",
+    b"...XggggggggggggggggX...",
+    b"...XgggggggggggggdddX...",
+    b"..XddddgggggggggggdddX..",
+    b"..XdddgggghhhhgggggggX..",
+    b".XssssggghhhhhhgggggggX.",
+    b".XggggggghhhhhhggggdddX.",
+    b"XgdddggghhhhhhhhggggdddX",
+    b"XgddgggghhhhhhhhgggggggX",
+    b"XssssgggghhhhhhhgggggggX",
+    b"XggggggggghhhhhggggggggX",
+    b".XssssggggggggggssssssX.",
+    b"..XggsssssggsssssssggX..",
+    b"...XXggggggggggggggXX...",
+    b".....XXXXXXXXXXXXXX.....",
+];
+
+const PAW: &[&[u8]] = &[
+    b".XXX.",
+    b"XgggX",
+    b"XhhgX",
+    b"XgggX",
+    b".XXX.",
+];
+
+const WALKING: &[&[u8]] = &[
+    b"....XXXXXXXXXXXX....",
+    b"...XddggddggddggXX..",
+    b".XXgddggddggdgggggX.",
+    b"XgggdgggdggggggggggX",
+    b"XggggggggggggggggggX",
+    b"XggggggggggggggggggX",
+    b"XgsssggggggggggggggX",
+    b".XsssgggggggggggggX.",
+    b"..XsssssghhhhhhhhXX.",
+    b"...XXssggghhhhgXX...",
+    b".....XXXXXXXXXX.....",
+];
+
+const LOAF: &[&[u8]] = &[
+    b".....XXXXXXXXX........",
+    b"...XXddggddgggXXX.....",
+    b"..XggddggddggddggXX...",
+    b".XgggdgggdgggggggggX..",
+    b"XgggggggggggggggggggX.",
+    b"XsssgggggggggggggggggX",
+    b"XggggggggggggggggggggX",
+    b".XssssgggggghhhhhhgggX",
+    b"..XXssssgggggghhhhhXX.",
+    b"....XXXXXXXXXXXXXXX...",
+];
+
+const HELD: &[&[u8]] = &[
+    b".....XXXXXX.....",
+    b"...XXggggggXX...",
+    b"...XggggggggX...",
+    b"..XggggggggggX..",
+    b".XgggghhhhggggX.",
+    b".XdddghhhhhgggX.",
+    b".XddghhhhhhggggX",
+    b"XggggghhhhhhdddX",
+    b".XgddghhhhhggggX",
+    b".XggggghhhhggggX",
+    b".XsssgggggggsssX",
+    b"..XgssssssssggX.",
+    b"...XXXXXXXXXXX..",
+];
+
+const TAIL_UP: &[&[u8]] = &[
+    b".....XXX..",
+    b"....XdddX.",
+    b"....XhhddX",
+    b"....XXhggX",
+    b"......XssX",
+    b"......XggX",
+    b"......XddX",
+    b".....XgssX",
+    b"....XgggX.",
+    b".XXXgsssX.",
+    b"XgsssgXX..",
+    b"XgggXX....",
+    b".XXX......",
+];
+
+const TAIL_DOWN: &[&[u8]] = &[
+    b"....XXX...",
+    b"...XdddX..",
+    b"...XhhddX.",
+    b"...XXXgggX",
+    b"......XssX",
+    b"......XggX",
+    b"......XddX",
+    b"......XssX",
+    b".....XgggX",
+    b"...XXgggX.",
+    b".XXggssX..",
+    b"XgsssXX...",
+    b"XXXXX.....",
+];
+
+
+struct Canvas(Vec<u8>);
 
 impl Canvas {
-    fn new() -> Canvas {
-        Canvas(vec![0; SIZE * SIZE * 4])
+    fn new() -> Self {
+        Self(vec![0; SIZE * SIZE * 4])
     }
 
-    /// 캔버스의 fillRect(Math.round(x), Math.round(y), w, h) 와 같게
-    fn px(&mut self, x: f64, y: f64, w: f64, h: f64, c: Rgba) {
-        let x0 = x.round() as i64;
-        let y0 = y.round() as i64;
-        let w = w.round().max(1.0) as i64;
-        let h = h.round().max(1.0) as i64;
-        for yy in y0..y0 + h {
-            for xx in x0..x0 + w {
-                if (0..SIZE as i64).contains(&xx) && (0..SIZE as i64).contains(&yy) {
-                    let i = (yy as usize * SIZE + xx as usize) * 4;
-                    self.0[i..i + 4].copy_from_slice(&c);
-                }
+    fn pixel(&mut self, x: i32, y: i32, rgba: Rgba) {
+        if (0..SIZE as i32).contains(&x) && (0..SIZE as i32).contains(&y) {
+            let i = (y as usize * SIZE + x as usize) * 4;
+            self.0[i..i + 4].copy_from_slice(&rgba);
+        }
+    }
+
+    fn stamp(&mut self, art: &[&[u8]], x: i32, y: i32, flip: bool) {
+        for (row, pixels) in art.iter().enumerate() {
+            for (column, &color) in pixels.iter().enumerate() {
+                let rgba = match color {
+                    b'X' => INK,
+                    b'd' => STRIPE,
+                    b's' => SHADOW,
+                    b'g' => FUR,
+                    b'h' => LIGHT,
+                    b'p' => BLUSH,
+                    _ => continue,
+                };
+                let dx = if flip { pixels.len() - 1 - column } else { column };
+                self.pixel(x + dx as i32, y + row as i32, rgba);
             }
         }
     }
 
-    fn ellipse(&mut self, cx: f64, cy: f64, rx: i64, ry: i64, c: Rgba) {
-        for y in -ry..=ry {
-            for x in -rx..=rx {
-                let (xf, yf) = (x as f64, y as f64);
-                if xf * xf / ((rx * rx) as f64 + 0.3) + yf * yf / ((ry * ry) as f64 + 0.3) <= 1.0 {
-                    self.px(cx + xf, cy + yf, 1.0, 1.0, c);
-                }
+    fn head(&mut self, x: i32, y: i32, eyes_open: bool, mouth_open: bool, state: &str) {
+        self.stamp(HEAD, x, y, false);
+        let mut dot = |dx, dy, color| self.pixel(x + dx, y + dy, color);
+        for eye_x in [5, 13] {
+            let marks: &[(i32, i32)] = match state {
+                "dizzy" => &[(1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2)],
+                "hurt" if eye_x == 5 => &[(0, 0), (1, 1), (0, 2)],
+                "hurt" => &[(1, 0), (0, 1), (1, 2)],
+                _ if eyes_open => &[(0, 0), (1, 0), (0, 1), (1, 1)],
+                _ => &[(0, 1), (1, 1), (2, 1)],
+            };
+            for &(dx, dy) in marks {
+                dot(eye_x + dx, 8 + dy, EYE);
+            }
+        }
+        for (dx, dy) in [(9, 10), (10, 10), (9, 11), (10, 11), (8, 12), (11, 12)] {
+            dot(dx, dy, EYE);
+        }
+        if mouth_open {
+            dot(9, 12, TONGUE);
+            dot(10, 12, TONGUE);
+        }
+    }
+
+    fn face_only(&mut self, eyes_open: bool) {
+        let mut portrait = Self::new();
+        portrait.head(0, 0, eyes_open, false, "peek");
+        const W: usize = 30;
+        const H: usize = 23;
+        for y in 0..H {
+            let sy = (2 * y + 1) * HEAD.len() / (2 * H);
+            for x in 0..W {
+                let sx = (2 * x + 1) * HEAD[0].len() / (2 * W);
+                let src = (sy * SIZE + sx) * 4;
+                let dst = ((y + 4) * SIZE + x + 1) * 4;
+                self.0[dst..dst + 4].copy_from_slice(&portrait.0[src..src + 4]);
             }
         }
     }
 
-    /// 외곽선이 있는 타원
-    fn blob(&mut self, cx: f64, cy: f64, rx: i64, ry: i64, fill: Rgba) {
-        self.ellipse(cx, cy, rx + 1, ry + 1, LINE);
-        self.ellipse(cx, cy, rx, ry, fill);
-    }
-
-    /// 귀: 꼭짓점(tx,ty) 아래로 넓어지는 삼각형
-    fn ear(&mut self, tx: f64, ty: f64, h: i64) {
-        for i in 0..=h {
-            let f = i as f64;
-            self.px(tx - f * 0.6 - 1.0, ty + f, f * 1.2 + 2.0, 1.0, LINE);
+    fn pose(&mut self, state: &str, frame: u32, eyes_open: bool) {
+        let step = (frame % 2) as i32;
+        let tail = if step == 0 { TAIL_UP } else { TAIL_DOWN };
+        match state {
+            "peek" => self.face_only(eyes_open),
+            "drag" | "dizzy" | "hurt" => {
+                let sway = step * 2 - 1;
+                self.stamp(TAIL_UP, 16 + sway, 15, false);
+                self.stamp(HELD, 7 + sway, 13, false);
+                for x in [8, 17] {
+                    self.stamp(PAW, x + sway, 25, false);
+                }
+                for x in [4, 22] {
+                    self.stamp(PAW, x + sway, 16, false);
+                }
+                self.head(5, 2, eyes_open, true, state);
+            }
+            "walk" => {
+                self.stamp(tail, 0, 14, true);
+                for (index, x) in [4, 9, 17, 22].iter().enumerate() {
+                    let lifted = i32::from(matches!(index, 0 | 3) == (step == 1));
+                    self.stamp(PAW, x + lifted, 26 - lifted, false);
+                }
+                self.stamp(WALKING, 3, 17, false);
+                self.head(11, 8 + step, eyes_open, false, state);
+            }
+            "loaf" | "sleep" => {
+                self.stamp(tail, 0, 17, true);
+                self.stamp(LOAF, 3, 20, false);
+                let asleep = state == "sleep";
+                self.head(10, if asleep { 14 + step } else { 11 }, eyes_open && !asleep, false, state);
+            }
+            _ => {
+                self.stamp(tail, 21, 16, false);
+                self.stamp(SITTING, 1, 11, false);
+                for x in [7, 16] {
+                    self.stamp(PAW, x, 26, false);
+                }
+                self.head(3, 2, eyes_open, state == "talk" && step == 1, state);
+            }
         }
-        for i in 1..h {
-            let f = i as f64;
-            self.px(tx - f * 0.6, ty + f, (f * 1.2).max(1.0), 1.0, if i > 1 { FUR } else { LINE });
-        }
-        for i in 2..h - 1 {
-            let f = i as f64;
-            self.px(tx - f * 0.3 + 0.2, ty + f + 0.5, (f * 0.5).max(1.0), 1.0, PINK);
-        }
-    }
-
-    fn head(&mut self, cx: f64, cy: f64, eyes_open: bool, mouth: bool) {
-        self.ear(cx - 3.0, cy - 8.0, 5);
-        self.ear(cx + 3.0, cy - 8.0, 5);
-        self.blob(cx, cy, 6, 5, FUR);
-        // 이마 줄무늬
-        self.px(cx - 1.0, cy - 5.0, 1.0, 2.0, STRIPE);
-        self.px(cx + 1.0, cy - 5.0, 1.0, 2.0, STRIPE);
-        // 볼
-        self.ellipse(cx + 1.0, cy + 3.0, 4, 1, LIGHT);
-        if eyes_open {
-            self.px(cx - 2.0, cy - 1.0, 2.0, 2.0, EYE);
-            self.px(cx + 3.0, cy - 1.0, 2.0, 2.0, EYE);
-            self.px(cx - 2.0, cy - 1.0, 1.0, 1.0, SHINE);
-            self.px(cx + 3.0, cy - 1.0, 1.0, 1.0, SHINE);
-        } else {
-            // 감은 눈
-            self.px(cx - 3.0, cy, 3.0, 1.0, EYE);
-            self.px(cx + 3.0, cy, 3.0, 1.0, EYE);
-        }
-        self.px(cx + 1.0, cy + 1.0, 2.0, 1.0, PINK); // 코
-        if mouth {
-            self.px(cx + 1.0, cy + 3.0, 2.0, 1.0, LINE);
-            self.px(cx + 1.0, cy + 2.0, 2.0, 1.0, MOUTH);
-        } else {
-            self.px(cx, cy + 2.0, 1.0, 1.0, LINE);
-            self.px(cx + 3.0, cy + 2.0, 1.0, 1.0, LINE);
-        }
-        // 수염
-        self.px(cx - 8.0, cy + 1.0, 3.0, 1.0, LINE);
-        self.px(cx + 7.0, cy + 1.0, 3.0, 1.0, LINE);
-    }
-
-    fn tail(&mut self, points: &[(f64, f64)]) {
-        for (x, y) in points {
-            self.px(x - 1.0, y - 1.0, 3.0, 3.0, LINE);
-        }
-        for (x, y) in points {
-            self.px(*x, *y, 1.0, 1.0, FUR);
-        }
-    }
-
-    fn sit(&mut self, f: u32, eyes_open: bool, mouth: bool) {
-        let sway = if f % 2 == 0 { 0.0 } else { 1.0 };
-        self.tail(&[(6.0, 29.0), (5.0, 28.0), (4.0, 27.0 - sway), (4.0, 26.0 - sway), (5.0, 25.0 - sway), (7.0, 29.0), (8.0, 29.0), (9.0, 29.0)]);
-        self.blob(14.0, 24.0, 7, 6, FUR);
-        self.px(9.0, 21.0, 2.0, 1.0, STRIPE);
-        self.px(8.0, 24.0, 2.0, 1.0, STRIPE);
-        self.ellipse(16.0, 25.0, 3, 4, LIGHT);
-        // 앞발
-        self.px(13.0, 29.0, 3.0, 2.0, LINE);
-        self.px(17.0, 29.0, 3.0, 2.0, LINE);
-        self.px(14.0, 29.0, 1.0, 1.0, LIGHT);
-        self.px(18.0, 29.0, 1.0, 1.0, LIGHT);
-        self.head(16.0, 13.0, eyes_open, mouth);
-    }
-
-    fn walk(&mut self, f: u32) {
-        let step = f % 2 == 1;
-        self.tail(&[(6.0, 19.0), (5.0, 18.0), (4.0, 16.0), (4.0, 14.0), (5.0, 12.0), (6.0, 11.0)]);
-        // 다리 (뒤 → 앞)
-        let legs: [(f64, f64); 4] = if step { [(8.0, 0.0), (12.0, 1.0), (18.0, 1.0), (22.0, 0.0)] } else { [(9.0, 1.0), (11.0, 0.0), (19.0, 0.0), (21.0, 1.0)] };
-        for (lx, up) in legs {
-            self.px(lx - 1.0, 25.0 - up, 3.0, 6.0 + up, LINE);
-            self.px(lx, 25.0 - up, 1.0, 5.0 + up, FUR);
-        }
-        self.blob(15.0, 21.0, 9, 4, FUR);
-        self.px(10.0, 18.0, 1.0, 2.0, STRIPE);
-        self.px(13.0, 18.0, 1.0, 2.0, STRIPE);
-        self.px(16.0, 18.0, 1.0, 2.0, STRIPE);
-        self.ellipse(16.0, 23.0, 6, 1, LIGHT);
-        self.head(24.0, 13.0 + if step { 1.0 } else { 0.0 }, true, false);
-    }
-
-    fn loaf(&mut self, eyes_open: bool) {
-        self.tail(&[(5.0, 29.0), (6.0, 29.0), (7.0, 29.0), (4.0, 28.0)]);
-        self.blob(15.0, 25.0, 10, 5, FUR);
-        self.px(9.0, 22.0, 1.0, 2.0, STRIPE);
-        self.px(12.0, 21.0, 1.0, 2.0, STRIPE);
-        self.px(15.0, 21.0, 1.0, 2.0, STRIPE);
-        self.px(20.0, 29.0, 4.0, 2.0, LINE);
-        self.px(21.0, 29.0, 2.0, 1.0, LIGHT);
-        self.head(22.0, 18.0, eyes_open, false);
-    }
-
-    fn sleep(&mut self, f: u32) {
-        self.tail(&[(23.0, 30.0), (22.0, 30.0), (21.0, 30.0), (20.0, 30.0), (19.0, 30.0), (18.0, 30.0)]);
-        let b = (f % 2) as i64;
-        self.blob(14.0, 26.0 - b as f64, 10, 4 + b, FUR);
-        self.px(8.0, 24.0, 1.0, 2.0, STRIPE);
-        self.px(11.0, 23.0, 1.0, 2.0, STRIPE);
-        self.px(14.0, 23.0, 1.0, 2.0, STRIPE);
-        self.head(21.0, 23.0, false, false);
-    }
-
-    fn drag(&mut self, f: u32) {
-        let swing = if f % 2 == 1 { 1.0 } else { -1.0 };
-        // 늘어진 몸과 다리
-        self.px(11.0 + swing, 26.0, 3.0, 5.0, LINE);
-        self.px(18.0 + swing, 26.0, 3.0, 5.0, LINE);
-        self.px(12.0 + swing, 26.0, 1.0, 4.0, FUR);
-        self.px(19.0 + swing, 26.0, 1.0, 4.0, FUR);
-        self.tail(&[(16.0 + swing * 2.0, 28.0), (16.0 + swing * 2.0, 29.0), (17.0 + swing * 2.0, 30.0)]);
-        self.blob(16.0, 21.0, 5, 6, FUR);
-        self.ellipse(16.0, 22.0, 3, 4, LIGHT);
-        self.px(9.0, 15.0, 3.0, 3.0, LINE); // 앞발
-        self.px(21.0, 15.0, 3.0, 3.0, LINE);
-        self.head(16.0, 10.0, true, true);
     }
 }
 
-/// 상태·프레임으로 32x32 RGBA 그림을 만든다
+/// 상태·프레임으로 32×32 RGBA를 만든다.
 pub fn draw(state: &str, frame: u32, eyes_open: bool) -> Vec<u8> {
-    let mut c = Canvas::new();
-    match state {
-        "walk" => c.walk(frame),
-        "loaf" => c.loaf(eyes_open),
-        "sleep" => c.sleep(frame),
-        "drag" => c.drag(frame),
-        "talk" => c.sit(0, true, frame % 2 == 0),
-        _ => c.sit(frame, eyes_open, false),
-    }
-    c.0
+    let mut canvas = Canvas::new();
+    canvas.pose(state, frame, eyes_open);
+    canvas.0
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -238,13 +304,28 @@ mod canvas {
 #[cfg(target_arch = "wasm32")]
 pub use canvas::{ctx, render};
 
+
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn every_state_draws_something() {
-        for s in ["sit", "walk", "loaf", "sleep", "drag", "talk"] {
-            let px = super::draw(s, 1, true);
-            assert!(px.chunks(4).filter(|p| p[3] > 0).count() > 150, "{s}");
+        for state in ["sit", "walk", "loaf", "sleep", "drag", "talk", "peek", "dizzy", "hurt"] {
+            let px = draw(state, 1, true);
+            assert_eq!(px.len(), SIZE * SIZE * 4);
+            assert!(px.chunks_exact(4).filter(|p| p[3] > 0).count() > 150, "{state}");
         }
+    }
+
+    #[test]
+    fn notification_and_gestures_have_their_own_sprites() {
+        let peek = draw("peek", 0, true);
+        assert!(peek[(28 * SIZE * 4)..].iter().all(|b| *b == 0));
+        assert_ne!(peek, draw("peek", 0, false));
+        assert_ne!(draw("drag", 1, true), draw("dizzy", 1, true));
+        assert_ne!(draw("hurt", 1, true), draw("dizzy", 1, true));
+        assert_ne!(draw("walk", 0, true), draw("walk", 1, true));
     }
 }

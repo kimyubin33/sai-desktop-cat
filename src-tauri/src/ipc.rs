@@ -18,6 +18,9 @@ type R = Result<Value, String>;
 
 #[tauri::command]
 pub async fn call(window: WebviewWindow, state: State<'_, Arc<App>>, ch: String, args: Option<Value>) -> R {
+    if window.label() == "peek" {
+        return crate::peek::handle(state.inner(), &ch, &args.unwrap_or(Value::Null));
+    }
     if window.label() != "chat" {
         return Err("허용되지 않은 요청이에요.".into());
     }
@@ -36,7 +39,7 @@ pub async fn cat_event(window: WebviewWindow, state: State<'_, Arc<App>>, ev: St
     match ev.as_str() {
         "regions" => cat::regions(&a, &args),
         "drag-start" => cat::drag_start(app, &a),
-        "drag-end" => cat::drag_end(app, &a),
+        "drag-end" => cat::drag_end(app, &a, args.as_bool().unwrap_or(false)),
         "context-menu" => cat::context_menu(app, &a),
         "bubble-hover" => cat::bubble_hover(&a, args.as_bool().unwrap_or(false)),
         "bubble-action" => cat::bubble_action(app, &a, &args.s("id"), &args.s("action")),
@@ -321,12 +324,12 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
         // ---------- 팀 Drive 함 ----------
         "drive:feed" => Ok(drive_feed(a).await),
         "drive:send-text" => {
-            hub.active().add_share(&json!({ "text": x.s("text") })).await?;
+            drive_team(a, &x)?.add_share(&json!({ "text": x.s("text") })).await?;
             Ok(drive_feed(a).await)
         }
         "drive:send-local" => {
             use base64::Engine;
-            let t = hub.active();
+            let t = drive_team(a, &x)?;
             let bytes = base64::engine::general_purpose::STANDARD.decode(x.s("data")).map_err(|_| "파일을 읽지 못했어요.".to_string())?;
             let edit = x.b("edit");
             let f = a.google.upload_file(&t.name(), &x.s("name"), &x.s("mime"), bytes, edit).await?;
@@ -334,14 +337,14 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             Ok(drive_feed(a).await)
         }
         "drive:send-drive" => {
-            let t = hub.active();
+            let t = drive_team(a, &x)?;
             let f = a.google.prepare_send(&x.s("fileId"), x.b("edit")).await?;
             t.add_share(&json!({ "text": x.s("text"), "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "access": f.s("access") })).await?;
             Ok(drive_feed(a).await)
         }
         "drive:list" => a.google.list_drive(&x.s("mode"), &x.s("folder"), &x.s("q"), &x.s("page")).await,
         "drive:save" => {
-            let s = hub.active().share(&x.s("id")).ok_or("그 파일을 찾을 수 없어요.")?;
+            let s = drive_team(a, &x)?.share(&x.s("id")).ok_or("그 파일을 찾을 수 없어요.")?;
             if s.s("driveId").is_empty() {
                 return Err("이 파일은 사본을 만들 수 없어요. 열어서 Drive 에서 직접 저장해 주세요.".into());
             }
@@ -349,7 +352,7 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             Ok(json!({ "name": f.s("name"), "url": f.s("webViewLink") }))
         }
         "drive:delete" => {
-            hub.active().delete_share(&x.s("id")).await?;
+            drive_team(a, &x)?.delete_share(&x.s("id")).await?;
             Ok(drive_feed(a).await)
         }
         "collab:upload-file" => {
@@ -705,14 +708,26 @@ fn collab_view(a: &Arc<App>) -> Value {
     })
 }
 
+/// 알림으로 팀이 바뀌어도 이전 화면의 전송이나 삭제가 새 팀에 적용되지 않게 한다.
+fn drive_team(a: &Arc<App>, args: &Value) -> Result<sai_core::team::Team, String> {
+    let team = a.hub.active();
+    if let Some(expected) = args["teamId"].as_str() {
+        if team.id.as_deref() != Some(expected) {
+            return Err("보고 있는 팀이 바뀌었어요. 팀을 확인한 뒤 다시 시도해 주세요.".into());
+        }
+    }
+    Ok(team)
+}
+
 async fn drive_feed(a: &Arc<App>) -> Value {
     let t = a.hub.active();
     if !t.is_connected() {
-        return json!({ "connected": false });
+        return json!({ "connected": false, "teamId": t.id });
     }
     let (list, error) = t.shares().await;
     json!({
         "connected": true,
+        "teamId": t.id,
         "teamName": t.name(),
         "memberCount": t.members(true).len(),
         "google": { "signedIn": a.google.is_ready(), "drive": a.google.has_drive(), "email": a.google.status()["email"] },

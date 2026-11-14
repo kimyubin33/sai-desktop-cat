@@ -24,6 +24,6 @@ features = [
   "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlButtonElement", "HtmlCanvasElement", "HtmlFormElement",
   "HtmlOptionElement", "HtmlDetailsElement", "HtmlTemplateElement", "DocumentFragment",
   "CanvasRenderingContext2d", "ImageData", "DomRect", "Location", "UrlSearchParams",
-  "Event", "EventTarget", "MouseEvent", "KeyboardEvent", "InputEvent", "ScrollIntoViewOptions", "ScrollBehavior", "ScrollLogicalPosition",
+  "Event", "EventTarget", "MouseEvent", "PointerEvent", "KeyboardEvent", "InputEvent", "ScrollIntoViewOptions", "ScrollBehavior", "ScrollLogicalPosition",
   "Performance", "FileList", "File", "Blob", "DragEvent", "DataTransfer",
 ]

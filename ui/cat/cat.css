@@ -18,10 +18,39 @@ body {
   height: 96px;
   image-rendering: pixelated;
   cursor: grab;
+  touch-action: none;
 }
 
 #cat.dragging {
   cursor: grabbing;
+}
+
+.reaction {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  padding: 4px 9px;
+  border: 2px solid #3b2f2f;
+  border-radius: 9px;
+  background: #fffaf2;
+  color: #3b2f2f;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.reaction.below {
+  left: calc(50% + 42px);
+  bottom: 28px;
+  transform: none;
+}
+
+.reaction.below.left {
+  left: auto;
+  right: calc(50% + 42px);
 }
 
 .bubble {

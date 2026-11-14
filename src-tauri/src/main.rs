@@ -8,6 +8,7 @@ mod cat;
 mod demo;
 mod ipc;
 mod menu;
+mod peek;
 mod system;
 mod updater;
 

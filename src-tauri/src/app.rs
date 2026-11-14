@@ -42,6 +42,7 @@ pub struct App {
     pub schedule: Schedule,
     pub cat: Mutex<CatState>,
     pub advisor: Advisor,
+    pub peeks: crate::peek::Peeks,
     pub updater: Updater,
     pub local_mode: bool,
 }
@@ -98,6 +99,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         schedule,
         cat: Mutex::new(CatState::new()),
         advisor: Advisor::new(),
+        peeks: crate::peek::Peeks::default(),
         updater: Updater::new(),
         local_mode: local_file.is_some(),
     });
@@ -154,6 +156,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
     });
 
     if std::env::var("SAI_DEMO").is_err() {
+        crate::peek::start(&a);
         a.advisor.start(&a);
         a.updater.start(&a);
     }
@@ -214,7 +217,11 @@ pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
-        let _ = app.emit_to("chat", "chat:show-tab", tab);
+        if let Some(team) = extra.os("teamTalk") {
+            let _ = app.emit_to("chat", "chat:team-talk", json!({ "teamId": team }));
+        } else {
+            let _ = app.emit_to("chat", "chat:show-tab", tab);
+        }
         if let Some(t) = extra.os("explain") {
             let _ = app.emit_to("chat", "chat:start-explain", t);
         }

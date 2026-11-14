@@ -5,6 +5,7 @@ use crate::api::call;
 use crate::dom::*;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 
@@ -36,6 +37,8 @@ impl Room {
 #[derive(Default)]
 struct D {
     feed: Option<Value>,
+    team_id: String,
+    drafts: HashMap<String, [String; 2]>,
     room: Room,
     poll: i32,
     // 고르기 창
@@ -110,7 +113,44 @@ fn draft(room: Room) -> String {
     by_id(room.draft_id()).map(|input| val(&input)).unwrap_or_default()
 }
 
-fn clear_sent_draft(room: Room, sent: &str) {
+pub(super) fn viewing(team: &str) -> bool {
+    ds(|d| d.team_id == team)
+}
+
+pub(super) fn switch_team(team: &str) {
+    if viewing(team) {
+        return;
+    }
+    let old = [draft(Room::Chat), draft(Room::Files)];
+    let next = ds(|d| {
+        let previous = std::mem::replace(&mut d.team_id, team.to_owned());
+        if !previous.is_empty() && old.iter().any(|v| !v.is_empty()) {
+            d.drafts.insert(previous, old);
+        }
+        d.feed = None;
+        d.drafts.remove(team).unwrap_or_default()
+    });
+    for (room, text) in [(Room::Chat, &next[0]), (Room::Files, &next[1])] {
+        set_val(&by_id(room.draft_id()).unwrap(), text);
+        status(room, "", false);
+    }
+    close_picker();
+    clear(&by_id("driveFeed").unwrap());
+    clear(&by_id("driveHead").unwrap());
+}
+
+fn clear_sent_draft(team: &str, room: Room, sent: &str) {
+    if !viewing(team) {
+        ds(|d| {
+            if let Some(saved) = d.drafts.get_mut(team) {
+                let draft = &mut saved[if room == Room::Chat { 0 } else { 1 }];
+                if draft == sent {
+                    draft.clear();
+                }
+            }
+        });
+        return;
+    }
     if let Some(input) = by_id(room.draft_id()) {
         if val(&input) == sent {
             set_val(&input, "");
@@ -127,25 +167,33 @@ fn begin_request(room: Room) -> bool {
 }
 
 fn received(v: Value, room: Room) {
+    if !viewing(&s(&v, "teamId")) {
+        return;
+    }
     ds(|d| d.feed = Some(v));
     draw_feed(ds(|d| d.room == room));
 }
 
-fn send(room: Room, channel: &'static str, args: Value, sent: Option<String>, busy_text: &'static str, ok: &'static str) {
+fn send(room: Room, channel: &'static str, mut args: Value, sent: Option<String>, busy_text: &'static str, ok: &'static str) {
     if !begin_request(room) {
         return;
     }
     status(room, busy_text, false);
+    let team = ds(|d| d.team_id.clone());
+    args["teamId"] = json!(team);
     spawn(async move {
         match call(channel, args).await {
             Ok(v) => {
                 if let Some(text) = sent {
-                    clear_sent_draft(room, &text);
+                    clear_sent_draft(&team, room, &text);
                 }
                 received(v, room);
-                status(room, ok, false);
+                if viewing(&team) {
+                    status(room, ok, false);
+                }
             }
-            Err(e) => status(room, &e, true),
+            Err(e) if viewing(&team) => status(room, &e, true),
+            Err(_) => {}
         }
         BUSY.with(|b| b.set(false));
     });
@@ -169,6 +217,9 @@ pub fn render() {
 
 async fn refresh(scroll: bool) {
     let Ok(v) = call("drive:feed", Value::Null).await else { return };
+    if !viewing(&s(&v, "teamId")) {
+        return;
+    }
     // 바뀐 게 없으면 다시 그리지 않는다 (읽는 중인 위치를 지키려고)
     let changed = ds(|d| {
         if d.feed.as_ref() == Some(&v) {
@@ -180,6 +231,10 @@ async fn refresh(scroll: bool) {
     if changed || scroll {
         draw_feed(scroll);
     }
+}
+
+pub(super) fn select_talk() {
+    select_room(Room::Chat);
 }
 
 fn select_room(room: Room) {
@@ -232,14 +287,17 @@ pub fn bind() {
     let chooser = input.clone();
     on(&by_id("driveChooseLocal").unwrap(), "click", move |_| {
         if drive_ready() {
+            let _ = chooser.set_attribute("data-team", &ds(|d| d.team_id.clone()));
             chooser.click();
         }
     });
     let chooser = input.clone();
     on(&input, "change", move |_| {
         let inp: &web_sys::HtmlInputElement = chooser.unchecked_ref();
-        if let Some(files) = inp.files() {
-            upload(files);
+        if chooser.get_attribute("data-team").as_deref().is_some_and(viewing) {
+            if let Some(files) = inp.files() {
+                upload(files);
+            }
         }
         inp.set_value("");
     });
@@ -291,10 +349,14 @@ fn upload(files: web_sys::FileList) {
         return;
     }
     let edit = edit_on();
+    let team = ds(|d| d.team_id.clone());
     let caption = draft(Room::Files);
     spawn(async move {
         let mut first = true;
         for f in list {
+            if !viewing(&team) {
+                break;
+            }
             let name = f.name();
             if f.size() > MAX_MB * 1024.0 * 1024.0 {
                 status(Room::Files, &format!("{name}: {MAX_MB}MB 보다 커요. Drive에 먼저 올린 뒤 ‘Google Drive에서 선택’을 눌러 주세요."), true);
@@ -302,23 +364,29 @@ fn upload(files: web_sys::FileList) {
             }
             status(Room::Files, &format!("{name} 을(를) 내 Drive 에 올리는 중…"), false);
             let Ok(buf) = wasm_bindgen_futures::JsFuture::from(f.array_buffer()).await else {
-                status(Room::Files, &format!("{name} 을(를) 읽지 못했어요."), true);
+                if viewing(&team) {
+                    status(Room::Files, &format!("{name} 을(를) 읽지 못했어요."), true);
+                }
                 continue;
             };
             use base64::Engine;
             let data = base64::engine::general_purpose::STANDARD.encode(js_sys::Uint8Array::new(&buf).to_vec());
             let t = if first { caption.trim() } else { "" };
-            match call("drive:send-local", json!({ "name": name, "mime": f.type_(), "data": data, "edit": edit, "text": t })).await {
+            match call("drive:send-local", json!({ "teamId": team, "name": name, "mime": f.type_(), "data": data, "edit": edit, "text": t })).await {
                 Ok(v) => {
                     if first {
-                        clear_sent_draft(Room::Files, &caption);
+                        clear_sent_draft(&team, Room::Files, &caption);
                         first = false;
                     }
                     received(v, Room::Files);
-                    status(Room::Files, "", false);
+                    if viewing(&team) {
+                        status(Room::Files, "", false);
+                    }
                 }
                 Err(e) => {
-                    status(Room::Files, &e, true);
+                    if viewing(&team) {
+                        status(Room::Files, &e, true);
+                    }
                     break;
                 }
             }
@@ -401,9 +469,14 @@ fn draw_feed(scroll: bool) {
                 let id = s(x, "id");
                 foot = foot.kid(el("button").cls("link").text("내 Drive 에 저장").attr("title", "내 드라이브의 \"사이에서 받은 파일\" 폴더에 사본을 만들어요").click(move |_| {
                     let id = id.clone();
+                    let team = ds(|d| d.team_id.clone());
                     status(Room::Files, "내 Drive 에 사본을 만드는 중…", false);
                     spawn(async move {
-                        match call("drive:save", json!({ "id": id })).await {
+                        let result = call("drive:save", json!({ "teamId": team, "id": id })).await;
+                        if !viewing(&team) {
+                            return;
+                        }
+                        match result {
                             Ok(r) => status(Room::Files, &format!("내 드라이브의 \"사이에서 받은 파일\" 폴더에 \"{}\"을(를) 저장했어요.", s(&r, "name")), false),
                             Err(e) => status(Room::Files, &e, true),
                         }

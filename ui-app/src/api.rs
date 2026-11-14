@@ -54,11 +54,17 @@ pub fn cat_event(ev: &str, args: Value) {
 
 /// 앱이 보내는 이벤트 듣기
 pub fn listen(name: &str, f: impl Fn(Value) + 'static) {
-    let Some(l) = tauri(&["event", "listen"]) else { return };
+    let _ = register_listener(name, f);
+}
+
+/// 첫 알림을 요청하기 전에 실제 Tauri 구독이 끝났는지 기다릴 때 사용한다.
+pub fn register_listener(name: &str, f: impl Fn(Value) + 'static) -> Option<js_sys::Promise> {
+    let l = tauri(&["event", "listen"])?;
     let cb = Closure::<dyn Fn(JsValue)>::new(move |e: JsValue| {
         let payload = js_sys::Reflect::get(&e, &JsValue::from_str("payload")).unwrap_or(JsValue::NULL);
         f(from_js(payload));
     });
-    let _ = l.call2(&JsValue::NULL, &JsValue::from_str(name), cb.as_ref().unchecked_ref());
+    let registered = l.call2(&JsValue::NULL, &JsValue::from_str(name), cb.as_ref().unchecked_ref()).ok()?;
     cb.forget();
+    Some(js_sys::Promise::from(registered))
 }
