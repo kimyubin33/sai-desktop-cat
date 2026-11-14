@@ -5,7 +5,25 @@ use crate::{err, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-const KEEP: usize = 300;
+const KEEP_PER_MODE: usize = 300;
+
+fn recent_shares(mut list: Vec<Value>) -> Vec<Value> {
+    list.sort_by_key(|share| share.i("at"));
+    list.reverse();
+    let mut messages = 0;
+    let mut files = 0;
+    list.retain(|share| {
+        let count = if share["url"].as_str().unwrap_or_default().is_empty() {
+            &mut messages
+        } else {
+            &mut files
+        };
+        *count += 1;
+        *count <= KEEP_PER_MODE
+    });
+    list.reverse();
+    list
+}
 
 impl Team {
     /// 서버에서 새로 읽어 이 기기에도 둔다 (오래된 순). 서버에 닿지 않으면 둔 것을 돌려준다
@@ -16,16 +34,13 @@ impl Team {
         }
         .await;
         match fresh {
-            Ok(mut list) => {
-                list.sort_by_key(|x| x.i("at"));
-                let start = list.len().saturating_sub(KEEP);
-                let list: Vec<Value> = list.split_off(start);
-                let keep = list.clone();
-                self.cache_update(|c| c["shares"] = json!(keep));
+            Ok(list) => {
+                let list = recent_shares(list);
+                self.cache_update(|c| c["shares"] = json!(list));
                 (list, None)
             }
             Err(e) => {
-                let cached = self.cache_get().arr("shares");
+                let cached = recent_shares(self.cache_get().arr("shares"));
                 let msg = if e.contains("403") || e.contains("PERMISSION") { "팀 서버 규칙에 아직 Drive 함이 없어요. Firebase 콘솔에서 firestore.rules 를 게시해 주세요.".to_string() } else { e };
                 (cached, Some(msg))
             }
@@ -83,7 +98,7 @@ impl Team {
         self.cache_update(|c| {
             let mut l = c.arr("shares");
             l.push(d2);
-            c["shares"] = json!(l);
+            c["shares"] = json!(recent_shares(l));
         });
         Ok(data)
     }
@@ -105,6 +120,7 @@ impl Team {
 
 #[cfg(test)]
 mod tests {
+    use super::{recent_shares, KEEP_PER_MODE};
     use crate::store::Stores;
     use crate::team::{Backend, Hub};
     use crate::util::J;
@@ -115,6 +131,19 @@ mod tests {
         let st = Stores::memory();
         let u = uid.to_string();
         Hub::new(st.settings, st.shared_outbox, st.team_cache, Box::new(move || Some(Backend::memory_shared(shared.clone(), &u))), Some(0), Arc::new(crate::time::now_ms))
+    }
+
+    #[test]
+    fn each_mode_keeps_its_own_recent_history() {
+        let sent = KEEP_PER_MODE + 5;
+        let mut shares = Vec::new();
+        for i in (0..sent).rev() {
+            shares.push(json!({ "at": sent + i, "text": "파일 설명", "url": "https://drive.google.com/" }));
+            shares.push(json!({ "at": i, "text": "https://example.org" }));
+        }
+        let recent = recent_shares(shares);
+        let times: Vec<_> = recent.iter().map(|share| share.i("at") as usize).collect();
+        assert_eq!(times, (5..sent).chain(sent + 5..sent * 2).collect::<Vec<_>>());
     }
 
     #[tokio::test]
