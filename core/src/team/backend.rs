@@ -1102,7 +1102,7 @@ impl Firebase {
     /// 404 는 None
     async fn req(&self, method: &str, path: &str, body: Option<Value>, query: &str) -> Result<Option<Value>> {
         let token = self.token().await?;
-        let url = format!("{}{}{}", self.docs_base, path, query);
+        let url = format!("{}{}{}", self.docs_base, request_path(method, path), query);
         let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
         let mut rb = super::desktop::DOC_CLIENT.request(m, &url).bearer_auth(token);
         if self.desktop {
@@ -1122,6 +1122,16 @@ impl Firebase {
         }
         Ok(Some(d))
     }
+}
+
+/// 문서 이름·팀원 이름의 ?, #, % 같은 글자도 URL의 한 경로 조각으로 보낸다.
+/// :commit과 :runQuery 접미사는 API 동작이므로 그대로 둔다.
+fn request_path(method: &str, path: &str) -> String {
+    if path == ":commit" { return path.into(); }
+    let query_path = if method == "POST" { path.strip_suffix(":runQuery") } else { None };
+    let mut encoded = query_path.unwrap_or(path).split('/').map(urlencoding::encode).collect::<Vec<_>>().join("/");
+    if query_path.is_some() { encoded.push_str(":runQuery"); }
+    encoded
 }
 
 impl Memory {
@@ -1188,4 +1198,19 @@ fn admin_key(salt: &str, admin_id: &str, password: &str) -> String {
         h = Sha256::digest(h);
     }
     format!("{h:x}")
+}
+
+
+#[cfg(test)]
+mod request_path_tests {
+    use super::request_path;
+
+    #[test]
+    fn preserves_document_names_and_firestore_method_suffixes() {
+        assert_eq!(request_path("GET", "/teams/a/names/n-#?%"), "/teams/a/names/n-%23%3F%25");
+        assert_eq!(request_path("GET", "/teams/a/names/n-%2F"), "/teams/a/names/n-%252F");
+        assert_eq!(request_path("GET", "/teams/a/names/n-:runQuery"), "/teams/a/names/n-%3ArunQuery");
+        assert_eq!(request_path("POST", "/teams/a:runQuery"), "/teams/a:runQuery");
+        assert_eq!(request_path("POST", ":commit"), ":commit");
+    }
 }

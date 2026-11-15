@@ -45,6 +45,9 @@ async fn switch(target: Value) -> Result<(), String> {
     if !confirm(&prompt) { return Ok(()); }
     set_text("desktopMsg", "이전된 팀과 계정을 확인하는 중…");
     let plan = call("team:host-plan", target.clone()).await?;
+    if !target.is_null() && !VERIFIED.with(|v| v.borrow().as_ref() == Some(&target)) {
+        return Err("입력한 주소가 바뀌었어요. 새 주소를 다시 확인해 주세요.".into());
+    }
     let names = |key: &str| plan[key].as_array().into_iter().flatten().filter_map(|t| t.as_str()).collect::<Vec<_>>().join(", ");
     let teams = names("teams");
     let skipped = names("skipped");
