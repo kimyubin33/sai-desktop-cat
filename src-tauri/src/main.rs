@@ -10,6 +10,7 @@ mod ipc;
 mod menu;
 mod peek;
 mod system;
+mod team_host;
 mod updater;
 
 use std::sync::Arc;

@@ -43,8 +43,11 @@ pub struct Firebase {
     auth_base: String,
     token_url: String,
     docs_base: String,
+    desktop: bool,
+    server_id: Option<String>,
     session: Mutex<Option<(String, String)>>, // (uid, refreshToken)
     id_token: Mutex<Option<(String, i64)>>,
+    auth_lock: tokio::sync::Mutex<()>,
     save_session: SaveSession,
 }
 
@@ -70,6 +73,16 @@ impl Backend {
         let emu = config.get("emulator").cloned().unwrap_or(Value::Null);
         let auth_emu = emu.os("auth");
         let fs_emu = emu.os("firestore");
+        let desktop = config.os("desktopServer").map(|s| super::desktop::origin(&s)).transpose()?;
+        if desktop.is_some() && project != super::desktop::PROJECT {
+            return err("데스크톱 서버는 saigajoa 팀 계정으로 연결해 주세요.");
+        }
+        let server_id = config.os("desktopServerId");
+        if server_id.as_deref().is_some_and(|id| !super::desktop::valid_id(id)) {
+            return err("팀 서버를 설정에서 다시 확인해 주세요.");
+        }
+        let use_desktop = desktop.is_some();
+        let docs_origin = desktop.or(fs_emu).unwrap_or_else(|| "https://firestore.googleapis.com".into());
         let sess = session.and_then(|s| {
             let (u, r) = (s.s("uid"), s.s("refreshToken"));
             (!u.is_empty() && !r.is_empty()).then_some((u, r))
@@ -83,10 +96,13 @@ impl Backend {
                 Some(a) => format!("{a}/securetoken.googleapis.com/v1/token"),
                 None => "https://securetoken.googleapis.com/v1/token".into(),
             },
-            docs_base: format!("{}/v1/projects/{}/databases/(default)/documents", fs_emu.unwrap_or_else(|| "https://firestore.googleapis.com".into()), project),
+            docs_base: format!("{docs_origin}/v1/projects/{project}/databases/(default)/documents"),
+            desktop: use_desktop,
+            server_id,
             api_key,
             session: Mutex::new(sess),
             id_token: Mutex::new(None),
+            auth_lock: Default::default(),
             save_session,
         }))
     }
@@ -107,6 +123,7 @@ impl Backend {
 
     pub fn kind(&self) -> &'static str {
         match self {
+            Backend::Firebase(f) if f.desktop => "desktop",
             Backend::Firebase(_) => "firebase",
             Backend::Memory(m) => {
                 if m.file.is_some() {
@@ -358,6 +375,29 @@ impl Backend {
         let uid = self.sign_in().await?;
         for _ in 0..5 {
             let code = random_code(6);
+            if self.kind() == "desktop" {
+                let team_id = random_code(26);
+                let root = format!("teams/{team_id}");
+                let key = name_key(display_name);
+                let code_path = format!("joinCodes/{code}");
+                // 서버가 팀·참여 코드·개설자·이름을 한 트랜잭션으로 만들어야 방만 남지 않는다.
+                let writes = vec![
+                    json!({"op":"create","path":root,"data":{"name":name,"createdBy":uid,"joinCode":code}}),
+                    json!({"op":"create","path":code_path,"data":{"teamId":team_id,"teamName":name}}),
+                    json!({"op":"create","path":format!("{root}/members/{uid}"),
+                           "data":{"displayName":display_name,"nameKey":key,"joinCode":code}}),
+                    json!({"op":"create","path":format!("{root}/names/{key}"), "data":{"uid":uid}}),
+                ];
+                if let Err(error) = self.commit(writes).await {
+                    // 응답만 유실됐으면 이미 만들어진 바로 그 방을 돌려준다. 다른 방의 코드는 다시 뽑는다.
+                    match self.get_doc(&code_path).await {
+                        Ok(Some(mapping)) if mapping["teamId"] == team_id => {}
+                        Ok(Some(_)) => continue,
+                        _ => return Err(error),
+                    }
+                }
+                return Ok(json!({"teamId":team_id,"joinCode":code,"name":name}));
+            }
             if self.get_doc(&format!("joinCodes/{code}")).await.ok().flatten().is_some() {
                 continue;
             }
@@ -434,6 +474,13 @@ impl Backend {
     pub(crate) async fn code_closed(&self, code: &str) -> Result<bool> {
         if code.is_empty() { return Ok(false); }
         Ok(self.get_doc(&format!("joinCodes/{code}")).await?.is_some_and(|r| r.b("closed")))
+    }
+
+    /// 서버를 바꾸기 전, 기존 참여 코드와 현재 계정의 팀원 문서가 모두 이전됐는지 확인한다.
+    pub async fn carries_team(&self, team: &str, code: &str, uid: &str) -> Result<bool> {
+        let mapping = self.get_doc(&format!("joinCodes/{code}")).await?;
+        if !mapping.is_some_and(|m| m["teamId"] == team) { return Ok(false); }
+        Ok(self.get_doc(&format!("teams/{team}/members/{uid}")).await?.is_some())
     }
 
     pub(crate) async fn team_creator(&self, team: &str) -> Result<String> {
@@ -997,6 +1044,7 @@ impl Backend {
 
 impl Firebase {
     async fn token(&self) -> Result<String> {
+        let _guard = self.auth_lock.lock().await;
         if let Some((t, exp)) = self.id_token.lock().unwrap().clone() {
             if crate::time::now_ms() < exp - 60_000 {
                 return Ok(t);
@@ -1016,7 +1064,11 @@ impl Firebase {
                 self.set_token(&d.s("id_token"), d.n("expires_in"), &d.s("user_id"), &d.s("refresh_token"));
                 return Ok(d.s("id_token"));
             }
-            // refresh token 이 무효하면 새 익명 계정을 만든다 (팀에는 다시 참여해야 함)
+            let status = res.status();
+            if self.desktop || status.as_u16() == 429 || status.is_server_error() {
+                return err(format!("기존 팀 계정 인증을 갱신하지 못했어요 ({status}). 잠시 뒤 다시 시도하거나 Google 계정의 팀을 복원해 주세요."));
+            }
+            // 기존 Firebase 모드에서 무효한 refresh token이면 새 익명 계정을 만든다.
             *self.session.lock().unwrap() = None;
         }
         let res = client()
@@ -1052,7 +1104,10 @@ impl Firebase {
         let token = self.token().await?;
         let url = format!("{}{}{}", self.docs_base, path, query);
         let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
-        let mut rb = client().request(m, &url).bearer_auth(token);
+        let mut rb = super::desktop::DOC_CLIENT.request(m, &url).bearer_auth(token);
+        if self.desktop {
+            if let Some(id) = &self.server_id { rb = rb.header("X-Sai-Server-Id", id); }
+        }
         if let Some(b) = body {
             rb = rb.json(&b);
         }
@@ -1062,7 +1117,8 @@ impl Firebase {
             return Ok(None);
         }
         if !(200..300).contains(&status) {
-            return err(format!("Firestore {method} {path} 실패 ({status}): {}", short(&d)));
+            let server = if self.desktop { "데스크톱 서버" } else { "Firestore" };
+            return err(format!("{server} {method} {path} 실패 ({status}): {}", short(&d)));
         }
         Ok(Some(d))
     }

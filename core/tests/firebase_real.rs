@@ -13,6 +13,18 @@ fn emulator() -> bool {
 
 fn cfg() -> Value {
     if emulator() {
+        if let Ok(ports) = std::env::var("SAI_DESKTOP_CONTRACT_PORTS") {
+            let (auth, documents) = ports.split_once(',').expect("auth,documents 포트");
+            let auth: u16 = auth.parse().expect("로컬 인증 테스트 포트");
+            let documents: u16 = documents.parse().expect("로컬 문서 테스트 포트");
+            let issuer = format!("http://127.0.0.1:{auth}");
+            // If the desktop transport is accidentally ignored, requests hit the local
+            // auth fixture and fail. This test must never fall through to a cloud URL.
+            return json!({"apiKey":"demo-key","projectId":"saigajoa",
+                "desktopServer":format!("http://127.0.0.1:{documents}"),
+                "desktopServerId":std::env::var("SAI_DESKTOP_CONTRACT_SERVER_ID").expect("테스트 서버 ID"),
+                "emulator":{"auth":issuer, "firestore":issuer}});
+        }
         return json!({ "apiKey": "demo-key", "projectId": "demo-sai", "emulator": { "auth": "http://127.0.0.1:9099", "firestore": "http://127.0.0.1:8080" } });
     }
     json!({ "apiKey": "AIzaSyC6MBRsYOCchzBRZT7hX2cvbxUujGG_Eq0", "projectId": "saigajoa" })

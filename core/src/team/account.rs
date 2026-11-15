@@ -8,6 +8,14 @@ use serde_json::{json, Value};
 pub const FILE: &str = "sai-account.json";
 
 impl Hub {
+    /// 같은 서버를 로컬 주소와 외부 도메인으로 접속해도 같은 팀 목록을 사용한다.
+    pub fn account_filename(&self) -> String {
+        self.0.settings.read(|s| {
+            if s["teamServer"].is_null() { FILE.into() }
+            else { format!("sai-account-{}.json", crate::store::team_server::scope(&s["teamServer"])) }
+        })
+    }
+
     pub fn firebase_session(&self) -> Option<Value> {
         self.0.settings.read(|s| crate::secret::decrypt_json_field(s, "firebaseSessionEnc")).filter(|v| !v.s("uid").is_empty() && !v.s("refreshToken").is_empty())
     }

@@ -20,6 +20,7 @@ mod admin_tests;
 pub mod backend;
 pub mod claude;
 pub mod codec;
+pub mod desktop;
 mod delivery;
 pub mod shares;
 mod removal;

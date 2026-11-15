@@ -115,6 +115,20 @@
         <legend>팀 연결</legend>
         <div id="teamList" class="list team-list"></div>
         <div id="teamStatus" class="team-status"></div>
+        <details id="desktopServer" class="team-create hidden">
+          <summary>팀 서버 선택</summary>
+          <label for="desktopServerUrl">데스크톱 서버 주소</label>
+          <input type="url" id="desktopServerUrl" spellcheck="false" autocomplete="off" placeholder="https://팀에서-알려준-주소" />
+          <div class="inline">
+            <button type="button" id="desktopCheck">연결 확인</button>
+            <button type="button" id="desktopApply" disabled>이 서버 사용</button>
+            <button type="button" id="desktopRestore" class="link hidden">Firebase로 돌아가기</button>
+          </div>
+          <p class="hint">서버 PC에서는 http://127.0.0.1:8765 를 입력하세요. 다른 PC에서는 팀 운영자가 알려 준 HTTPS 주소를 사용하세요.</p>
+          <button type="button" id="desktopMyUid" class="link">내 팀 계정 ID 확인</button>
+          <input type="text" id="desktopUid" class="hidden" aria-label="내 팀 계정 ID" readonly />
+          <p id="desktopMsg" class="status" role="status"></p>
+        </details>
         <div id="teamConfig">
           <p class="hint">Firebase 콘솔 → 프로젝트 설정 → 내 앱(웹)의 <b>firebaseConfig</b>를 그대로 붙여 넣어 주세요. 팀원 모두 같은 값을 넣어야 해요. 자세한 방법은 저장소의 docs/firebase-setup.md 에 있어요.</p>
           <textarea id="fbConfig" rows="4" placeholder='const firebaseConfig = { apiKey: "...", projectId: "..." }'></textarea>

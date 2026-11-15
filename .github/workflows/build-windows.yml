@@ -85,9 +85,19 @@ jobs:
       - name: 테스트
         run: cargo test --workspace
 
-      - name: 실제 Firebase 점검 (팀 만들기·참여·권한 규칙)
+      - uses: actions/setup-python@v5
         if: matrix.arch == 'x64'
-        run: cargo test -p sai-core --test firebase_real -- --ignored --nocapture
+        with:
+          python-version: '3.12'
+
+      - name: 데스크톱 팀 서버 권한·앱 연동 점검
+        if: matrix.arch == 'x64'
+        run: |
+          python -m pip install -r server/requirements.txt pyinstaller==6.14.2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m unittest discover -s server -t .
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m server.tests.client_contract
 
       - name: Google 연결 정보 넣기 (있을 때만)
         shell: bash
@@ -128,6 +138,13 @@ jobs:
           (cd dist && 7z a -tzip "Sai-$v-win-${{ matrix.arch }}.zip" "Sai-Portable-$v$s.exe" >/dev/null)
           ls -la dist
 
+      - name: 팀 서버 Windows 배포 파일 만들기 및 실행 확인
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        env:
+          SAI_BUILD_VERSION: ${{ needs.version.outputs.version }}
+        run: ./server/windows/build.ps1
+
       - uses: actions/upload-artifact@v4
         with:
           name: sai-windows-${{ matrix.arch }}
@@ -164,6 +181,7 @@ jobs:
             --notes "Windows 설치 파일
           - 일반 PC(인텔·AMD): Sai-Setup-$v.exe
           - ARM PC(스냅드래곤 등 Windows on ARM): Sai-Setup-$v-arm64.exe
+          - 팀을 호스팅할 데스크톱(인텔·AMD): Sai-Team-Server-$v-win-x64.zip (압축을 풀고 Start.cmd 실행)
           설치 없이 쓰려면 Sai-Portable. 설치된 사이는 자동으로 자기 PC 에 맞는 판을 받아요."
           gh release view "v$v" --repo "$GITHUB_REPOSITORY" --json tagName,assets --jq '"\(.tagName) files=\([.assets[].name] | join(", "))"'
 

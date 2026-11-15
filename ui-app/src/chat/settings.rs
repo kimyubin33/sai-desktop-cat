@@ -1,4 +1,6 @@
 //! 설정 탭: 팀 연결, 버전·업데이트, 말 걸기·기록·AI 설정, 팀에 Claude 키 공유.
+mod desktop;
+
 use super::{arr, b, n, refresh_team_switch, s, st, update_engine};
 use crate::api::call;
 use crate::dom::*;
@@ -91,10 +93,11 @@ pub async fn render_team(info: Option<Value>) {
     let configured = b(&info, "configured");
     let connected = b(&info, "connected");
     let local = b(&info, "localMode");
+    let storage = desktop::render(&info, local);
     if !configured {
         let _ = stx.append_child(&el("div").text("팀 서버가 아직 설정되지 않았어요.").0);
     } else if !connected {
-        let _ = stx.append_child(&el("div").text(&format!("Firebase: {} · 팀에 아직 참여하지 않았어요.", s(&info, "projectId"))).0);
+        let _ = stx.append_child(&el("div").text(&format!("{storage} · 팀에 아직 참여하지 않았어요.")).0);
     } else {
         let _ = stx.append_child(&el("div").kid(el("b").text(&s(&info["team"], "name"))).txt(&format!(" · 팀원 {}명 · 마지막 동기화 {}", s(&info, "memberCount"), fmt_time(n(&info, "lastSync")))).0);
         let _ = stx.append_child(&el("div").txt("참여 코드 ").kid(el("span").cls("code-big").text(&s(&info["team"], "joinCode"))).txt(" — 팀원에게 알려 주세요").0);
@@ -107,7 +110,7 @@ pub async fn render_team(info: Option<Value>) {
                 team_action(async move { call("team:dissolve", args).await }, "팀을 해산했어요.".into());
             }).0);
         }
-        let _ = stx.append_child(&el("div").cls("hint").text(&if local { "로컬 시험 모드".into() } else { format!("Firebase: {}", s(&info, "projectId")) }).0);
+        let _ = stx.append_child(&el("div").cls("hint").text(&storage).0);
     }
     if !s(&info, "lastError").is_empty() {
         let _ = stx.append_child(&el("div").cls("err").text(&format!("연결 문제: {}", s(&info, "lastError"))).0);
@@ -418,6 +421,7 @@ fn click(id: &str, f: impl FnMut(web_sys::Event) + 'static) {
 }
 
 pub fn bind() {
+    desktop::bind();
     click("fbSave", |_| {
         let cfg = v("fbConfig");
         team_action(

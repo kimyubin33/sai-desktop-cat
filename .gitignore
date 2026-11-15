@@ -8,3 +8,8 @@ config/*.json
 target/
 src-tauri/gen/
 ui/pkg/
+
+# 데스크톱 서버의 실행 중 데이터와 Python 캐시
+__pycache__/
+*.sqlite3
+*.sqlite3-*
