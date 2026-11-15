@@ -2,7 +2,7 @@
 
 각 팀원의 바탕화면을 돌아다니는 고양이 **사이**가 평소에는 짧은 조언을 건네고, 팀원 때문에 속상한 이야기를 들어 주며 감정·사실·추측을 나눠 정리하는 데스크톱 앱입니다. 연결한 Claude 또는 GPT와 **팀원에게 전할 조언이나 팀 약속 제안**을 작성할 수 있습니다. 보내기 전에 제목과 본문을 직접 확인합니다. 사이가 팀의 업무 분배와 진행 확인도 함께 챙깁니다.
 
-개발 방향은 [docs/development-direction.md](docs/development-direction.md)를 따릅니다. 이 저장소는 그 문서의 **1~5단계**(경험 시제품, 개인 대화, 소규모 팀 연결, 협업 기능, 외부 연결)를 구현한 상태입니다. 팀 연결은 Firebase를 쓰며 설정 방법은 [docs/firebase-setup.md](docs/firebase-setup.md), Telegram·Google 연결은 [docs/integrations-setup.md](docs/integrations-setup.md)에 있습니다.
+개발 방향은 [docs/development-direction.md](docs/development-direction.md)를 따릅니다. 이 저장소는 그 문서의 **1~5단계**(경험 시제품, 개인 대화, 소규모 팀 연결, 협업 기능, 외부 연결)를 구현한 상태입니다. 팀 저장소는 [Firebase](docs/firebase-setup.md) 또는 [Windows 데스크톱 서버](docs/desktop-server.md)를 선택할 수 있고, Telegram·Google 연결은 [docs/integrations-setup.md](docs/integrations-setup.md)에 있습니다.
 
 ## 기술 구성
 
@@ -10,7 +10,7 @@
 
 ## 실행
 
-Rust(rustup, `rustup target add wasm32-unknown-unknown`)와 Node.js(Tauri 빌드 도구용)가 필요합니다. 코드는 모두 Rust 이고, 화면도 Rust 로 써서 WebAssembly 로 만듭니다 (`cargo run -p xtask -- ui`, 빌드할 때 자동 실행).
+Rust(rustup, `rustup target add wasm32-unknown-unknown`)와 Node.js(Tauri 빌드 도구용)가 필요합니다. 앱 화면은 Rust로 작성해 WebAssembly 로 만듭니다 (`cargo run -p xtask -- ui`, 빌드할 때 자동 실행).
 
 ```bash
 npm install          # Tauri 빌드 도구 설치

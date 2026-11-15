@@ -185,7 +185,7 @@ impl Google {
             return Ok(false);
         }
         let a = self.auth()?;
-        match drive::appdata_write(&a, crate::team::account::FILE, &snap).await {
+        match drive::appdata_write(&a, &self.0.hub.account_filename(), &snap).await {
             Ok(()) => {
                 self.record_account(json!({ "savedAt": now_ms(), "teams": snap.arr("teams").len(), "error": null }));
                 Ok(true)
@@ -206,7 +206,7 @@ impl Google {
             return err("팀을 옮기려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
         }
         let a = self.auth()?;
-        let snap = match drive::appdata_read(&a, crate::team::account::FILE).await {
+        let snap = match drive::appdata_read(&a, &self.0.hub.account_filename()).await {
             Ok(s) => s,
             Err(e) => {
                 self.record_account(json!({ "error": e }));

@@ -1,0 +1,91 @@
+//! 데스크톱 서버는 팀 문서만 맡는다. 로그인 및 토큰 갱신은 기존 Firebase 계정을 사용한다.
+use crate::{err, Result};
+use once_cell::sync::Lazy;
+use serde_json::Value;
+use std::time::Duration;
+use url::{Host, Url};
+
+pub const PROJECT: &str = "saigajoa";
+
+pub(super) static DOC_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(30))
+        .user_agent(concat!("sai-desktop-cat/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .expect("team document client")
+});
+
+/// 설정에 저장하는 값은 경로나 쿼리를 붙이지 않은 서버의 origin이다.
+pub fn origin(input: &str) -> Result<String> {
+    let input = input.trim();
+    if input.contains(['\\', '\n', '\r', '\t']) || input.len() > 512 {
+        return err("팀 서버 주소를 확인해 주세요.");
+    }
+    let url = Url::parse(input).map_err(|_| "https:// 로 시작하는 팀 서버 주소를 입력해 주세요.")?;
+    if url.host().is_none() || !url.username().is_empty() || url.password().is_some()
+        || url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
+        return err("사용자 정보나 경로가 없는 팀 서버 주소를 입력해 주세요.");
+    }
+    let loopback = match url.host() {
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(Host::Domain("localhost")) => true,
+        _ => false,
+    };
+    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
+        return err("다른 컴퓨터에는 HTTPS 주소가 필요해요. 이 PC에서는 http://127.0.0.1:8765 를 쓸 수 있어요.");
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
+pub fn valid_id(id: &str) -> bool {
+    id.len() == 36 && id.bytes().enumerate().all(|(i, b)| {
+        if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() && !b.is_ascii_uppercase() }
+    })
+}
+
+/// 신뢰 여부를 결정하기 전의 진단에는 로그인 정보와 팀 ID를 보내지 않는다.
+pub async fn health(input: &str) -> Result<(String, String)> {
+    let address = origin(input)?;
+    let mut response = DOC_CLIENT.get(format!("{address}/health"))
+        .timeout(Duration::from_secs(8)).send().await.map_err(|_| {
+            "데스크톱 서버에 연결할 수 없어요. 서버 실행 상태와 주소를 확인해 주세요."
+        })?;
+    if !response.status().is_success() {
+        return err(format!("팀 서버 연결 확인에 실패했어요 ({}).", response.status().as_u16()));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| "팀 서버 응답을 읽지 못했어요.")? {
+        if chunk.len() > 4_096 - bytes.len() { return err("사이 팀 서버의 응답을 확인할 수 없어요."); }
+        bytes.extend_from_slice(&chunk);
+    }
+    let body: Value = serde_json::from_slice(&bytes).map_err(|_| "사이 팀 서버 응답을 확인할 수 없어요.")?;
+    let id = body["serverId"].as_str().unwrap_or_default();
+    if body["service"] != "sai-team-server" || body["protocol"] != 1 || body["projectId"] != PROJECT || !valid_id(id) {
+        return err("이 주소에 호환되는 사이 팀 서버가 있는지 확인해 주세요.");
+    }
+    Ok((address, id.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_https_or_loopback_origins_only() {
+        for address in ["http://192.168.0.5:8765", "javascript:abc", "file:///x", "https://a.test/team", "https://a.test/?q=x", "https://a.test/#id", "https://u:p@a.test", "http://localhost.evil.test"] {
+            assert!(origin(address).is_err(), "{address}");
+        }
+        assert_eq!(origin(" https://Example.org/ ").unwrap(), "https://example.org");
+        assert_eq!(origin("http://[::1]:8765").unwrap(), "http://[::1]:8765");
+        assert!(origin("http://127.0.0.1:8765").is_ok());
+    }
+
+    #[test]
+    fn server_id_is_safe_as_a_backup_filename() {
+        assert!(valid_id("5608a7b4-f9da-4ad7-a98f-646be56ac567"));
+        assert!(!valid_id("00000000-0000-0000-0000-00000000000/"));
+    }
+}

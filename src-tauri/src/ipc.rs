@@ -157,6 +157,7 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
 
         // ---------- 팀 ----------
         "team:status" => Ok(team_view(a)),
+        "team:host-check" | "team:host-plan" | "team:host-apply" | "team:my-uid" => crate::team_host::command(a, ch, &x).await,
         "team:configure" if !a.local_mode && !crate::app::builtin_firebase().s("apiKey").is_empty() => Err("이 버전은 팀 서버 설정이 앱에 들어 있어서 바꿀 수 없어요.".into()),
         "team:configure" => {
             let Some(cfg) = parse_firebase_config(x.as_str().unwrap_or("")) else {
@@ -641,6 +642,8 @@ fn team_view(a: &Arc<App>) -> Value {
     v["configured"] = json!(a.local_mode || !cfg.s("apiKey").is_empty());
     v["projectId"] = json!(if a.local_mode { "로컬 시험 모드".into() } else { cfg.s("projectId") });
     v["localMode"] = json!(a.local_mode);
+    v["teamServer"] = a.stores.settings.read(|s| s["teamServer"].clone());
+    v["teamServerNotice"] = a.stores.settings.read(|s| s["teamServerNotice"].clone());
     // 앱에 팀 서버 설정이 들어 있으면 화면에서 바꿀 일이 없다 (잘못 건드리면 팀 연결이 끊긴다)
     v["canEditFirebase"] = json!(!a.local_mode && crate::app::builtin_firebase().s("apiKey").is_empty());
     v["teams"] = json!(hub

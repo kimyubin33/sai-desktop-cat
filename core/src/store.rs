@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+pub mod team_server;
+
 #[derive(Clone)]
 pub struct Store {
     inner: Arc<Mutex<Inner>>,
@@ -58,24 +60,20 @@ impl Store {
 
     /// 바뀐 내용이 있으면 파일에 쓴다 (임시 파일에 쓴 뒤 바꿔치기)
     pub fn flush(&self) {
-        let (file, text) = {
-            let mut g = self.inner.lock().unwrap();
-            if !g.dirty {
-                return;
-            }
-            g.dirty = false;
-            match &g.file {
-                Some(f) => (f.clone(), serde_json::to_string_pretty(&g.data).unwrap_or_default()),
-                None => return,
-            }
-        };
-        if let Some(dir) = file.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        let _ = self.try_flush();
+    }
+
+    pub fn try_flush(&self) -> std::io::Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        if !g.dirty { return Ok(()); }
+        if let Some(file) = &g.file {
+            if let Some(dir) = file.parent() { std::fs::create_dir_all(dir)?; }
+            let tmp = file.with_extension("json.tmp");
+            std::fs::write(&tmp, serde_json::to_vec_pretty(&g.data)?)?;
+            std::fs::rename(&tmp, file)?;
         }
-        let tmp = file.with_extension("json.tmp");
-        if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, &file);
-        }
+        g.dirty = false;
+        Ok(())
     }
 }
 
@@ -122,11 +120,13 @@ pub struct Stores {
 impl Stores {
     pub fn open(dir: impl AsRef<Path>) -> Self {
         let d = dir.as_ref();
+        let settings = Store::open(d.join("settings.json"), default_settings());
+        let shared = settings.read(|s| team_server::folder(d, &s["teamServer"]));
         Stores {
-            settings: Store::open(d.join("settings.json"), default_settings()),
+            settings,
             private_conv: Store::open(d.join("private").join("conversations.json"), json!({ "sessions": [] })),
-            shared_outbox: Store::open(d.join("shared").join("outbox.json"), json!({ "items": [] })),
-            team_cache: Store::open(d.join("shared").join("team-cache.json"), json!({ "teams": {}, "shownProposals": {} })),
+            shared_outbox: Store::open(shared.join("outbox.json"), json!({ "items": [] })),
+            team_cache: Store::open(shared.join("team-cache.json"), json!({ "teams": {}, "shownProposals": {} })),
             schedule: Store::open(d.join("private").join("schedule.json"), json!({})),
             advice_history: Store::open(d.join("advice-history.json"), json!({ "recent": [] })),
         }

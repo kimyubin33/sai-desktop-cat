@@ -46,11 +46,20 @@ pub struct App {
     pub peeks: crate::peek::Peeks,
     pub updater: Updater,
     pub local_mode: bool,
+    pub server_plan: tokio::sync::Mutex<Option<Value>>,
 }
 
 pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
     let dir = app.path().app_data_dir()?;
-    let stores = Stores::open(&dir);
+    let mut stores = Stores::open(&dir);
+    match stores.apply_team_server(&dir) {
+        Ok(true) => stores = Stores::open(&dir),
+        Err(e) => stores.settings.update(|s| {
+            s["pendingTeamServer"] = Value::Null;
+            s["teamServerNotice"] = json!(e);
+        }),
+        _ => {}
+    }
     // 예전 저장값 정리: 끄는 기능을 없앴으므로 빈도는 셋 중 하나로
     stores.settings.update(|s| {
         if !["low", "normal", "high"].contains(&s.s("frequency").as_str()) {
@@ -73,7 +82,14 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
                 return Some(Backend::memory(Some(f.into()), &settings.read(|s| s.s("localUid"))));
             }
             let cfg = settings.read(|s| s["firebase"].clone());
-            let cfg = if cfg.is_object() && !cfg.s("apiKey").is_empty() { cfg } else { builtin_firebase() };
+            let mut cfg = if cfg.is_object() && !cfg.s("apiKey").is_empty() { cfg } else { builtin_firebase() };
+            let host = settings.read(|s| s["teamServer"].clone());
+            if !host.is_null() {
+                let address = host["url"].as_str()?;
+                let id = host["serverId"].as_str()?;
+                cfg["desktopServer"] = json!(address);
+                cfg["desktopServerId"] = json!(id);
+            }
             let session = settings.read(|s| sai_core::secret::decrypt_json_field(s, "firebaseSessionEnc"));
             let st = settings.clone();
             Backend::firebase(&cfg, session, Box::new(move |sess: &Value| {
@@ -104,6 +120,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         peeks: crate::peek::Peeks::default(),
         updater: Updater::new(),
         local_mode: local_file.is_some(),
+        server_plan: Default::default(),
     });
 
     // 컴퓨터를 켜면 자동으로 실행 (켤 때마다 다시 등록)
