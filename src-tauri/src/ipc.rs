@@ -54,6 +54,11 @@ fn ok() -> R {
 async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
     let hub = &a.hub;
     match ch {
+        c if c.starts_with("mesh-probe:") => crate::mesh::command(&a.mesh_probe, c, &x).await,
+        c if c.starts_with("mesh-identity:") => crate::mesh_identity::command(a, c, &x).await,
+        c if c.starts_with("mesh-migration:") => crate::mesh_migration::command(a,c,&x).await,
+        c if c.starts_with("mesh-talk:") => crate::mesh_talk::command(a,c,&x).await,
+        c if c.starts_with("mesh-session:") || c.starts_with("mesh-journal:") => crate::mesh_workbench::command(a,c,&x).await,
         // ---------- 대화 ----------
         "chat:start" => {
             let (mode, t) = if x.is_string() { (x.as_str().unwrap().to_string(), None) } else { (x.s("mode"), x.os("topic")) };
@@ -320,7 +325,10 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             Ok(json!({ "applied": n, "view": collab_view(a) }))
         }
         // ---------- 팀 Drive 함 ----------
-        "drive:feed" => Ok(drive_feed(a).await),
+        "drive:feed" => {
+            drive_team(a, &x)?;
+            Ok(drive_feed(a).await)
+        }
         "drive:send-text" => {
             drive_team(a, &x)?.add_share(&json!({ "text": x.s("text") })).await?;
             Ok(drive_feed(a).await)
@@ -759,6 +767,7 @@ async fn drive_feed(a: &Arc<App>) -> Value {
         "teamId": t.id,
         "teamName": t.name(),
         "memberCount": t.members(true).len(),
+        "backendKind": a.hub.backend_kind(),
         "google": { "signedIn": a.google.is_ready(), "drive": a.google.has_drive(), "email": a.google.status()["email"] },
         "items": t.shares_view(&list),
         "error": error,

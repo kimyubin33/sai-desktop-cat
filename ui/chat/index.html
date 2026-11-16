@@ -80,9 +80,11 @@
   <section id="tab-drive" class="tab">
     <div id="driveRoot" class="drive">
       <div class="drive-modes" role="group" aria-label="팀 공간 보기">
-        <button id="driveChatMode" aria-pressed="true" aria-controls="driveFeed">톡</button>
+        <button id="driveChatMode" aria-pressed="true" aria-controls="driveFeed">기존 서버 톡</button>
         <button id="driveFilesMode" aria-pressed="false" aria-controls="driveFeed">파일 공유</button>
+        <button id="drivePcMode" aria-pressed="false" aria-controls="pcTalkRoot">PC 톡</button>
       </div>
+      <div id="serverDrive" class="server-drive">
       <div id="driveHead" class="drive-head"></div>
       <div class="drive-content">
         <div id="driveFeed" class="drive-feed" role="region" aria-labelledby="driveChatMode"></div>
@@ -105,6 +107,29 @@
         <label class="check"><input id="driveEdit" type="checkbox" checked> 받은 팀원도 고칠 수 있게 (끄면 보기만)</label>
         <span id="driveFilesStatus" class="status" role="status"></span>
       </div>
+      </div>
+      <section id="pcTalkRoot" class="pc-talk hidden" aria-label="승인 장치의 PC 톡">
+        <div class="inline">
+          <label for="pcTalkTeam">PC 팀</label>
+          <select id="pcTalkTeam"><option value="">PC 팀 선택</option></select>
+          <button type="button" id="pcTalkRefresh">새로 읽기</button>
+          <button type="button" id="pcTalkSettings" class="link">장치 승인·연결 설정</button>
+        </div>
+        <p id="pcTalkAudience" class="hint"></p>
+        <p id="pcTalkConnection" class="hint"></p>
+        <p class="hint">기존 서버 톡과 별도의 PC 팀 대화예요. 작성자는 서명된 장치 ID로 표시하며, 기존 계정 이름을 자동 연결하지 않아요. 시각은 작성 PC 기준이고 ‘저장 확인’은 읽음 표시가 아니에요.</p>
+        <div id="pcTalkFeed" class="drive-feed" role="region" aria-label="이 PC에 보관한 PC 톡"></div>
+        <div class="inline">
+          <button type="button" id="pcTalkOlder">이전 톡</button>
+          <button type="button" id="pcTalkNewer">최근 톡</button>
+        </div>
+        <label><input type="checkbox" id="pcTalkConsent" /> 위 PC 팀의 승인 장치에 톡과 내 삭제 요청을 전달해요. 승인 범위가 바뀌면 다시 확인해요.</label>
+        <div class="row">
+          <textarea id="pcTalkText" rows="2" maxlength="1000" aria-label="PC 팀 메시지" placeholder="이 PC에 먼저 저장할 메시지…"></textarea>
+          <button type="button" id="pcTalkSend" class="primary" disabled>이 PC에 저장·전달 대기</button>
+        </div>
+        <p id="pcTalkMessage" class="status" role="status"></p>
+      </section>
     </div>
   </section>
 
@@ -121,10 +146,12 @@
           <input type="url" id="desktopServerUrl" spellcheck="false" autocomplete="off" placeholder="https://팀에서-알려준-주소" />
           <div class="inline">
             <button type="button" id="desktopCheck">연결 확인</button>
+              <button type="button" id="desktopLocal">이 PC 주소 넣기</button>
             <button type="button" id="desktopApply" disabled>이 서버 사용</button>
             <button type="button" id="desktopRestore" class="link hidden">Firebase로 돌아가기</button>
           </div>
           <p class="hint">서버 PC에서는 http://127.0.0.1:8765 를 입력하세요. 다른 PC에서는 팀 운영자가 알려 준 HTTPS 주소를 사용하세요.</p>
+            <p class="hint">팀 톡·팀 자료 목록·협업 기록은 선택한 팀 서버를 사용해요. Google Drive·캘린더는 각 PC에서 Google에 직접 연결해요. 서버 PC가 켜져 있고 팀 서버가 실행 중이어야 팀원끼리 톡을 주고받을 수 있어요.</p>
           <button type="button" id="desktopMyUid" class="link">내 팀 계정 ID 확인</button>
           <input type="text" id="desktopUid" class="hidden" aria-label="내 팀 계정 ID" readonly />
           <p id="desktopMsg" class="status" role="status"></p>
@@ -165,6 +192,133 @@
           </details>
         </div>
         <span id="teamMsg" class="status"></span>
+      </fieldset>
+      <fieldset id="meshProbeBox">
+        <legend>PC 연결 실험</legend>
+        <details id="meshProbeDetails">
+          <summary>같은 네트워크의 PC 연결 확인</summary>
+          <p class="hint">자동 호스트를 준비하는 연결 진단이에요. 이번 단계에서는 확인 신호만 주고받으며, 팀 톡이나 파일을 전송하지 않아요. 양쪽 PC에서 실험을 켜고 연결 정보를 서로 등록하세요.</p>
+          <label for="meshProbeAddress">연결을 받을 이 PC의 LAN 주소</label>
+          <select id="meshProbeAddress" aria-label="연결 실험 LAN 주소"></select>
+          <label class="check"><input type="checkbox" id="meshProbeConsent" /> 선택한 LAN에서 15분 동안 연결 실험을 여는 데 동의해요.</label>
+          <div class="inline">
+            <button type="button" id="meshProbeStart">실험 시작</button>
+            <button type="button" id="meshProbeStop" disabled>실험 중지</button>
+            <button type="button" id="meshProbeRefresh">상태 새로고침</button>
+          </div>
+          <p id="meshProbeState" class="hint" role="status">실행하지 않았어요.</p>
+          <div id="meshProbeRunning" class="hidden">
+            <label for="meshProbeCard">상대에게 전달할 내 연결 정보</label>
+            <textarea id="meshProbeCard" rows="4" readonly spellcheck="false" aria-label="상대에게 전달할 공개 연결 정보"></textarea>
+            <p class="hint">상대 PC의 화면과 아래 인증서 지문이 같은지 확인하세요. 다시 시작하면 연결 정보와 지문이 바뀌어요.</p>
+            <p id="meshProbeFingerprint" class="mesh-fingerprint"></p>
+            <label for="meshProbePeerCard">상대 PC에서 받은 연결 정보</label>
+            <textarea id="meshProbePeerCard" rows="4" maxlength="8192" spellcheck="false" placeholder="상대 PC의 공개 연결 정보를 붙여 넣으세요"></textarea>
+            <button type="button" id="meshProbeAdd">상대 정보 등록</button>
+            <div id="meshProbePeers" class="list"></div>
+            <div id="meshProbeDiscovered" class="hint"></div>
+          </div>
+          <p class="hint">이번 실험은 사설 IPv4 LAN을 지원해요. Windows의 앱 통신 허용이 필요할 수 있어요. 게스트 Wi-Fi나 회사 네트워크에서 PC 사이 통신을 막으면 연결할 수 없어요.</p>
+          <p id="meshProbeMessage" class="status" role="status"></p>
+        </details>
+      </fieldset>
+      <fieldset id="meshIdentityBox">
+        <legend>PC 팀 장치 등록 준비</legend>
+        <details>
+          <summary>내 장치와 관리자 승인 정보</summary>
+          <p class="hint">자동 호스트의 신원과 승인 자료를 준비하는 단계예요. 기존 팀을 이전하거나 연결 실험의 권한을 자동 변경하지 않아요. 개인키는 이 Windows 사용자 계정으로 보호해 저장해요.</p>
+          <p id="meshIdentityStatus" class="hint">내 장치를 아직 만들지 않았어요.</p>
+          <button type="button" id="meshIdentityCreate">내 장치 만들기</button>
+          <p id="meshIdentityDevice" class="mesh-fingerprint"></p>
+          <label for="meshIdentityTeam">준비 중인 PC 팀</label>
+          <select id="meshIdentityTeam" aria-label="신원 등록용 PC 팀"></select>
+          <p id="meshIdentityTeamInfo" class="hint"></p>
+          <p id="meshIdentityFingerprint" class="mesh-fingerprint"></p>
+          <div class="inline">
+            <input type="text" id="meshIdentityTeamName" maxlength="60" placeholder="새 PC 팀 이름" aria-label="새 PC 팀 이름" />
+            <button type="button" id="meshIdentityCreateTeam">새 PC 팀 준비 (관리자)</button>
+          </div>
+          <p class="hint">운영 관리자 한 명의 키를 모든 PC 팀에서 함께 사용해요. 관리자가 팀을 준비해 승인 정보를 전달하면, 팀원은 관리자 화면과 지문을 대조해 등록해요. 팀원은 등록 요청을 만들어 관리자에게 전달하고, 관리자는 승인 후 갱신된 승인 정보를 돌려줘요.</p>
+          <div class="inline">
+            <button type="button" id="meshIdentityRequest">내 등록 요청 만들기</button>
+            <button type="button" id="meshIdentityExport">승인 정보 내보내기</button>
+          </div>
+          <label for="meshIdentityOutput">전달할 공개 자료</label>
+          <textarea id="meshIdentityOutput" rows="4" readonly spellcheck="false" aria-label="전달할 공개 장치 등록 자료"></textarea>
+          <label for="meshIdentityInput">받은 등록 요청 또는 승인 정보</label>
+          <textarea id="meshIdentityInput" rows="4" maxlength="1048576" spellcheck="false" aria-label="받은 장치 등록 자료"></textarea>
+          <label for="meshIdentityPin">처음 팀 등록 시 관리자 화면에서 확인한 지문</label>
+          <input type="text" id="meshIdentityPin" maxlength="64" spellcheck="false" autocomplete="off" aria-label="직접 확인한 관리자 지문" />
+          <div class="inline">
+            <button type="button" id="meshIdentityImport">승인 정보 등록</button>
+            <button type="button" id="meshIdentityApprove">장치 등록 승인 (관리자)</button>
+          </div>
+          <div id="meshIdentityDevices" class="list"></div>
+          <p id="meshIdentityMessage" class="status" role="status"></p>
+          <details>
+            <summary>승인 장치 연결과 암호화된 준비 톡 교환</summary>
+            <p class="hint">위에서 선택한 PC 팀의 준비 기능이에요. 저장은 먼저 이 PC에서 완료해요. 별도로 기록 교환에 동의한 양쪽 장치가 암호화 기록 교환을 누르면 준비 톡과 저장 확인을 교환해요. 기존 팀 톡은 아래에서 선택해 이 PC에 별도 보관할 수 있어요. 기존 팀 톡 화면의 서버 연결 전환은 아직 제공하지 않아요.</p>
+            <p id="meshLocalStatus" class="hint"></p>
+            <div id="meshLocalMessages" class="list"></div>
+            <label for="meshLocalText">이 PC에 보관할 톡</label>
+            <textarea id="meshLocalText" rows="3" maxlength="32768" placeholder="선택한 PC 팀의 현재 승인 장치들에게 교환할 준비 톡"></textarea>
+            <div class="inline">
+              <button type="button" id="meshLocalSave" disabled>이 PC에 저장</button>
+              <button type="button" id="meshLocalRefresh">저장 상태 새로 고침</button>
+            </div>
+            <p id="meshLocalMessage" class="status" role="status"></p>
+            <hr />
+            <p id="meshSessionStatus" class="hint">승인 장치 연결 확인이 꺼져 있어요.</p>
+            <label for="meshSessionAddress">연결 확인에 사용할 LAN</label>
+            <select id="meshSessionAddress"><option value="">이 PC의 LAN 선택</option></select>
+            <label><input type="checkbox" id="meshSessionConsent" /> 선택한 LAN에서 최대 15분 동안 승인 장치 연결 확인을 열어요.</label>
+            <label><input type="checkbox" id="meshExchangeConsent" /> 선택한 PC 팀의 암호화된 준비 톡 수신과 기록 교환을 허용해요. 양쪽 장치에서 동의해야 해요.</label>
+            <label><input type="checkbox" id="meshAutomaticConsent" /> 같은 LAN의 승인된 PC를 자동으로 찾아 재연결하고 대기 기록을 교환해요. 양쪽에서 켜야 하며 이번 실행 동안 최대 15분만 동작해요.</label>
+            <label><input type="checkbox" id="meshCourierConsent" /> 준비 톡의 암호문 중계와 대표 PC 후보로 참여해요. 작성 PC가 꺼져도 받은 사본을 전달할 수 있어요. 중지해도 이미 전달한 사본은 회수되지 않아요.</label>
+            <label><input type="checkbox" id="meshRestoreConsent" /> 이 팀과 Windows 네트워크를 기억하고 앱 시작(Windows 로그인 자동 실행 포함)·절전 복귀 때 자동 연결해요. 앱 시작마다 최대 15분이며, 절전 복귀는 남은 시간만 사용해요. 중지하면 이 동의도 해제해요.</label>
+            <p id="meshLifecycleStatus" class="hint">자동 복구는 기본적으로 꺼져 있어요. 개인·도메인 네트워크에서 별도로 선택해 주세요.</p>
+            <p id="meshAutomaticStatus" class="hint">자동 연결은 꺼져 있어요.</p>
+            <p id="meshCourierStatus" class="hint">암호문 중계는 꺼져 있어요. 중계 보관 응답은 최종 수신 확인과 달라요.</p>
+            <p id="meshHostStatus" class="hint">대표 PC 선정은 꺼져 있어요. 연결이 나뉘면 PC마다 대표가 다르게 보일 수 있으며, 관리자 권한은 바뀌지 않아요.</p>
+            <div class="inline">
+              <button type="button" id="meshSessionStart" disabled>선택한 팀으로 연결 확인 시작</button>
+              <button type="button" id="meshSessionStop">중지·자동 복구 해제</button>
+              <button type="button" id="meshSessionRefresh">연결 상태 새로 고침</button>
+            </div>
+            <label for="meshSessionCard">상대에게 전달할 서명된 연결 정보</label>
+            <textarea id="meshSessionCard" rows="3" readonly spellcheck="false"></textarea>
+            <label for="meshSessionInput">상대의 서명된 연결 정보</label>
+            <textarea id="meshSessionInput" rows="3" maxlength="16384" spellcheck="false"></textarea>
+            <button type="button" id="meshSessionAdd" disabled>승인된 상대 연결 정보 등록</button>
+            <p class="hint">자동 연결을 켜면 같은 LAN의 승인된 PC끼리 연결 정보를 확인하고 대기 기록을 이어서 교환해요. 수동 연결에서는 서명된 연결 정보를 서로 등록해요. 기록 교환은 양방향으로 진행하며 한 번에 방향별 최대 8개를 확인해요. 상대가 다른 승인 이력에서 작성한 과거 본문은 자동 교환하지 않아요. 승인 이력이 바뀌면 갱신한 뒤 연결을 다시 시작하세요.</p>
+            <div id="meshSessionPeers" class="list"></div>
+            <p id="meshSessionMessage" class="status" role="status"></p>
+          </details>
+          <details>
+            <summary>기존 팀 톡 확인·이 PC에 보관</summary>
+            <p class="hint">위에서 선택한 PC 팀의 관리자만 사용할 수 있어요. 기존 서버에서 공개 톡을 새로 조회하며, 기존 팀의 현재 관리자 계정도 필요해요. 화면 캐시·개인 문안·파일 링크·약속 제안·연동 설정은 이전하지 않아요.</p>
+            <label for="meshMigrationSource">읽어 올 기존 팀</label>
+            <select id="meshMigrationSource"><option value="">기존 팀 선택</option></select>
+            <div class="inline">
+              <button type="button" id="meshMigrationPreview">서버에서 새로 읽어 미리보기</button>
+              <button type="button" id="meshMigrationSelect">새 톡 첫 200개 선택</button>
+              <button type="button" id="meshMigrationClear">선택 해제</button>
+            </div>
+            <p id="meshMigrationSummary" class="hint">미리보기만으로 보관하거나 발송하지 않아요.</p>
+            <div id="meshMigrationRows" class="list mesh-archive-list"></div>
+            <label><input type="checkbox" id="meshMigrationConsent" /> 원문을 확인했고, 선택한 톡을 이 PC에만 보관해요. 원본의 수정·삭제는 자동 반영되지 않으며, 이 사본을 다른 PC로 전송하지 않아요.</label>
+            <button type="button" id="meshMigrationCommit" disabled>선택한 톡을 이 PC에 보관</button>
+            <p id="meshMigrationMessage" class="status" role="status"></p>
+            <hr />
+            <p id="meshArchiveSummary" class="hint">보관 목록은 현재 PC 팀을 선택한 뒤 새로 읽을 수 있어요.</p>
+            <div id="meshArchiveRows" class="list mesh-archive-list"></div>
+            <div class="inline">
+              <button type="button" id="meshArchivePrevious">이전 보관 목록</button>
+              <button type="button" id="meshArchiveNext">다음 보관 목록</button>
+              <button type="button" id="meshArchiveRefresh">보관 목록 새로 읽기</button>
+            </div>
+          </details>
+        </details>
       </fieldset>
       <fieldset id="updateBox">
         <legend>버전 · 업데이트</legend>

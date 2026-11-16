@@ -17,6 +17,8 @@ use rand::Rng;
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+#[path = "migration_source.rs"]
+mod migration_source;
 
 pub const RECENT_SHARE_LIMIT: usize = 32;
 
@@ -1104,7 +1106,7 @@ impl Firebase {
         let token = self.token().await?;
         let url = format!("{}{}{}", self.docs_base, request_path(method, path), query);
         let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
-        let mut rb = super::desktop::DOC_CLIENT.request(m, &url).bearer_auth(token);
+        let mut rb = super::desktop::client(&url).request(m, &url).bearer_auth(token);
         if self.desktop {
             if let Some(id) = &self.server_id { rb = rb.header("X-Sai-Server-Id", id); }
         }

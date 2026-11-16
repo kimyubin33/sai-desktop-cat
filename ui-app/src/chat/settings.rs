@@ -1,5 +1,9 @@
 //! 설정 탭: 팀 연결, 버전·업데이트, 말 걸기·기록·AI 설정, 팀에 Claude 키 공유.
 mod desktop;
+pub(crate) mod mesh;
+mod identity;
+mod workbench;
+mod migration;
 
 use super::{arr, b, n, refresh_team_switch, s, st, update_engine};
 use crate::api::call;
@@ -14,6 +18,9 @@ fn form() -> Element {
 }
 
 pub async fn load() {
+    mesh::load().await;
+    identity::load().await;
+    migration::load().await;
     let Ok(sx) = call("settings:get", Value::Null).await else { return };
     st(|x| x.settings = sx.clone());
     let f = form();
@@ -422,6 +429,10 @@ fn click(id: &str, f: impl FnMut(web_sys::Event) + 'static) {
 
 pub fn bind() {
     desktop::bind();
+    mesh::bind(false);
+    identity::bind();
+    workbench::bind();
+    migration::bind();
     click("fbSave", |_| {
         let cfg = v("fbConfig");
         team_action(

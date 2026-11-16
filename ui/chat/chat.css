@@ -981,3 +981,11 @@ select.team-pick {
 .delivery-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
 .delivery-controls label, .delivery-preview label { display: flex; align-items: center; gap: 8px; }
 .delivery-controls textarea { box-sizing: border-box; width: 100%; min-height: 52px; resize: vertical; }
+/* LAN 연결 실험의 긴 공개 인증서 지문 */
+.mesh-fingerprint { overflow-wrap: anywhere; font-family: monospace; font-size: 12px; }
+.mesh-local-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.mesh-archive-list{max-height:420px;overflow:auto}
+.server-drive,.pc-talk{display:flex;flex-direction:column;gap:8px;min-height:0;flex:1}
+.pc-talk .drive-feed{min-height:220px;max-height:52vh;overflow:auto}
+.pc-talk textarea{flex:1;min-width:0}
+.pc-talk .drive-who{overflow-wrap:anywhere}

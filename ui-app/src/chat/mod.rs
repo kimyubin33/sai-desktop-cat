@@ -3,8 +3,9 @@ mod collab;
 mod drive;
 mod ext;
 mod notes;
+mod pc_talk;
 pub mod schedule;
-mod settings;
+pub(crate) mod settings;
 mod talk;
 
 use crate::api::{call, listen};

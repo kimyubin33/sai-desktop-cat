@@ -3,7 +3,7 @@ resolver = "2"
 members = ["core", "src-tauri", "ui-app", "xtask"]
 
 [workspace.package]
-version = "0.9.13"
+version = "0.9.14"
 edition = "2021"
 license = "UNLICENSED"
 
@@ -12,3 +12,10 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true
+
+# 두 PC 연결 검증용 휴대 앱. 일반 릴리스 프로필과 별도로 빌드한다.
+[profile.connection-test]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 16

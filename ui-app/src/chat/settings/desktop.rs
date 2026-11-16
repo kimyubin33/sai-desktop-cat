@@ -12,7 +12,7 @@ thread_local! {
 fn buttons() {
     let busy = BUSY.with(Cell::get);
     let allow_apply = VERIFIED.with(|v| v.borrow().is_some());
-    for (id, disabled) in [("desktopCheck", busy), ("desktopApply", busy || !allow_apply), ("desktopRestore", busy)] {
+    for (id, disabled) in [("desktopCheck", busy), ("desktopLocal", busy), ("desktopApply", busy || !allow_apply), ("desktopRestore", busy)] {
         if let Some(el) = by_id(id) { set_disabled(&el, disabled); }
     }
 }
@@ -64,6 +64,13 @@ async fn switch(target: Value) -> Result<(), String> {
 }
 
 pub(super) fn bind() {
+    click("desktopLocal", |_| {
+        if BUSY.with(Cell::get) { return; }
+        set_val(&by_id("desktopServerUrl").unwrap(), "http://127.0.0.1:8765");
+        VERIFIED.with(|v| v.replace(None));
+        set_text("desktopMsg", "이 PC에서 팀 서버를 실행한 뒤 연결 확인을 눌러 주세요.");
+        buttons();
+    });
     if let Some(input) = by_id("desktopServerUrl") {
         on(&input, "input", |_| {
             VERIFIED.with(|v| v.replace(None));

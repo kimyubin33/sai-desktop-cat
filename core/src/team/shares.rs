@@ -7,6 +7,15 @@ use std::collections::HashMap;
 
 const KEEP_PER_MODE: usize = 300;
 
+fn share_error(kind: Option<&str>, error: String) -> String {
+    if !super::backend::denied(&error) { return error; }
+    if kind == Some("desktop") {
+        "개인 PC 팀 서버에서 톡·파일 목록에 접근할 권한이 없어요. 팀 참여 상태와 서버 버전을 확인해 주세요.".into()
+    } else {
+        "팀 서버 규칙에 아직 Drive 함이 없어요. Firebase 콘솔에서 firestore.rules 를 게시해 주세요.".into()
+    }
+}
+
 fn recent_shares(mut list: Vec<Value>) -> Vec<Value> {
     list.sort_by_key(|share| share.i("at"));
     list.reverse();
@@ -41,7 +50,7 @@ impl Team {
             }
             Err(e) => {
                 let cached = recent_shares(self.cache_get().arr("shares"));
-                let msg = if e.contains("403") || e.contains("PERMISSION") { "팀 서버 규칙에 아직 Drive 함이 없어요. Firebase 콘솔에서 firestore.rules 를 게시해 주세요.".to_string() } else { e };
+                let msg = share_error(self.hub.backend_kind(), e);
                 (cached, Some(msg))
             }
         }
@@ -86,13 +95,8 @@ impl Team {
                 _ => "link",
             });
         }
-        let id = self.backend()?.add_share(&team_id, data.clone()).await.map_err(|e| {
-            if e.contains("403") || e.contains("PERMISSION") {
-                "팀 서버 규칙에 아직 Drive 함이 없어요. Firebase 콘솔에서 firestore.rules 를 게시해 주세요.".to_string()
-            } else {
-                e
-            }
-        })?;
+        let id = self.backend()?.add_share(&team_id, data.clone()).await
+            .map_err(|e| share_error(self.hub.backend_kind(), e))?;
         data["id"] = json!(id);
         let d2 = data.clone();
         self.cache_update(|c| {
@@ -120,12 +124,23 @@ impl Team {
 
 #[cfg(test)]
 mod tests {
-    use super::{recent_shares, KEEP_PER_MODE};
+    use super::{recent_shares, share_error, KEEP_PER_MODE};
     use crate::store::Stores;
     use crate::team::{Backend, Hub};
     use crate::util::J;
     use serde_json::json;
     use std::sync::Arc;
+
+    #[test]
+    fn desktop_permissions_do_not_send_users_to_firestore_settings() {
+        let error = "데스크톱 서버 GET /teams/t/shares 실패 (403): denied";
+        let message = share_error(Some("desktop"), error.into());
+        assert!(message.contains("개인 PC"));
+        assert!(!message.contains("Firebase"));
+        assert!(share_error(Some("firebase"), "Firestore 실패 (403)".into()).contains("firestore.rules"));
+        let connection = "팀 서버에 연결하지 못했어요";
+        assert_eq!(share_error(Some("desktop"), connection.into()), connection);
+    }
 
     fn hub(shared: Arc<std::sync::Mutex<serde_json::Value>>, uid: &str) -> Hub {
         let st = Stores::memory();

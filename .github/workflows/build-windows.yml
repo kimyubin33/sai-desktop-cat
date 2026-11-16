@@ -83,7 +83,7 @@ jobs:
         run: cargo run -p xtask -- ui
 
       - name: 테스트
-        run: cargo test --workspace
+        run: cargo test --locked --workspace --features sai/connection-test -- --test-threads=4
 
       - uses: actions/setup-python@v5
         if: matrix.arch == 'x64'
@@ -182,7 +182,14 @@ jobs:
           - 일반 PC(인텔·AMD): Sai-Setup-$v.exe
           - ARM PC(스냅드래곤 등 Windows on ARM): Sai-Setup-$v-arm64.exe
           - 팀을 호스팅할 데스크톱(인텔·AMD): Sai-Team-Server-$v-win-x64.zip (압축을 풀고 Start.cmd 실행)
-          설치 없이 쓰려면 Sai-Portable. 설치된 사이는 자동으로 자기 PC 에 맞는 판을 받아요."
+          설치 없이 쓰려면 Sai-Portable. 설치된 사이는 자동으로 자기 PC 에 맞는 판을 받아요.
+
+          PC 톡 준비 기능
+          - Drive → PC 톡에서 관리자 승인 장치끼리 로컬 저장, 암호화 전달, 상대 저장 확인과 작성 장치의 삭제 요청을 지원합니다.
+          - 현재 연결 범위는 같은 Wi-Fi·유선 LAN입니다. 연결 실행은 동의 후 최대 15분이며 자동 복구는 별도 선택입니다.
+          - PC 톡을 교환할 모든 PC에 같은 새 버전을 적용하고 연결 정보를 다시 만드세요.
+          - 기존 서버 톡·계정 이름·과거 기록은 자동 전환하지 않습니다. 기존 공개 톡의 선택 보관은 관리자 PC 전용 사본입니다.
+          - 실제 여러 PC의 설치·화면·절전 검증과 서로 다른 인터넷 환경의 자동 연결은 남아 있습니다."
           gh release view "v$v" --repo "$GITHUB_REPOSITORY" --json tagName,assets --jq '"\(.tagName) files=\([.assets[].name] | join(", "))"'
 
       - uses: actions/upload-artifact@v4

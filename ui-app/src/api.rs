@@ -41,7 +41,9 @@ async fn invoke(cmd: &str, payload: Value) -> Result<Value, String> {
 
 /// 대화창 → 앱
 pub async fn call(ch: &str, args: Value) -> Result<Value, String> {
-    invoke("call", serde_json::json!({ "ch": ch, "args": args })).await
+    let which = crate::dom::document().document_element().and_then(|e| e.get_attribute("data-window")).unwrap_or_default();
+    let command = if which == "probe" { "probe_call" } else { "call" };
+    invoke(command, serde_json::json!({ "ch": ch, "args": args })).await
 }
 
 /// 고양이 창 → 앱 (결과는 쓰지 않는다)

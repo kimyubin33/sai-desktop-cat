@@ -4,6 +4,12 @@
 
 개발 방향은 [docs/development-direction.md](docs/development-direction.md)를 따릅니다. 이 저장소는 그 문서의 **1~5단계**(경험 시제품, 개인 대화, 소규모 팀 연결, 협업 기능, 외부 연결)를 구현한 상태입니다. 팀 저장소는 [Firebase](docs/firebase-setup.md) 또는 [Windows 데스크톱 서버](docs/desktop-server.md)를 선택할 수 있고, Telegram·Google 연결은 [docs/integrations-setup.md](docs/integrations-setup.md)에 있습니다.
 
+### v0.9.14 — PC 톡 준비 기능
+
+**Drive → PC 톡**에서 관리자 한 명이 승인한 PC 장치끼리 톡을 주고받을 수 있습니다. 새 톡은 이 PC에 먼저 보호해 저장하고, 같은 LAN의 승인 PC와 암호화해 교환합니다. 상대 저장 확인, 작성 장치가 서명한 삭제 요청, 암호문 중계와 현재 연결 범위의 대표 PC 선정, 선택한 Windows 네트워크에서의 별도 자동 복구를 제공합니다. 외부 조정 서비스나 별도 VPN 앱을 추가하지 않습니다.
+
+기록 교환에 사용할 **모든 PC를 새 버전으로 업데이트하고 연결 정보를 다시 생성**해야 합니다. 현재는 같은 Wi-Fi·유선 LAN과 동의한 최대 15분 실행을 지원하는 준비 기능입니다. 실제 여러 PC의 설치·화면·절전 검증과 서로 다른 인터넷 환경의 자동 연결은 남아 있습니다. 기존 서버 톡·계정 이름·과거 기록은 자동 전환하지 않으며, 기존 공개 톡의 선택 보관은 관리자 PC 전용 사본입니다. [설정·사용 흐름과 구현 범위](docs/mesh-automatic-connection.md#10-대화-화면의-pc-톡과-작성-장치의-삭제-요청), [연결 진단 실행 파일 만들기](docs/mesh-connection-experiment.md)를 참고하세요.
+
 ## 기술 구성
 
 **Tauri 2 + Rust**로 만듭니다. 팀 동기화·상담 흐름·배분·시간표·Google·Telegram·AI·저장·업데이트 같은 로직은 모두 Rust(`core/`, `src-tauri/`)이고, 화면(`ui/`)만 HTML·CSS와 화면을 그리는 짧은 JS입니다. 설치 파일이 작고(수 MB) 메모리를 적게 씁니다. Windows 10·11에 기본으로 들어 있는 WebView2로 화면을 그립니다.
@@ -32,7 +38,7 @@ npm run build        # 설치 파일 만들기 (Windows 에서)
 1. `Cargo.toml`의 `[workspace.package]` `version`을 올립니다 (예: 0.8.0 → 0.8.1).
 2. 커밋해서 `main`에 push 합니다.
 
-그러면 GitHub Actions가 Windows에서 테스트와 실제 Firebase 점검을 한 뒤 설치 파일을 만들어 Releases에 올립니다. 이미 배포된 버전이면 아무것도 하지 않습니다.
+그러면 GitHub Actions가 Windows에서 앱 테스트·데스크톱 팀 서버 권한·앱 연동을 점검한 뒤 설치 파일을 만들어 Releases에 올립니다. 이미 배포된 버전이면 아무것도 하지 않습니다.
 Google 연결 정보가 설치 파일에 들어가도록 저장소 **Settings → Secrets and variables → Actions**에 `GOOGLE_CLIENT_JSON` 시크릿을 넣어 두세요 (형식은 `config/README.md`).
 
 Windows를 우선 대상으로 만들었고, macOS·Linux에서도 실행됩니다 (Linux는 투명 부분 클릭 통과가 제한될 수 있음).

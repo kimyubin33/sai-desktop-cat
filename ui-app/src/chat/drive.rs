@@ -41,6 +41,7 @@ struct D {
     drafts: HashMap<String, [String; 2]>,
     room: Room,
     poll: i32,
+    pc: bool,
     // 고르기 창
     mode: String,
     path: Vec<(String, String)>, // (폴더 id, 이름)
@@ -50,6 +51,7 @@ struct D {
 thread_local! {
     static S: RefCell<D> = RefCell::new(D::default());
     static BUSY: Cell<bool> = Cell::new(false);
+    static REFRESHING: Cell<bool> = const { Cell::new(false) };
 }
 
 fn ds<R>(f: impl FnOnce(&mut D) -> R) -> R {
@@ -79,7 +81,10 @@ fn kind_label(mime: &str, name: &str) -> String {
     if !m.is_empty() {
         return m.into();
     }
-    name.rsplit_once('.').map(|(_, e)| e.to_uppercase()).filter(|e| e.len() <= 5).unwrap_or_else(|| "파일".into())
+    name.rsplit_once('.')
+        .map(|(_, e)| e.to_uppercase())
+        .filter(|e| e.len() <= 5)
+        .unwrap_or_else(|| "파일".into())
 }
 
 fn size_text(n: f64) -> String {
@@ -94,7 +99,12 @@ fn size_text(n: f64) -> String {
 
 fn day_key(ms: f64) -> String {
     let d = js_sys::Date::new(&ms.into());
-    format!("{}년 {}월 {}일", d.get_full_year(), d.get_month() + 1, d.get_date())
+    format!(
+        "{}년 {}월 {}일",
+        d.get_full_year(),
+        d.get_month() + 1,
+        d.get_date()
+    )
 }
 
 fn open_url(url: String) {
@@ -110,7 +120,9 @@ fn edit_on() -> bool {
 }
 
 fn draft(room: Room) -> String {
-    by_id(room.draft_id()).map(|input| val(&input)).unwrap_or_default()
+    by_id(room.draft_id())
+        .map(|input| val(&input))
+        .unwrap_or_default()
 }
 
 pub(super) fn viewing(team: &str) -> bool {
@@ -174,7 +186,14 @@ fn received(v: Value, room: Room) {
     draw_feed(ds(|d| d.room == room));
 }
 
-fn send(room: Room, channel: &'static str, mut args: Value, sent: Option<String>, busy_text: &'static str, ok: &'static str) {
+fn send(
+    room: Room,
+    channel: &'static str,
+    mut args: Value,
+    sent: Option<String>,
+    busy_text: &'static str,
+    ok: &'static str,
+) {
     if !begin_request(room) {
         return;
     }
@@ -201,7 +220,11 @@ fn send(room: Room, channel: &'static str, mut args: Value, sent: Option<String>
 
 // ---------- 탭 열기 · 주기적으로 새로 읽기 ----------
 pub fn render() {
-    spawn(refresh(true));
+    if pc_selected() {
+        super::pc_talk::render();
+    } else {
+        spawn(refresh(true));
+    }
     let old = ds(|d| d.poll);
     stop(old);
     let id = every(5000, || {
@@ -210,13 +233,33 @@ pub fn render() {
             stop(p);
             return;
         }
-        spawn(refresh(false));
+        if !pc_selected() {
+            spawn(refresh(false));
+        }
     });
     ds(|d| d.poll = id);
 }
 
 async fn refresh(scroll: bool) {
-    let Ok(v) = call("drive:feed", Value::Null).await else { return };
+    if pc_selected() {
+        return;
+    }
+    if REFRESHING.with(|active| active.replace(true)) {
+        return;
+    }
+    let team = ds(|d| d.team_id.clone());
+    let result = call("drive:feed", json!({ "teamId": team })).await;
+    REFRESHING.with(|active| active.set(false));
+    if !viewing(&team) {
+        return;
+    }
+    let v = match result {
+        Ok(v) => v,
+        Err(e) => {
+            status(ds(|d| d.room), &e, true);
+            return;
+        }
+    };
     if !viewing(&s(&v, "teamId")) {
         return;
     }
@@ -238,25 +281,78 @@ pub(super) fn select_talk() {
 }
 
 fn select_room(room: Room) {
-    if ds(|d| std::mem::replace(&mut d.room, room)) == room {
+    let was_pc = ds(|d| std::mem::replace(&mut d.pc, false));
+    if let Some(e) = by_id("pcTalkRoot") {
+        toggle(&e, "hidden", true);
+    }
+    if let Some(e) = by_id("serverDrive") {
+        toggle(&e, "hidden", false);
+    }
+    if let Some(e) = by_id("drivePcMode") {
+        let _ = e.set_attribute("aria-pressed", "false");
+    }
+    if ds(|d| std::mem::replace(&mut d.room, room)) == room && !was_pc {
         return;
     }
     let files = room == Room::Files;
     for (id, selected) in [("driveChatMode", !files), ("driveFilesMode", files)] {
-        let _ = by_id(id).unwrap().set_attribute("aria-pressed", if selected { "true" } else { "false" });
+        let _ = by_id(id)
+            .unwrap()
+            .set_attribute("aria-pressed", if selected { "true" } else { "false" });
     }
     let feed = by_id("driveFeed").unwrap();
-    let _ = feed.set_attribute("aria-labelledby", if files { "driveFilesMode" } else { "driveChatMode" });
+    let _ = feed.set_attribute(
+        "aria-labelledby",
+        if files {
+            "driveFilesMode"
+        } else {
+            "driveChatMode"
+        },
+    );
     toggle(&feed, "over", false);
     toggle(&by_id("driveChatComposer").unwrap(), "hidden", files);
     toggle(&by_id("driveFilesComposer").unwrap(), "hidden", !files);
     close_picker();
     draw_feed(true);
+    if was_pc {
+        spawn(refresh(true));
+    }
+}
+pub(super) fn pc_selected() -> bool {
+    ds(|d| d.pc)
+}
+fn select_pc() {
+    ds(|d| d.pc = true);
+    close_picker();
+    for (id, selected) in [
+        ("driveChatMode", false),
+        ("driveFilesMode", false),
+        ("drivePcMode", true),
+    ] {
+        if let Some(e) = by_id(id) {
+            let _ = e.set_attribute("aria-pressed", if selected { "true" } else { "false" });
+        }
+    }
+    if let Some(e) = by_id("serverDrive") {
+        toggle(&e, "hidden", true);
+    }
+    if let Some(e) = by_id("pcTalkRoot") {
+        toggle(&e, "hidden", false);
+    }
+    super::pc_talk::render();
 }
 
 pub fn bind() {
-    on(&by_id("driveChatMode").unwrap(), "click", |_| select_room(Room::Chat));
-    on(&by_id("driveFilesMode").unwrap(), "click", |_| select_room(Room::Files));
+    super::pc_talk::bind();
+    if let Some(e) = by_id("drivePcMode") {
+        on(&e, "click", |_| select_pc());
+    }
+    on(&by_id("driveChatMode").unwrap(), "click", |_| {
+        select_room(Room::Chat)
+    });
+    on(&by_id("driveFilesMode").unwrap(), "click", |_| {
+        select_room(Room::Files)
+    });
 
     let feed = by_id("driveFeed").unwrap();
     let target = feed.clone();
@@ -294,7 +390,11 @@ pub fn bind() {
     let chooser = input.clone();
     on(&input, "change", move |_| {
         let inp: &web_sys::HtmlInputElement = chooser.unchecked_ref();
-        if chooser.get_attribute("data-team").as_deref().is_some_and(viewing) {
+        if chooser
+            .get_attribute("data-team")
+            .as_deref()
+            .is_some_and(viewing)
+        {
             if let Some(files) = inp.files() {
                 upload(files);
             }
@@ -323,11 +423,19 @@ fn drive_ready() -> bool {
         return false;
     }
     if !b(&f["google"], "signedIn") {
-        status(Room::Files, "Google 로그인이 필요해요. 설정 → 외부 연결에서 로그인해 주세요.", true);
+        status(
+            Room::Files,
+            "Google 로그인이 필요해요. 설정 → 외부 연결에서 로그인해 주세요.",
+            true,
+        );
         return false;
     }
     if !b(&f["google"], "drive") {
-        status(Room::Files, "Drive 권한이 새로 필요해요. 설정 → 외부 연결에서 로그아웃 후 다시 로그인해 주세요.", true);
+        status(
+            Room::Files,
+            "Drive 권한이 새로 필요해요. 설정 → 외부 연결에서 로그아웃 후 다시 로그인해 주세요.",
+            true,
+        );
         return false;
     }
     true
@@ -336,7 +444,14 @@ fn drive_ready() -> bool {
 fn send_text() {
     let text = draft(Room::Chat);
     if !text.trim().is_empty() {
-        send(Room::Chat, "drive:send-text", json!({ "text": text.trim() }), Some(text), "보내는 중…", "");
+        send(
+            Room::Chat,
+            "drive:send-text",
+            json!({ "text": text.trim() }),
+            Some(text),
+            "보내는 중…",
+            "",
+        );
     }
 }
 
@@ -362,7 +477,11 @@ fn upload(files: web_sys::FileList) {
                 status(Room::Files, &format!("{name}: {MAX_MB}MB 보다 커요. Drive에 먼저 올린 뒤 ‘Google Drive에서 선택’을 눌러 주세요."), true);
                 continue;
             }
-            status(Room::Files, &format!("{name} 을(를) 내 Drive 에 올리는 중…"), false);
+            status(
+                Room::Files,
+                &format!("{name} 을(를) 내 Drive 에 올리는 중…"),
+                false,
+            );
             let Ok(buf) = wasm_bindgen_futures::JsFuture::from(f.array_buffer()).await else {
                 if viewing(&team) {
                     status(Room::Files, &format!("{name} 을(를) 읽지 못했어요."), true);
@@ -370,7 +489,8 @@ fn upload(files: web_sys::FileList) {
                 continue;
             };
             use base64::Engine;
-            let data = base64::engine::general_purpose::STANDARD.encode(js_sys::Uint8Array::new(&buf).to_vec());
+            let data = base64::engine::general_purpose::STANDARD
+                .encode(js_sys::Uint8Array::new(&buf).to_vec());
             let t = if first { caption.trim() } else { "" };
             match call("drive:send-local", json!({ "teamId": team, "name": name, "mime": f.type_(), "data": data, "edit": edit, "text": t })).await {
                 Ok(v) => {
@@ -409,25 +529,88 @@ fn file_card(x: &Value) -> El {
     el("div")
         .cls("drive-file")
         .attr("title", &url)
-        .kid(el("span").cls("drive-kind").text(&kind_label(&s(x, "mimeType"), &name)))
-        .kid(el("div").cls("drive-file-main").kid(el("div").cls("drive-file-name").text(&name)).kid(el("div").cls("drive-file-sub").kid(el("span").cls(pill_cls).text(pill)).txt(&if size.is_empty() { String::new() } else { format!(" {size}") })))
+        .kid(
+            el("span")
+                .cls("drive-kind")
+                .text(&kind_label(&s(x, "mimeType"), &name)),
+        )
+        .kid(
+            el("div")
+                .cls("drive-file-main")
+                .kid(el("div").cls("drive-file-name").text(&name))
+                .kid(
+                    el("div")
+                        .cls("drive-file-sub")
+                        .kid(el("span").cls(pill_cls).text(pill))
+                        .txt(&if size.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" {size}")
+                        }),
+                ),
+        )
         .on("click", move |_| open_url(u.clone()))
 }
 
 fn draw_feed(scroll: bool) {
-    let Some(feed) = by_id("driveFeed") else { return };
+    let Some(feed) = by_id("driveFeed") else {
+        return;
+    };
     let (v, room) = ds(|d| (d.feed.clone().unwrap_or(Value::Null), d.room));
     let files = room == Room::Files;
     let head = by_id("driveHead").unwrap();
     clear(&head);
     if !b(&v, "connected") {
         clear(&feed);
-        let _ = feed.append_child(&el("div").cls("empty-state").kid(el("p").text(if files { "팀에 연결하면 파일을 공유할 수 있어요." } else { "팀에 연결하면 팀원과 톡을 주고받을 수 있어요." })).kid(el("button").cls("primary").text("설정 열기").click(|_| show_tab("settings"))).0);
+        let _ = feed.append_child(
+            &el("div")
+                .cls("empty-state")
+                .kid(el("p").text(if files {
+                    "팀에 연결하면 파일을 공유할 수 있어요."
+                } else {
+                    "팀에 연결하면 팀원과 톡을 주고받을 수 있어요."
+                }))
+                .kid(
+                    el("button")
+                        .cls("primary")
+                        .text("설정 열기")
+                        .click(|_| show_tab("settings")),
+                )
+                .0,
+        );
         return;
     }
-    let _ = head.append_child(&el("div").kid(el("b").text(&s(&v, "teamName"))).kid(el("span").cls("hint").text(&format!(" · 팀원 {}명", s(&v, "memberCount")))).0);
+    let _ = head.append_child(
+        &el("div")
+            .kid(el("b").text(&s(&v, "teamName")))
+            .kid(
+                el("span")
+                    .cls("hint")
+                    .text(&format!(" · 팀원 {}명", s(&v, "memberCount"))),
+            )
+            .0,
+    );
+    if s(&v, "backendKind") == "desktop" {
+        let _ = head.append_child(
+            &el("p")
+                .cls("hint")
+                .text("개인 PC 팀 서버에 연결해요. 파일은 Google Drive에 저장돼요.")
+                .0,
+        );
+    }
     if files && !b(&v["google"], "signedIn") {
-        let _ = head.append_child(&el("div").cls("warn").txt("파일을 보내려면 Google 로그인이 필요해요. ").kid(el("button").cls("link").text("설정 → 외부 연결").click(|_| show_tab("settings"))).0);
+        let _ = head.append_child(
+            &el("div")
+                .cls("warn")
+                .txt("파일을 보내려면 Google 로그인이 필요해요. ")
+                .kid(
+                    el("button")
+                        .cls("link")
+                        .text("설정 → 외부 연결")
+                        .click(|_| show_tab("settings")),
+                )
+                .0,
+        );
     } else if files && !b(&v["google"], "drive") {
         let _ = head.append_child(&el("div").cls("warn").txt("내 드라이브에서 고르려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요). ").kid(el("button").cls("link").text("설정 → 외부 연결").click(|_| show_tab("settings"))).0);
     }
@@ -438,9 +621,21 @@ fn draw_feed(scroll: bool) {
     let near_bottom = feed.scroll_height() - feed.scroll_top() - feed.client_height() < 120;
     clear(&feed);
     let items = arr(&v, "items");
-    let mut visible = items.iter().filter(|x| x["url"].as_str().is_some_and(|url| !url.is_empty()) == files).peekable();
+    let mut visible = items
+        .iter()
+        .filter(|x| x["url"].as_str().is_some_and(|url| !url.is_empty()) == files)
+        .peekable();
     if visible.peek().is_none() {
-        let _ = feed.append_child(&el("div").cls("empty").text(if files { "아직 공유한 파일이 없어요. 아래에서 파일을 선택하거나 여기에 끌어다 놓으세요." } else { "아직 주고받은 톡이 없어요. 팀원에게 첫 메시지를 보내 보세요." }).0);
+        let _ = feed.append_child(
+            &el("div")
+                .cls("empty")
+                .text(if files {
+                    "아직 공유한 파일이 없어요. 아래에서 파일을 선택하거나 여기에 끌어다 놓으세요."
+                } else {
+                    "아직 주고받은 톡이 없어요. 팀원에게 첫 메시지를 보내 보세요."
+                })
+                .0,
+        );
     }
     let mut last_day = String::new();
     for x in visible {
@@ -464,8 +659,16 @@ fn draw_feed(scroll: bool) {
         let mut foot = el("div").cls("drive-foot");
         if files {
             let u = s(x, "url");
-            foot = foot.kid(el("button").cls("link").text("열기").click(move |_| open_url(u.clone())));
-            if !mine && !s(x, "driveId").is_empty() && s(x, "mimeType") != "application/vnd.google-apps.folder" {
+            foot = foot.kid(
+                el("button")
+                    .cls("link")
+                    .text("열기")
+                    .click(move |_| open_url(u.clone())),
+            );
+            if !mine
+                && !s(x, "driveId").is_empty()
+                && s(x, "mimeType") != "application/vnd.google-apps.folder"
+            {
                 let id = s(x, "id");
                 foot = foot.kid(el("button").cls("link").text("내 Drive 에 저장").attr("title", "내 드라이브의 \"사이에서 받은 파일\" 폴더에 사본을 만들어요").click(move |_| {
                     let id = id.clone();
@@ -486,11 +689,35 @@ fn draw_feed(scroll: bool) {
         }
         if mine {
             let id = s(x, "id");
-            foot = foot.kid(el("button").cls("link").text("지우기").attr("title", if files { "공유 목록에서 지우기" } else { "이 메시지 지우기" }).click(move |_| {
-                if confirm(if files { "파일을 공유 목록에서 지울까요? Google Drive 원본은 유지돼요." } else { "팀 톡에서 이 메시지를 지울까요?" }) {
-                    send(room, "drive:delete", json!({ "id": id }), None, "지우는 중…", "지웠어요.");
-                }
-            }));
+            foot = foot.kid(
+                el("button")
+                    .cls("link")
+                    .text("지우기")
+                    .attr(
+                        "title",
+                        if files {
+                            "공유 목록에서 지우기"
+                        } else {
+                            "이 메시지 지우기"
+                        },
+                    )
+                    .click(move |_| {
+                        if confirm(if files {
+                            "파일을 공유 목록에서 지울까요? Google Drive 원본은 유지돼요."
+                        } else {
+                            "팀 톡에서 이 메시지를 지울까요?"
+                        }) {
+                            send(
+                                room,
+                                "drive:delete",
+                                json!({ "id": id }),
+                                None,
+                                "지우는 중…",
+                                "지웠어요.",
+                            );
+                        }
+                    }),
+            );
         }
         foot = foot.kid(el("span").cls("drive-time").text(&fmt_clock(at)));
         bubble = bubble.kid(foot);
@@ -527,7 +754,9 @@ fn set_mode(m: &str) {
 }
 
 async fn load_picker(page: String) {
-    let Some(p) = by_id("drivePicker") else { return };
+    let Some(p) = by_id("drivePicker") else {
+        return;
+    };
     let (mode, path, q) = ds(|d| (d.mode.clone(), d.path.clone(), d.q.clone()));
     if page.is_empty() {
         draw_picker_frame(&p, &mode, &path, &q);
@@ -540,26 +769,46 @@ async fn load_picker(page: String) {
         let _ = list.append_child(&el("div").cls("hint").text("불러오는 중…").0);
     }
     let folder = path.last().map(|x| x.0.clone()).unwrap_or_default();
-    let mode_q = if mode == "search" && q.trim().is_empty() { "my".to_string() } else { mode.clone() };
-    match call("drive:list", json!({ "mode": mode_q, "folder": folder, "q": q, "page": page })).await {
+    let mode_q = if mode == "search" && q.trim().is_empty() {
+        "my".to_string()
+    } else {
+        mode.clone()
+    };
+    match call(
+        "drive:list",
+        json!({ "mode": mode_q, "folder": folder, "q": q, "page": page }),
+    )
+    .await
+    {
         Ok(r) => {
             if page.is_empty() {
                 clear(&list);
             }
             let files = arr(&r, "files");
             if files.is_empty() && page.is_empty() {
-                let _ = list.append_child(&el("div").cls("empty").text(match mode.as_str() {
-                    "shared" => "공유 문서함이 비어 있어요.",
-                    "search" => "찾는 이름의 파일이 없어요.",
-                    _ => "이 폴더는 비어 있어요.",
-                }).0);
+                let _ = list.append_child(
+                    &el("div")
+                        .cls("empty")
+                        .text(match mode.as_str() {
+                            "shared" => "공유 문서함이 비어 있어요.",
+                            "search" => "찾는 이름의 파일이 없어요.",
+                            _ => "이 폴더는 비어 있어요.",
+                        })
+                        .0,
+                );
             }
             for f in &files {
                 let _ = list.append_child(&pick_row(f).0);
             }
             let next = s(&r, "nextPageToken");
             if !next.is_empty() {
-                let _ = more.append_child(&el("button").cls("link").text("더 보기").click(move |_| spawn(load_picker(next.clone()))).0);
+                let _ = more.append_child(
+                    &el("button")
+                        .cls("link")
+                        .text("더 보기")
+                        .click(move |_| spawn(load_picker(next.clone())))
+                        .0,
+                );
             }
         }
         Err(e) => {
@@ -571,8 +820,17 @@ async fn load_picker(page: String) {
 
 fn draw_picker_frame(p: &HtmlElement, mode: &str, path: &[(String, String)], q: &str) {
     clear(p);
-    let tab = |m: &'static str, label: &str| el("button").cls(if mode == m { "chip on" } else { "chip" }).text(label).click(move |_| set_mode(m));
-    let search = el("input").attr("type", "search").attr("placeholder", "이름으로 찾기").attr("value", q).build();
+    let tab = |m: &'static str, label: &str| {
+        el("button")
+            .cls(if mode == m { "chip on" } else { "chip" })
+            .text(label)
+            .click(move |_| set_mode(m))
+    };
+    let search = el("input")
+        .attr("type", "search")
+        .attr("placeholder", "이름으로 찾기")
+        .attr("value", q)
+        .build();
     {
         let s2 = search.clone();
         on(&search, "keydown", move |e| {
@@ -588,20 +846,38 @@ fn draw_picker_frame(p: &HtmlElement, mode: &str, path: &[(String, String)], q: 
         &el("div")
             .cls("pick-head")
             .kid(el("b").text("Google 드라이브에서 보내기"))
-            .kid(el("button").cls("link").text("닫기").click(|_| close_picker()))
+            .kid(
+                el("button")
+                    .cls("link")
+                    .text("닫기")
+                    .click(|_| close_picker()),
+            )
             .0,
     );
-    let _ = p.append_child(&el("div").cls("chips").kid(tab("my", "내 드라이브")).kid(tab("shared", "공유 문서함")).kid(tab("recent", "최근")).child(search).0);
+    let _ = p.append_child(
+        &el("div")
+            .cls("chips")
+            .kid(tab("my", "내 드라이브"))
+            .kid(tab("shared", "공유 문서함"))
+            .kid(tab("recent", "최근"))
+            .child(search)
+            .0,
+    );
     if mode == "my" {
-        let mut crumbs = el("div").cls("pick-path").kid(el("button").cls("link").text("내 드라이브").click(|_| {
-            ds(|d| d.path.clear());
-            spawn(load_picker(String::new()));
-        }));
+        let mut crumbs =
+            el("div")
+                .cls("pick-path")
+                .kid(el("button").cls("link").text("내 드라이브").click(|_| {
+                    ds(|d| d.path.clear());
+                    spawn(load_picker(String::new()));
+                }));
         for (i, (_, name)) in path.iter().enumerate() {
-            crumbs = crumbs.txt(" › ").kid(el("button").cls("link").text(name).click(move |_| {
-                ds(|d| d.path.truncate(i + 1));
-                spawn(load_picker(String::new()));
-            }));
+            crumbs = crumbs
+                .txt(" › ")
+                .kid(el("button").cls("link").text(name).click(move |_| {
+                    ds(|d| d.path.truncate(i + 1));
+                    spawn(load_picker(String::new()));
+                }));
         }
         let _ = p.append_child(&crumbs.0);
     }
@@ -621,13 +897,39 @@ fn pick_row(f: &Value) -> El {
         if !sharer.is_empty() {
             format!("{sharer} 공유")
         } else {
-            f["owners"].get(0).map(|o| s(o, "displayName")).unwrap_or_default()
+            f["owners"]
+                .get(0)
+                .map(|o| s(o, "displayName"))
+                .unwrap_or_default()
         }
     };
     let modified = s(f, "modifiedTime");
     let when = js_sys::Date::new(&modified.as_str().into()).get_time();
-    let sub = format!("{who}{}{}", if when.is_nan() { String::new() } else { format!(" · {}", super::fmt_date(when)) }, { let z = size_text(n(f, "size")); if z.is_empty() { z } else { format!(" · {z}") } });
-    let row = el("div").cls("item").kid(el("span").cls("drive-kind").text(&kind_label(&mime, &name))).kid(el("div").cls("main").kid(el("div").cls("title").text(&name)).kid(el("div").cls("sub").text(&sub)));
+    let sub = format!(
+        "{who}{}{}",
+        if when.is_nan() {
+            String::new()
+        } else {
+            format!(" · {}", super::fmt_date(when))
+        },
+        {
+            let z = size_text(n(f, "size"));
+            if z.is_empty() {
+                z
+            } else {
+                format!(" · {z}")
+            }
+        }
+    );
+    let row = el("div")
+        .cls("item")
+        .kid(el("span").cls("drive-kind").text(&kind_label(&mime, &name)))
+        .kid(
+            el("div")
+                .cls("main")
+                .kid(el("div").cls("title").text(&name))
+                .kid(el("div").cls("sub").text(&sub)),
+        );
     let (id, n2) = (s(f, "id"), name.clone());
     if folder {
         row.kid(el("button").text("열기").click(move |_| {
@@ -645,7 +947,14 @@ fn pick_row(f: &Value) -> El {
         row.kid(el("button").cls("primary").text("보내기").click(move |_| {
             let caption = draft(Room::Files);
             close_picker();
-            send(Room::Files, "drive:send-drive", json!({ "fileId": id, "edit": edit_on(), "text": caption.trim() }), Some(caption), "보내는 중…", "보냈어요.");
+            send(
+                Room::Files,
+                "drive:send-drive",
+                json!({ "fileId": id, "edit": edit_on(), "text": caption.trim() }),
+                Some(caption),
+                "보내는 중…",
+                "보냈어요.",
+            );
         }))
     }
 }

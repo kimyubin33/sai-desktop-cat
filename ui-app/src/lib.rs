@@ -12,6 +12,8 @@ mod cat;
 mod chat;
 #[cfg(target_arch = "wasm32")]
 mod peek;
+#[cfg(target_arch = "wasm32")]
+mod probe;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
@@ -21,6 +23,7 @@ pub fn main() {
         "cat" => cat::start(),
         "chat" => chat::start(),
         "peek" => peek::start(),
+        "probe" => probe::start(),
         _ => {}
     }
 }

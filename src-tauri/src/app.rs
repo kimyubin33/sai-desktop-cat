@@ -47,6 +47,12 @@ pub struct App {
     pub updater: Updater,
     pub local_mode: bool,
     pub server_plan: tokio::sync::Mutex<Option<Value>>,
+    pub mesh_probe: tokio::sync::Mutex<Option<sai_core::team::mesh::probe::Probe>>,
+    pub mesh_runtime: sai_core::team::mesh::runtime::Controller,
+    pub mesh_migration: sai_core::team::mesh::migration::Importer,
+    pub mesh_worker: Mutex<Option<sai_core::team::mesh::runtime::Worker>>,
+    pub mesh_power: Mutex<Option<crate::mesh_lifecycle::PowerGuard>>,
+    pub mesh_identity_path: std::path::PathBuf,
 }
 
 pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
@@ -121,6 +127,12 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         updater: Updater::new(),
         local_mode: local_file.is_some(),
         server_plan: Default::default(),
+        mesh_probe: Default::default(),
+        mesh_runtime: sai_core::team::mesh::runtime::Controller::new(sai_core::team::mesh::identity::Vault::new(dir.join("mesh").join("identity.sqlite3"))),
+        mesh_migration: sai_core::team::mesh::migration::Importer::new(sai_core::team::mesh::identity::Vault::new(dir.join("mesh").join("identity.sqlite3"))),
+        mesh_worker: Default::default(),
+        mesh_power: Default::default(),
+        mesh_identity_path: dir.join("mesh").join("identity.sqlite3"),
     });
 
     // 컴퓨터를 켜면 자동으로 실행 (켤 때마다 다시 등록)
@@ -179,6 +191,14 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         a.advisor.start(&a);
         a.updater.start(&a);
     }
+    match crate::mesh_lifecycle::PowerGuard::register(a.mesh_runtime.clone()) {
+        Ok(guard)=>*a.mesh_power.lock().unwrap()=Some(guard),
+        Err(error)=>eprintln!("{error}"),
+    }
+    let lifecycle=a.clone();
+    tauri::async_runtime::spawn(async move {
+        *lifecycle.mesh_worker.lock().unwrap()=Some(lifecycle.mesh_runtime.worker());
+    });
     Ok(a)
 }
 
@@ -212,12 +232,16 @@ pub fn backup_later(a: &Arc<App>, allow_empty: bool) {
 
 /// 모든 팀 동기화 + Google 할 일
 pub async fn sync_now(a: &Arc<App>) -> Value {
-    let results = a.hub.sync_all().await;
-    // 팀에 공유된 Claude 키 (내 키가 없을 때 쓴다)
-    a.ai.set_shared(a.hub.shared_claude_key());
-    if !results.is_empty() {
+    // Google은 각 PC에서 직접 연결한다. 팀 서버 응답을 기다리느라 Google 작업까지 멈추지 않는다.
+    let before: Vec<_> = a.hub.all().iter().map(|t| (t.id.clone(), t.collab_data())).collect();
+    let (results, _) = tokio::join!(a.hub.sync_all(), a.google.sync_todo());
+    let after: Vec<_> = a.hub.all().iter().map(|t| (t.id.clone(), t.collab_data())).collect();
+    // 서버에서 새 작업을 받았다면 같은 동기화 안에서 Google에도 반영한다.
+    if before != after && results.iter().any(|r| r.b("ok")) {
         let _ = a.google.sync_todo().await;
     }
+    // 팀에 공유된 Claude 키 (내 키가 없을 때 쓴다)
+    a.ai.set_shared(a.hub.shared_claude_key());
     menu::refresh_tray(&a.handle, a);
     results.into_iter().find(|r| !r.b("ok")).unwrap_or_else(|| json!({ "ok": false, "reason": "not-connected" }))
 }

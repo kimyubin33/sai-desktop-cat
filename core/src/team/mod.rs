@@ -21,6 +21,7 @@ pub mod backend;
 pub mod claude;
 pub mod codec;
 pub mod desktop;
+pub mod mesh;
 mod delivery;
 pub mod shares;
 mod removal;

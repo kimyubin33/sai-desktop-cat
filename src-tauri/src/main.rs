@@ -8,6 +8,12 @@ mod cat;
 mod demo;
 mod ipc;
 mod menu;
+mod mesh;
+mod mesh_identity;
+mod mesh_lifecycle;
+mod mesh_migration;
+mod mesh_talk;
+mod mesh_workbench;
 mod peek;
 mod system;
 mod team_host;
@@ -38,10 +44,24 @@ fn main() {
             tauri::RunEvent::ExitRequested { api, code, .. } => {
                 if code.is_none() {
                     api.prevent_exit();
+                } else if let Some(a) = app.try_state::<Arc<app::App>>() {
+                    a.mesh_runtime
+                        .event(sai_core::team::mesh::runtime::Event::Exit);
                 }
             }
             tauri::RunEvent::Exit => {
                 if let Some(a) = app.try_state::<Arc<app::App>>() {
+                    if let Ok(mut probe) = a.mesh_probe.try_lock() {
+                        probe.take();
+                    }
+                    a.mesh_runtime
+                        .event(sai_core::team::mesh::runtime::Event::Exit);
+                    if let Ok(mut worker) = a.mesh_worker.lock() {
+                        worker.take();
+                    }
+                    if let Ok(mut power) = a.mesh_power.lock() {
+                        power.take();
+                    }
                     a.stores.flush_all();
                 }
             }

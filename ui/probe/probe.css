@@ -1,0 +1,11 @@
+body { overflow: auto; }
+#probeRoot { width: 100%; max-width: 760px; margin: 0 auto; padding: 18px; }
+h1 { margin: 0 0 10px; font-size: 22px; }
+fieldset { min-width: 0; }
+label { display: block; margin: 10px 0 6px; }
+select, textarea { width: 100%; }
+textarea { resize: vertical; overflow-wrap: anywhere; }
+.check { display: flex; align-items: flex-start; gap: 8px; line-height: 1.6; }
+.check input { flex: 0 0 auto; margin-top: 5px; }
+.inline { flex-wrap: wrap; }
+.item .main { min-width: 0; }
