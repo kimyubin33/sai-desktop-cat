@@ -20,25 +20,6 @@ pub fn ensure_autostart() {
     }
 }
 
-/// 마지막 입력(키보드·마우스) 뒤로 지난 초
-pub fn idle_seconds() -> u64 {
-    #[cfg(windows)]
-    unsafe {
-        use windows_sys::Win32::System::SystemInformation::GetTickCount;
-        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
-        let mut info = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
-        if GetLastInputInfo(&mut info) != 0 {
-            return (GetTickCount().wrapping_sub(info.dwTime) / 1000) as u64;
-        }
-    }
-    0
-}
-
-/// 10분 넘게 입력이 없으면 자리를 비운 것으로 본다
-pub fn is_away() -> bool {
-    idle_seconds() >= 600
-}
-
 pub fn open_url(url: &str) {
     let _ = open::that_detached(url);
 }

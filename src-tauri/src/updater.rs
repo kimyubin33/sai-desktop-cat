@@ -8,13 +8,14 @@ use futures_util::StreamExt;
 use sai_core::http::client;
 use sai_core::time::now_ms;
 use sai_core::util::J;
-use serde_json::{json, Value};
 #[allow(unused_imports)]
 use sai_core::util::J as _J;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::Emitter;
 
 const REPO: &str = "kimyubin33/sai-desktop-cat";
 pub const RELEASES_URL: &str = "https://github.com/kimyubin33/sai-desktop-cat/releases/latest";
@@ -53,11 +54,28 @@ pub fn native_arm64() -> bool {
 
 /// 최신 릴리스 버전 (예: "0.9.4"). GitHub API 대신 최신 릴리스 주소가 넘어가는 곳으로 알아낸다 (호출 수 제한 없음)
 async fn latest_tag() -> Result<String, String> {
-    let res = client().get(RELEASES_URL).timeout(Duration::from_secs(30)).send().await.map_err(|e| format!("GitHub 에 연결하지 못했어요: {e}"))?;
+    let res = client()
+        .get(RELEASES_URL)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("GitHub 에 연결하지 못했어요: {e}"))?;
     let final_url = res.url().to_string();
-    let tag = final_url.rsplit("/tag/").next().filter(|t| *t != final_url).map(String::from);
-    let Some(tag) = tag else { return Err(format!("최신 버전을 알아내지 못했어요 (응답 {})", res.status())) };
-    Ok(tag.trim_start_matches('v').trim_end_matches('/').to_string())
+    let tag = final_url
+        .rsplit("/tag/")
+        .next()
+        .filter(|t| *t != final_url)
+        .map(String::from);
+    let Some(tag) = tag else {
+        return Err(format!(
+            "최신 버전을 알아내지 못했어요 (응답 {})",
+            res.status()
+        ));
+    };
+    Ok(tag
+        .trim_start_matches('v')
+        .trim_end_matches('/')
+        .to_string())
 }
 
 fn newer(a: &str, b: &str) -> bool {
@@ -68,19 +86,35 @@ fn newer(a: &str, b: &str) -> bool {
 }
 
 pub fn supported() -> bool {
+    if crate::preview::isolated() {
+        return false;
+    }
     // 개발용: SAI_UPDATE_TEST 가 있으면 다른 운영체제·개발 실행에서도 확인·내려받기까지 해 본다 (설치는 하지 않음)
     (cfg!(windows) && !cfg!(debug_assertions)) || std::env::var("SAI_UPDATE_TEST").is_ok()
 }
 
 impl Updater {
     pub fn new() -> Updater {
-        let mut st = St { status: "idle".into(), ..Default::default() };
+        let mut st = St {
+            status: "idle".into(),
+            ..Default::default()
+        };
         if !supported() {
             st.status = "unsupported".into();
-            st.error = Some("이 실행 방식에서는 자동 업데이트를 하지 않아요 (Windows 설치 버전에서 동작).".into());
+            st.error = Some(if crate::preview::isolated() {
+                "미리보기에서는 자동 업데이트를 사용하지 않아요. 새 검증판은 따로 설치해 주세요."
+            } else {
+                "이 실행 방식에서는 자동 업데이트를 하지 않아요 (Windows 설치 버전에서 동작)."
+            }.into());
         }
-        let current = std::env::var("SAI_UPDATE_TEST").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-        Updater { st: Mutex::new(st), current }
+        let current = std::env::var("SAI_UPDATE_TEST")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        Updater {
+            st: Mutex::new(st),
+            current,
+        }
     }
 
     pub fn state(&self) -> Value {
@@ -135,7 +169,13 @@ impl Updater {
         }
         if self.is_ready() || self.st.lock().unwrap().status == "downloading" {
             if manual {
-                a.advisor.info(a, &format!("새 버전 {}을 이미 받고 있거나 받아 두었어요.", self.latest().unwrap_or_default()));
+                a.advisor.info(
+                    a,
+                    &format!(
+                        "새 버전 {}을 이미 받고 있거나 받아 두었어요.",
+                        self.latest().unwrap_or_default()
+                    ),
+                );
             }
             return self.state();
         }
@@ -150,7 +190,8 @@ impl Updater {
                     s.last_check = now_ms();
                 });
                 if manual {
-                    a.advisor.info(a, &format!("지금이 최신 버전({})이에요.", self.current));
+                    a.advisor
+                        .info(a, &format!("지금이 최신 버전({})이에요.", self.current));
                 }
             }
             Ok(Some(v)) => {
@@ -166,7 +207,8 @@ impl Updater {
                     s.last_check = now_ms();
                 });
                 if manual {
-                    a.advisor.info(a, &format!("업데이트를 확인하지 못했어요: {e}"));
+                    a.advisor
+                        .info(a, &format!("업데이트를 확인하지 못했어요: {e}"));
                 }
             }
         }
@@ -191,7 +233,10 @@ impl Updater {
             .await
             .map_err(|e| format!("확인용 파일을 받지 못했어요: {e}"))?;
         if !sums_res.status().is_success() {
-            return Err(format!("새 버전에 확인용 파일(SHA256SUMS.txt)이 없어요 (응답 {}).", sums_res.status()));
+            return Err(format!(
+                "새 버전에 확인용 파일(SHA256SUMS.txt)이 없어요 (응답 {}).",
+                sums_res.status()
+            ));
         }
         let sums = sums_res.text().await.map_err(|e| e.to_string())?;
         let hash_of = |name: &str| {
@@ -207,7 +252,10 @@ impl Updater {
         let arm_name = format!("Sai-Setup-{latest}-arm64.exe");
         let (setup_name, want) = match (native_arm64(), hash_of(&arm_name)) {
             (true, Some(h)) => (arm_name, h),
-            _ => (x64_name.clone(), hash_of(&x64_name).ok_or("확인용 파일에 설치 파일 정보가 없어요.")?),
+            _ => (
+                x64_name.clone(),
+                hash_of(&x64_name).ok_or("확인용 파일에 설치 파일 정보가 없어요.")?,
+            ),
         };
 
         self.set(|s| {
@@ -224,7 +272,10 @@ impl Updater {
             .await
             .map_err(|e| format!("설치 파일을 받지 못했어요: {e}"))?;
         if !res.status().is_success() {
-            return Err(format!("설치 파일을 받지 못했어요 (응답 {}).", res.status()));
+            return Err(format!(
+                "설치 파일을 받지 못했어요 (응답 {}).",
+                res.status()
+            ));
         }
         let total = res.content_length().unwrap_or(0);
         let mut stream = res.bytes_stream();
@@ -232,12 +283,20 @@ impl Updater {
         let mut buf: Vec<u8> = Vec::with_capacity(total as usize);
         loop {
             // 30초 동안 아무것도 오지 않으면 멈춘 것으로 본다
-            let next = tokio::time::timeout(Duration::from_secs(30), stream.next()).await.map_err(|_| "내려받기가 30초 동안 멈춰 있어서 그만뒀어요. 다시 눌러 주세요.".to_string())?;
+            let next = tokio::time::timeout(Duration::from_secs(30), stream.next())
+                .await
+                .map_err(|_| {
+                    "내려받기가 30초 동안 멈춰 있어서 그만뒀어요. 다시 눌러 주세요.".to_string()
+                })?;
             let Some(chunk) = next else { break };
             let chunk = chunk.map_err(|e| format!("내려받다가 끊겼어요: {e}"))?;
             hasher.update(&chunk);
             buf.extend_from_slice(&chunk);
-            let p = if total > 0 { (buf.len() as u64 * 100 / total).min(99) as u32 } else { 0 };
+            let p = if total > 0 {
+                (buf.len() as u64 * 100 / total).min(99) as u32
+            } else {
+                0
+            };
             self.set(|s| s.progress = p);
         }
         let got = format!("{:x}", hasher.finalize());
@@ -269,6 +328,9 @@ impl Updater {
                 let a2 = a.clone();
                 tauri::async_runtime::spawn(async move {
                     a2.updater.check(&a2, false).await;
+                    let _ = a2
+                        .handle
+                        .emit_to("chat", "update:state", a2.updater.state());
                     crate::menu::refresh_tray(&a2.handle, &a2);
                 });
             }
@@ -278,11 +340,17 @@ impl Updater {
 
     /// 설치 버전(설치 폴더에 제거 프로그램이 있음)인지
     fn installed() -> bool {
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("uninstall.exe").exists())).unwrap_or(false)
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("uninstall.exe").exists()))
+            .unwrap_or(false)
     }
 
     /// 받아 둔 설치 파일을 실행하고 사이를 끈다 (설치가 끝나면 다시 켠다)
     pub fn install(&self, a: &Arc<App>) {
+        if crate::preview::isolated() {
+            return;
+        }
         let Some(file) = self.st.lock().unwrap().file.clone() else {
             let _ = open::that_detached(RELEASES_URL);
             return;
@@ -294,6 +362,9 @@ impl Updater {
 
     /// 프로그램을 끌 때: 받아 둔 새 버전이 있으면 조용히 설치해 둔다 (다시 켜지는 않음)
     pub fn install_on_quit(&self) {
+        if crate::preview::isolated() {
+            return;
+        }
         if let Some(file) = self.st.lock().unwrap().file.clone() {
             if Self::installed() {
                 self.spawn(&file, &["/S"], false);
@@ -318,14 +389,23 @@ impl Updater {
         {
             use std::os::windows::process::CommandExt;
             const DETACHED: u32 = 0x0000_0008 | 0x0800_0000; // DETACHED_PROCESS | CREATE_NO_WINDOW
-            let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+            let exe = std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
             // 사이가 꺼질 시간을 조금 준 뒤 설치하고, 필요하면 다시 켠다
             // (timeout 명령은 창 없는 프로세스에서 바로 끝나 버려서, 기다리는 데는 ping 을 쓴다)
-            let mut script = format!("ping -n 4 127.0.0.1 >nul & start \"\" /wait \"{}\" {}", file.display(), args.join(" "));
+            let mut script = format!(
+                "ping -n 4 127.0.0.1 >nul & start \"\" /wait \"{}\" {}",
+                file.display(),
+                args.join(" ")
+            );
             if relaunch {
                 script.push_str(&format!(" & start \"\" \"{exe}\""));
             }
-            let _ = std::process::Command::new("cmd").raw_arg(format!("/S /C \"{script}\"")).creation_flags(DETACHED).spawn();
+            let _ = std::process::Command::new("cmd")
+                .raw_arg(format!("/S /C \"{script}\""))
+                .creation_flags(DETACHED)
+                .spawn();
         }
     }
 }

@@ -1,32 +1,33 @@
-//! 앱 상태와 시작: 저장소, 팀 연결, Google, AI, 대화, 시간표, 고양이, 조언, 업데이트를 하나로 묶는다.
-use crate::advisor::Advisor;
-use crate::cat::{self, CatState};
-use crate::menu;
-use crate::updater::Updater;
-use sai_core::ai::Ai;
-use sai_core::chat::Chat;
-use sai_core::google::Google;
-use sai_core::schedule::{book::Book, Schedule};
-use sai_core::store::Stores;
-use sai_core::team::{backend::random_code, Backend, Hub};
-use sai_core::time::now_ms;
-use sai_core::util::J;
+use crate::{
+    advisor::Advisor,
+    cat::{self, CatState},
+    menu,
+    updater::Updater,
+};
+use sai_core::{
+    ai::Ai,
+    chat::Chat,
+    google::Google,
+    store::{Store, Stores},
+    team::Hub,
+    time::now_ms,
+    util::J,
+};
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// 이 팀이 쓰는 Firebase 프로젝트(saigajoa)의 연결 정보.
-/// apiKey 는 비밀번호가 아니라 프로젝트를 가리키는 공개 값이며, 데이터 보호는 firestore.rules 가 맡는다.
-pub fn builtin_firebase() -> Value {
-    json!({ "apiKey": "AIzaSyC6MBRsYOCchzBRZT7hX2cvbxUujGG_Eq0", "projectId": "saigajoa" })
-}
-
-/// 설치 파일을 만들 때 함께 넣은 Google 연결 정보 (없으면 None)
 pub fn builtin_google() -> Option<Value> {
     let raw = option_env!("SAI_GOOGLE_CLIENT")?;
     let j: Value = serde_json::from_str(raw).ok()?;
-    let c = if j.get("installed").is_some() { &j["installed"] } else { &j };
+    let c = if j.get("installed").is_some() {
+        &j["installed"]
+    } else {
+        &j
+    };
     let id = c.os("clientId").or_else(|| c.os("client_id"))?;
     let secret = c.os("clientSecret").or_else(|| c.os("client_secret"))?;
     Some(json!({ "clientId": id, "clientSecret": secret }))
@@ -35,236 +36,148 @@ pub fn builtin_google() -> Option<Value> {
 pub struct App {
     pub handle: AppHandle,
     pub stores: Stores,
-    pub hub: Hub,
     pub google: Google,
     pub ai: Arc<Ai>,
-    pub allocation_plans: Mutex<std::collections::HashMap<(String, String), sai_core::collab::ai_plan::Plan>>,
     pub chat: Chat,
-    pub schedule: Schedule,
     pub cat: Mutex<CatState>,
     pub advisor: Advisor,
-    pub peeks: crate::peek::Peeks,
     pub updater: Updater,
-    pub local_mode: bool,
-    pub server_plan: tokio::sync::Mutex<Option<Value>>,
-    pub mesh_probe: tokio::sync::Mutex<Option<sai_core::team::mesh::probe::Probe>>,
-    pub mesh_runtime: sai_core::team::mesh::runtime::Controller,
-    pub mesh_migration: sai_core::team::mesh::migration::Importer,
-    pub mesh_worker: Mutex<Option<sai_core::team::mesh::runtime::Worker>>,
-    pub mesh_power: Mutex<Option<crate::mesh_lifecycle::PowerGuard>>,
-    pub mesh_identity_path: std::path::PathBuf,
+    pub data_dir: std::path::PathBuf,
+    pub legacy_export: tokio::sync::Mutex<()>,
+    pub file_jobs: crate::file_transfer::Jobs,
 }
 
 pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
-    let dir = app.path().app_data_dir()?;
-    let mut stores = Stores::open(&dir);
-    match stores.apply_team_server(&dir) {
-        Ok(true) => stores = Stores::open(&dir),
-        Err(e) => stores.settings.update(|s| {
-            s["pendingTeamServer"] = Value::Null;
-            s["teamServerNotice"] = json!(e);
-        }),
-        _ => {}
-    }
-    // 예전 저장값 정리: 끄는 기능을 없앴으므로 빈도는 셋 중 하나로
-    stores.settings.update(|s| {
-        if !["low", "normal", "high"].contains(&s.s("frequency").as_str()) {
-            s["frequency"] = json!("low");
-        }
-    });
-
-    let local_file = std::env::var("SAI_TEAM_FILE").ok();
-    let settings = stores.settings.clone();
-    let make_backend: sai_core::team::MakeBackend = {
-        let settings = settings.clone();
-        let local_file = local_file.clone();
-        Box::new(move || {
-            // 로컬 시험 모드: 한 컴퓨터에서 앱 두 개를 띄워 팀처럼 시험 (SAI_TEAM_FILE=공유 파일 경로)
-            if let Some(f) = &local_file {
-                if settings.read(|s| s.s("localUid")).is_empty() {
-                    let uid = format!("local-{}", random_code(10).to_lowercase());
-                    settings.update(|s| s["localUid"] = json!(uid));
-                }
-                return Some(Backend::memory(Some(f.into()), &settings.read(|s| s.s("localUid"))));
-            }
-            let cfg = settings.read(|s| s["firebase"].clone());
-            let mut cfg = if cfg.is_object() && !cfg.s("apiKey").is_empty() { cfg } else { builtin_firebase() };
-            let host = settings.read(|s| s["teamServer"].clone());
-            if !host.is_null() {
-                let address = host["url"].as_str()?;
-                let id = host["serverId"].as_str()?;
-                cfg["desktopServer"] = json!(address);
-                cfg["desktopServerId"] = json!(id);
-            }
-            let session = settings.read(|s| sai_core::secret::decrypt_json_field(s, "firebaseSessionEnc"));
-            let st = settings.clone();
-            Backend::firebase(&cfg, session, Box::new(move |sess: &Value| {
-                let enc = sai_core::secret::encrypt_json(sess);
-                st.update(|s| s["firebaseSessionEnc"] = json!(enc));
-            }))
-            .ok()
-        })
+    let config = app.config();
+    crate::preview::validate_identity(
+        crate::preview::BUILD,
+        &config.identifier,
+        config.product_name.as_deref(),
+        config.main_binary_name.as_deref(),
+    )?;
+    // 화면 검증은 실제 사용자 자료·자동 실행 등록을 건드리지 않는다.
+    let preview = std::env::var_os("SAI_PREVIEW_DIR").map(std::path::PathBuf::from);
+    let isolated = crate::preview::isolated();
+    let dir = match &preview {
+        Some(dir) => dir.clone(),
+        None => app.path().app_data_dir()?,
     };
-    let delay = std::env::var("SAI_SEND_DELAY_MS").ok().and_then(|v| v.parse().ok());
-    let hub = Hub::new(stores.settings.clone(), stores.shared_outbox.clone(), stores.team_cache.clone(), make_backend, delay, Arc::new(now_ms));
-    let google = Google::new(stores.settings.clone(), stores.team_cache.clone(), hub.clone(), builtin_google(), Arc::new(|u: &str| crate::system::open_url(u)));
+    let stores = Stores::open(&dir);
+    // 기존 자료는 보존하되 옛 Firebase / PC 서버에는 연결하지 않는다.
+    let hub = Hub::new(
+        Store::memory(json!({"teams":[]})),
+        Store::memory(json!({"items":[]})),
+        Store::memory(json!({"teams":{}})),
+        Box::new(|| None),
+        None,
+        Arc::new(now_ms),
+    );
+    let google = Google::new(
+        stores.settings.clone(),
+        stores.google_connection.clone(),
+        hub,
+        builtin_google(),
+        Arc::new(crate::system::open_url),
+        preview
+            .clone()
+            .unwrap_or(app.path().app_local_data_dir()?)
+            .join("google-profile-v1"),
+    );
     let ai = Arc::new(Ai::new(stores.settings.clone()));
-    let chat = Chat::new(stores.private_conv.clone(), stores.settings.clone(), ai.clone());
-    let schedule = Schedule::new(Book::new(stores.schedule.clone()), hub.clone(), google.clone(), ai.clone());
-
+    let chat = Chat::new(
+        stores.private_conv.clone(),
+        stores.settings.clone(),
+        ai.clone(),
+    );
     let a = Arc::new(App {
         handle: app.clone(),
         stores,
-        hub,
         google,
         ai,
-        allocation_plans: Mutex::default(),
         chat,
-        schedule,
         cat: Mutex::new(CatState::new()),
         advisor: Advisor::new(),
-        peeks: crate::peek::Peeks::default(),
         updater: Updater::new(),
-        local_mode: local_file.is_some(),
-        server_plan: Default::default(),
-        mesh_probe: Default::default(),
-        mesh_runtime: sai_core::team::mesh::runtime::Controller::new(sai_core::team::mesh::identity::Vault::new(dir.join("mesh").join("identity.sqlite3"))),
-        mesh_migration: sai_core::team::mesh::migration::Importer::new(sai_core::team::mesh::identity::Vault::new(dir.join("mesh").join("identity.sqlite3"))),
-        mesh_worker: Default::default(),
-        mesh_power: Default::default(),
-        mesh_identity_path: dir.join("mesh").join("identity.sqlite3"),
+        data_dir: dir,
+        legacy_export: tokio::sync::Mutex::new(()),
+        file_jobs: crate::file_transfer::Jobs::default(),
     });
-
-    // 컴퓨터를 켜면 자동으로 실행 (켤 때마다 다시 등록)
-    crate::system::ensure_autostart();
-
-    cat::create(app, &a)?;
-
-    let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../../assets/tray.png"))?;
-    let menu = menu::build(app, &a)?;
+    if !isolated {
+        crate::system::ensure_autostart();
+    }
+    if !isolated {
+        cat::create(app, &a)?;
+    }
     let a_menu = a.clone();
     let a_click = a.clone();
     tauri::tray::TrayIconBuilder::with_id("main")
-        .icon(tray_icon)
-        .tooltip("사이 — 고양이 협업 도우미")
-        .menu(&menu)
+        .icon(tauri::image::Image::from_bytes(include_bytes!(
+            "../../assets/tray.png"
+        ))?)
+        .tooltip(if crate::preview::BUILD {
+            crate::preview::TITLE
+        } else {
+            "사이 · 함께하는 작업 공간"
+        })
+        .menu(&menu::build(app, &a)?)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, e| menu::on_event(app, &a_menu, e))
         .on_tray_icon_event(move |tray, e| {
-            if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = e {
-                open_chat(tray.app_handle(), &a_click, "chat", json!({}));
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = e
+            {
+                open_chat(tray.app_handle(), &a_click, "drive", json!({}));
             }
         })
         .build(app)?;
-    // 메뉴의 "~까지" 시각이 맞게 가끔 새로 그린다
-    let a_tray = a.clone();
+    let save = a.clone();
     tauri::async_runtime::spawn(async move {
-        let mut iv = tokio::time::interval(Duration::from_secs(60));
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
-            iv.tick().await;
-            menu::refresh_tray(&a_tray.handle, &a_tray);
+            interval.tick().await;
+            save.stores.flush_all();
         }
     });
-
-    // 팀 동기화: 시작 3초 뒤, 그다음 5분마다
-    let a_sync = a.clone();
+    let sync = a.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        account_startup(&a_sync).await;
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
-            sync_now(&a_sync).await;
-            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+            interval.tick().await;
+            if sync.google.status()["hasSession"] == true {
+                let _ = sync.google.sync_profile().await;
+                on_settings_changed(&sync);
+                let _ = sync.handle.emit_to("chat", "profile:changed", ());
+            }
         }
     });
-    // 저장: 바뀐 내용을 1초마다 파일에
-    let a_save = a.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut iv = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            iv.tick().await;
-            a_save.stores.flush_all();
-        }
-    });
-
-    if std::env::var("SAI_DEMO").is_err() {
-        crate::peek::start(&a);
+    if !isolated {
         a.advisor.start(&a);
         a.updater.start(&a);
     }
-    match crate::mesh_lifecycle::PowerGuard::register(a.mesh_runtime.clone()) {
-        Ok(guard)=>*a.mesh_power.lock().unwrap()=Some(guard),
-        Err(error)=>eprintln!("{error}"),
+    if isolated {
+        create_workspace(app, "chat/index.html?tab=drive".into())?;
+    } else {
+        open_chat(app, &a, "drive", json!({}));
     }
-    let lifecycle=a.clone();
-    tauri::async_runtime::spawn(async move {
-        *lifecycle.mesh_worker.lock().unwrap()=Some(lifecycle.mesh_runtime.worker());
-    });
     Ok(a)
 }
 
-/// Google 계정에 맡겨 둔 팀: 이 컴퓨터에서 처음이면 되찾고, 아니면 지금 목록을 맡겨 둔다
-pub async fn account_startup(a: &Arc<App>) {
-    if a.local_mode {
-        return;
-    }
-    let st = a.google.account_status();
-    if !st.b("ready") {
-        return;
-    }
-    // 처음이거나 이 컴퓨터에 팀이 하나도 없으면 되찾기부터
-    if st.b("checked") && !a.hub.teams().is_empty() {
-        let _ = a.google.backup_account(false).await;
-    } else if a.google.restore_account().await.is_ok() {
-        on_settings_changed(a);
-    }
-}
-
-/// 팀 목록이 바뀐 뒤 Google 계정에도 맡겨 둔다 (뒤에서)
-pub fn backup_later(a: &Arc<App>, allow_empty: bool) {
-    if a.local_mode {
-        return;
-    }
-    let a = a.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = a.google.backup_account(allow_empty).await;
-    });
-}
-
-/// 모든 팀 동기화 + Google 할 일
-pub async fn sync_now(a: &Arc<App>) -> Value {
-    // Google은 각 PC에서 직접 연결한다. 팀 서버 응답을 기다리느라 Google 작업까지 멈추지 않는다.
-    let before: Vec<_> = a.hub.all().iter().map(|t| (t.id.clone(), t.collab_data())).collect();
-    let (results, _) = tokio::join!(a.hub.sync_all(), a.google.sync_todo());
-    let after: Vec<_> = a.hub.all().iter().map(|t| (t.id.clone(), t.collab_data())).collect();
-    // 서버에서 새 작업을 받았다면 같은 동기화 안에서 Google에도 반영한다.
-    if before != after && results.iter().any(|r| r.b("ok")) {
-        let _ = a.google.sync_todo().await;
-    }
-    // 팀에 공유된 Claude 키 (내 키가 없을 때 쓴다)
-    a.ai.set_shared(a.hub.shared_claude_key());
-    menu::refresh_tray(&a.handle, a);
-    results.into_iter().find(|r| !r.b("ok")).unwrap_or_else(|| json!({ "ok": false, "reason": "not-connected" }))
-}
-
 pub fn on_settings_changed(a: &Arc<App>) {
-    let quiet = a.stores.settings.read(|s| s.i("quietUntil")) > now_ms();
-    cat::set_calm(a, quiet);
+    cat::set_calm(a, a.stores.settings.read(|s| s.i("quietUntil")) > now_ms());
     a.advisor.schedule(a, None);
     menu::refresh_tray(&a.handle, a);
 }
 
-/// 대화창 열기. extra: { explain: 주제 id } / { task: 작업 id } / { mode: 'schedule' }
 pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {
     cat::hide_bubble(app, a);
     if let Some(w) = app.get_webview_window("chat") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
-        if let Some(team) = extra.os("teamTalk") {
-            let _ = app.emit_to("chat", "chat:team-talk", json!({ "teamId": team }));
-        } else {
-            let _ = app.emit_to("chat", "chat:show-tab", tab);
-        }
+        let _ = app.emit_to("chat", "chat:show-tab", tab);
         if let Some(t) = extra.os("explain") {
             let _ = app.emit_to("chat", "chat:start-explain", t);
         }
@@ -286,12 +199,31 @@ pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {
         if app.get_webview_window("chat").is_some() {
             return;
         }
-        let _ = WebviewWindowBuilder::new(&app, "chat", WebviewUrl::App(q.into()))
-            .title("사이와 이야기")
-            .inner_size(520.0, 700.0)
-            .min_inner_size(380.0, 520.0)
-            // 파일을 끌어다 놓으면 화면(협업 탭의 팀 자료)이 직접 받는다
-            .disable_drag_drop_handler()
-            .build();
+        match create_workspace(&app, q) {
+            Ok(window) => {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            Err(error) => eprintln!("작업 공간을 열지 못했어요: {error}"),
+        }
     });
+}
+
+fn create_workspace(app: &AppHandle, url: String) -> tauri::Result<tauri::WebviewWindow> {
+    let builder = WebviewWindowBuilder::new(app, "chat", WebviewUrl::App(url.into()))
+        .title(if crate::preview::BUILD {
+            crate::preview::TITLE
+        } else {
+            "사이"
+        })
+        .inner_size(1100.0, 780.0)
+        .min_inner_size(420.0, 580.0)
+        .disable_drag_drop_handler();
+    #[cfg(windows)]
+    let builder = if let Some(dir) = std::env::var_os("SAI_PREVIEW_DIR") {
+        builder.data_directory(std::path::PathBuf::from(dir).join("webview"))
+    } else {
+        builder
+    };
+    builder.build()
 }

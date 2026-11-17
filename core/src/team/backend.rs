@@ -17,8 +17,6 @@ use rand::Rng;
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-#[path = "migration_source.rs"]
-mod migration_source;
 
 pub const RECENT_SHARE_LIMIT: usize = 32;
 

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "sai-team-ai",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-17",
+  "workers_dev": false,
+  "secrets": { "required": ["ANTHROPIC_API_KEY", "AI_HMAC_KEY", "TEAM_AI_POLICY"] },
+  "observability": { "enabled": false },
+  "durable_objects": { "bindings": [{ "name": "BUDGETS", "class_name": "TeamBudget" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TeamBudget"] }]
+}

@@ -1,33 +1,36 @@
-//! 대화창·고양이 창과 앱 사이의 통신.
-//! 대화창은 `call(채널, 값)` 하나로 모든 기능을 부르고, 채널 이름은 예전 형식을 그대로 쓴다.
-use crate::app::{on_settings_changed, sync_now, App};
-use crate::cat;
-use sai_core::advice::{dnd_span_minutes, MAX_DND_MINUTES};
-use sai_core::collab::OBJECTION_REASONS;
-use sai_core::team::backend::parse_firebase_config;
-use sai_core::topics::{topic, TOPICS};
-use sai_core::util::{arr_mut, J};
+use crate::{
+    app::{on_settings_changed, App},
+    cat,
+};
+use sai_core::{
+    advice::{dnd_span_minutes, MAX_DND_MINUTES},
+    util::J,
+};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{Emitter, State, WebviewWindow};
-
 type R = Result<Value, String>;
 
 #[tauri::command]
-pub async fn call(window: WebviewWindow, state: State<'_, Arc<App>>, ch: String, args: Option<Value>) -> R {
-    if window.label() == "peek" {
-        return crate::peek::handle(state.inner(), &ch, &args.unwrap_or(Value::Null));
-    }
+pub async fn call(
+    window: WebviewWindow,
+    state: State<'_, Arc<App>>,
+    ch: String,
+    args: Option<Value>,
+) -> R {
     if window.label() != "chat" {
         return Err("허용되지 않은 요청이에요.".into());
     }
-    let a = state.inner().clone();
-    dispatch(&a, &window, &ch, args.unwrap_or(Value::Null)).await
+    dispatch(state.inner(), &window, &ch, args.unwrap_or(Value::Null)).await
 }
 
 #[tauri::command]
-pub async fn cat_event(window: WebviewWindow, state: State<'_, Arc<App>>, ev: String, args: Option<Value>) -> R {
+pub async fn cat_event(
+    window: WebviewWindow,
+    state: State<'_, Arc<App>>,
+    ev: String,
+    args: Option<Value>,
+) -> R {
     if window.label() != "cat" {
         return Err("허용되지 않은 요청이에요.".into());
     }
@@ -52,515 +55,329 @@ fn ok() -> R {
 }
 
 async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
-    let hub = &a.hub;
     match ch {
-        c if c.starts_with("mesh-probe:") => crate::mesh::command(&a.mesh_probe, c, &x).await,
-        c if c.starts_with("mesh-identity:") => crate::mesh_identity::command(a, c, &x).await,
-        c if c.starts_with("mesh-migration:") => crate::mesh_migration::command(a,c,&x).await,
-        c if c.starts_with("mesh-talk:") => crate::mesh_talk::command(a,c,&x).await,
-        c if c.starts_with("mesh-session:") || c.starts_with("mesh-journal:") => crate::mesh_workbench::command(a,c,&x).await,
-        // ---------- 대화 ----------
-        "chat:start" => {
-            let (mode, t) = if x.is_string() { (x.as_str().unwrap().to_string(), None) } else { (x.s("mode"), x.os("topic")) };
-            Ok(a.chat.start(&mode, t.as_deref()).await)
+        // 옛 팀/톡/호스트/공유 키 요청은 이 허용 목록에 포함하지 않는다.
+        "workspace:status" => Ok(workspace_status(a)),
+        "calendar:preview" => {
+            a.google
+                .calendar_preview(
+                    x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    &x.s("taskId"),
+                )
+                .await
         }
-        "chat:send" => {
-            let text: String = x.s("text").chars().take(50000).collect();
-            let stream_id = x.os("streamId");
-            let w = win.clone();
-            let on_text = move |full: &str| {
-                if let Some(id) = &stream_id {
-                    let _ = w.emit_to("chat", "chat:stream", json!({ "streamId": id, "text": full }));
-                }
-            };
-            let cb: &(dyn Fn(&str) + Send + Sync) = &on_text;
-            a.chat.send(&x.s("id"), &text, x.b("skip"), if x.os("streamId").is_some() { Some(cb) } else { None }).await
+        "calendar:connect" => {
+            a.google
+                .connect_calendar(x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?)
+                .await
         }
-        "chat:summarize-now" => Ok(a.chat.summarize_now(x.as_str().unwrap_or(""))),
-        "chat:update-summary" => Ok(a.chat.update_summary(&x.s("id"), &x["patch"])),
-        "chat:list" => Ok(a.chat.list()),
-        "chat:get" => Ok(a.chat.get(x.as_str().unwrap_or(""))),
-        "chat:delete" => {
-            a.chat.delete(x.as_str().unwrap_or(""));
-            ok()
+        "calendar:add" => {
+            a.google
+                .add_to_calendar(
+                    x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    x["add"].clone(),
+                )
+                .await
         }
-        "chat:delete-all" => {
-            a.chat.delete_all();
-            a.schedule.clear_chat();
-            ok()
-        }
-        "topics:list" => Ok(json!(TOPICS.iter().map(|t| json!({ "id": t.id, "label": t.label })).collect::<Vec<_>>())),
-
-        // ---------- 공유 (여러 팀) ----------
-        "delivery:view" | "delivery:generate" | "delivery:approve" | "delivery:discard" => {
-            let team = hub.active();
-            if x.get("teamId").is_some_and(|id| id != team.id.as_deref().unwrap_or("")) {
-                return Err("선택한 팀이 바뀌었어요. 원래 팀에서 다시 열어 주세요.".into());
-            }
-            let view = a.chat.delivery(&team, ch, &x).await?;
-            if ch == "delivery:approve" {
-                tauri::async_runtime::spawn(async move { team.sync().await; });
-            }
-            Ok(view)
-        }
-        "share:preview" | "share:save" | "share:propose-held" | "team:propose" =>
-            Err("대화에서 AI 공유 문안 만들기 또는 팀 약속 잡기를 열어 주세요.".into()),
-        "share:confirm" | "share:set-recipient" => {
-            let item_id = x.s("itemId");
-            let team_id = a.stores.shared_outbox.read(|d| d.arr("items").into_iter().find(|i| i.s("id") == item_id).and_then(|i| i.os("teamId")));
-            if let Some(t) = hub.team(team_id.as_deref()) {
-                if ch == "share:confirm" {
-                    t.confirm_review(&item_id, x.os("toMember"));
-                } else {
-                    t.set_recipient(&item_id, &x.s("toMember"));
-                }
-            }
-            let a2 = a.clone();
-            tauri::async_runtime::spawn(async move {
-                sync_now(&a2).await;
-            });
-            ok()
-        }
-        "share:outbox" => {
-            let names: HashMap<String, String> = hub.teams().iter().map(|t| (t.s("teamId"), t.s("name"))).collect();
-            Ok(json!(a
-                .stores
-                .shared_outbox
-                .read(|d| d.arr("items"))
-                .into_iter()
-                .map(|mut it| {
-                    it["teamName"] = match it.os("teamId") {
-                        Some(id) => json!(names.get(&id).cloned().unwrap_or_else(|| "나간 팀".into())),
-                        None => Value::Null,
-                    };
-                    it
-                })
-                .collect::<Vec<_>>()))
-        }
-        "share:remove" => {
-            if let Some(id) = x.as_str() {
-                // 예전 정리함의 ‘빼기’ 요청은 아직 보내지 않은 항목만 취소한다.
-                let tid = a.stores.shared_outbox.read(|d| d.arr("items").into_iter().find(|r| r["id"] == id).and_then(|r| r.os("teamId")));
-                hub.remove_outbox(tid.as_deref(), id, false).await?;
-            } else {
-                hub.remove_outbox(x["teamId"].as_str(), &x.s("itemId"), x.b("delivered")).await?;
-            }
-            ok()
-        }
-        "share:withdraw-advice" | "team:withdraw-promise" | "team:hide-promise" | "team:hide-advice" => {
-            let tid = x["teamId"].as_str().ok_or("항목의 팀을 확인해 주세요.")?;
-            let t = hub.team(Some(tid)).ok_or("이 항목의 팀에 연결되어 있지 않아요.")?;
-            let id = x.s("id");
-            match ch {
-                "share:withdraw-advice" => t.withdraw_advice(&id).await?,
-                "team:withdraw-promise" => t.withdraw_promise(&id).await?,
-                "team:hide-advice" => t.hide_received(&id, true)?,
-                _ => t.hide_received(&id, false)?,
-            }
-            ok()
-        }
-
-        // ---------- 팀 ----------
-        "team:status" => Ok(team_view(a)),
-        "team:host-check" | "team:host-plan" | "team:host-apply" | "team:my-uid" => crate::team_host::command(a, ch, &x).await,
-        "team:configure" if !a.local_mode && !crate::app::builtin_firebase().s("apiKey").is_empty() => Err("이 버전은 팀 서버 설정이 앱에 들어 있어서 바꿀 수 없어요.".into()),
-        "team:configure" => {
-            let Some(cfg) = parse_firebase_config(x.as_str().unwrap_or("")) else {
-                return Err("apiKey 와 projectId 를 찾지 못했어요. Firebase 콘솔의 firebaseConfig 를 그대로 붙여 넣어 주세요.".into());
-            };
-            let prev = a.stores.settings.read(|s| s["firebase"].s("projectId"));
-            a.stores.settings.update(|s| {
-                if prev != cfg.s("projectId") {
-                    // 다른 프로젝트로 바꾸면 이전 로그인과 팀 연결은 쓸 수 없다
-                    s["firebaseSessionEnc"] = Value::Null;
-                    s["teams"] = json!([]);
-                    s["activeTeamId"] = Value::Null;
-                }
-                s["firebase"] = cfg.clone();
-            });
-            hub.reset_backend();
-            after_team(a)
-        }
-        "team:create" => {
-            // 팀을 만드는 사람이 관리자 아이디·비밀번호를 정한다 (비밀번호는 기록하지 않는다)
-            let (admin_id, admin_pw) = (x.s("adminId").trim().to_string(), x.s("adminPassword"));
-            let n = admin_id.chars().count();
-            if !(3..=30).contains(&n) {
-                return Err("관리자 아이디는 3~30자로 정해 주세요.".into());
-            }
-            if admin_pw.chars().count() < 6 {
-                return Err("관리자 비밀번호는 6자 이상으로 정해 주세요.".into());
-            }
-            hub.create_team(&x.s("name"), &x.s("displayName")).await?;
-            let notice = hub.active().admin_setup(&admin_id, &admin_pw).await.err().map(|e| format!("팀은 만들었지만 관리자는 정하지 못했어요: {e}"));
-            let mut v = after_team(a)?;
-            v["notice"] = json!(notice);
-            Ok(v)
-        }
-        "team:admin-setup" => {
-            hub.active().admin_setup(&x.s("adminId"), &x.s("password")).await?;
-            Ok(team_view(a))
-        }
-        "team:admin-login" => {
-            hub.active().admin_login(&x.s("adminId"), &x.s("password")).await?;
-            Ok(team_view(a))
-        }
-        "team:admin-logout" => {
-            hub.active().admin_logout().await?;
-            Ok(team_view(a))
-        }
-        "team:remove-member" => {
-            hub.active().remove_member(x.as_str().unwrap_or("")).await?;
-            Ok(team_view(a))
-        }
-        "team:join" => {
-            hub.join_team(&x.s("code"), &x.s("displayName")).await?;
-            after_team(a)
-        }
-        "team:dissolve" => {
-            hub.dissolve_team(&x.s("teamId"), &x.s("teamName")).await?;
-            after_team(a)
-        }
-        "team:leave" => {
-            let id = x.as_str().map(String::from).or(hub.active().id);
-            if let Some(id) = id {
-                hub.leave_team(&id).await?;
-            }
-            after_team(a)
-        }
-        "team:switch" => {
-            hub.set_active(x.as_str().unwrap_or(""))?;
-            after_team(a)
-        }
-        "team:sync" => {
-            sync_now(a).await;
-            after_team(a)
-        }
-        "team:respond" => {
-            hub.respond(&x.s("proposalId"), &x.s("response")).await?;
-            after_team(a)
-        }
-        "team:hold-topic" => Ok(json!({ "held": hub.hold_topic(x.as_str().unwrap_or("")).await })),
-        // ---------- 협업 ----------
-        "collab:get-brief" | "collab:save-brief" => {
-            let team = hub.active();
-            if x["teamId"].as_str() != Some(team.team_id()?.as_str()) {
-                return Err("선택한 팀이 바뀌었어요. 프로젝트를 다시 열어 주세요.".into());
-            }
-            let project = x.s("projectId");
-            if ch == "collab:get-brief" {
-                Ok(team.get_project_brief(&project).await?.unwrap_or(Value::Null))
-            } else {
-                team.save_project_brief(&project, &x.s("name"), &x.s("text")).await
-            }
-        }
-        "collab:delete-profile" | "collab:delete-project" | "collab:hide-project" | "collab:restore-project" | "collab:delete-brief" => {
-            let team = hub.active();
-            let tid = team.team_id()?;
-            if x["teamId"] != tid { return Err("팀이 바뀌었어요. 대상 팀을 다시 확인해 주세요.".into()); }
-            let pid = x.s("projectId");
-            match ch {
-                "collab:delete-profile" => team.delete_my_profile().await?,
-                "collab:restore-project" => team.set_project_hidden(&pid, false)?,
-                _ => {
-                    team.check_allocation_project(&pid)?;
-                    match ch {
-                        "collab:delete-project" => team.delete_project(&pid).await?,
-                        "collab:delete-brief" => team.delete_project_brief(&pid, &x["expected"]).await?,
-                        _ => team.set_project_hidden(&pid, true)?,
-                    }
-                    a.allocation_plans.lock().unwrap().remove(&(tid, pid));
-                }
-            }
-            Ok(collab_view(a))
-        }
-        "collab:view" => {
-            if x.b("refresh") && hub.active().is_connected() {
-                sync_now(a).await;
-            }
-            Ok(collab_view(a))
-        }
-        "collab:ai-plan" | "collab:apply-ai-plan" => {
-            let team = hub.active();
-            let team_id = team.team_id()?;
-            let pid = x.s("projectId");
-            if x["teamId"] != team_id { return Err("보고 있는 팀이 바뀌었어요.".into()); }
-            let scope = (team_id.clone(), pid.clone());
-            if ch == "collab:ai-plan" {
-                let plan = team.calculate_allocation(&a.ai, &pid, &x.s("provider")).await?;
-                let preview = plan.preview();
-                a.allocation_plans.lock().unwrap().insert(scope, plan);
-                Ok(preview)
-            } else {
-                let plan = a.allocation_plans.lock().unwrap().get(&scope)
-                    .filter(|p| p.matches(&team_id, &pid, &x.s("planId"))).cloned()
-                    .ok_or("배분 제안이 바뀌었어요. 다시 계산해 주세요.")?;
-                team.apply_allocation(&plan, &x.strs("selected")).await?;
-                Ok(collab_view(a))
-            }
-        }
-        "collab:plan" => {
-            if hub.active().is_connected() {
-                sync_now(a).await;
-            }
-            let t = hub.active();
-            let pid = x.s("projectId");
-            let Some(mut p) = t.plan(&pid) else { return Ok(Value::Null) };
-            let names: HashMap<String, String> = t.collab_members().iter().map(|m| (m.s("uid"), m.s("name"))).collect();
-            let titles: HashMap<String, String> = t.tasks_of(&pid).iter().map(|x| (x.s("id"), x.s("title"))).collect();
-            for asg in arr_mut(&mut p, "assignments") {
-                asg["name"] = json!(names.get(&asg.s("uid")));
-                asg["title"] = json!(titles.get(&asg.s("taskId")));
-            }
-            p["missingProfiles"] = json!(t.collab_members().iter().filter(|m| !m.b("hasProfile")).map(|m| m.s("name")).collect::<Vec<_>>());
-            Ok(p)
-        }
-        "collab:apply-plan" => {
-            let t = hub.active();
-            let n = t.apply_plan(&x.s("projectId"), &x.arr("assignments")).await?;
-            let a2 = a.clone();
-            tauri::async_runtime::spawn(async move {
-                sync_now(&a2).await;
-            });
-            Ok(json!({ "applied": n, "view": collab_view(a) }))
-        }
-        // ---------- 팀 Drive 함 ----------
-        "drive:feed" => {
-            drive_team(a, &x)?;
-            Ok(drive_feed(a).await)
-        }
-        "drive:send-text" => {
-            drive_team(a, &x)?.add_share(&json!({ "text": x.s("text") })).await?;
-            Ok(drive_feed(a).await)
-        }
-        "drive:send-local" => {
-            use base64::Engine;
-            let t = drive_team(a, &x)?;
-            let bytes = base64::engine::general_purpose::STANDARD.decode(x.s("data")).map_err(|_| "파일을 읽지 못했어요.".to_string())?;
-            let edit = x.b("edit");
-            let f = a.google.upload_file(&t.name(), &x.s("name"), &x.s("mime"), bytes, edit).await?;
-            t.add_share(&json!({ "text": x.s("text"), "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "access": if edit { "edit" } else { "view" } })).await?;
-            Ok(drive_feed(a).await)
-        }
-        "drive:send-drive" => {
-            let t = drive_team(a, &x)?;
-            let f = a.google.prepare_send(&x.s("fileId"), x.b("edit")).await?;
-            t.add_share(&json!({ "text": x.s("text"), "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "access": f.s("access") })).await?;
-            Ok(drive_feed(a).await)
-        }
-        "drive:list" => a.google.list_drive(&x.s("mode"), &x.s("folder"), &x.s("q"), &x.s("page")).await,
-        "drive:save" => {
-            let s = drive_team(a, &x)?.share(&x.s("id")).ok_or("그 파일을 찾을 수 없어요.")?;
-            if s.s("driveId").is_empty() {
-                return Err("이 파일은 사본을 만들 수 없어요. 열어서 Drive 에서 직접 저장해 주세요.".into());
-            }
-            let f = a.google.copy_to_mine(&s.s("driveId"), &s.s("name")).await?;
-            Ok(json!({ "name": f.s("name"), "url": f.s("webViewLink") }))
-        }
-        "drive:delete" => {
-            drive_team(a, &x)?.delete_share(&x.s("id")).await?;
-            Ok(drive_feed(a).await)
-        }
-        "collab:upload-file" => {
-            use base64::Engine;
-            let t = hub.active();
-            let bytes = base64::engine::general_purpose::STANDARD.decode(x.s("data")).map_err(|_| "파일을 읽지 못했어요.".to_string())?;
-            let edit = x.b("edit");
-            let f = a.google.upload_file(&t.name(), &x.s("name"), &x.s("mime"), bytes, edit).await?;
-            t.add_file(&x.s("projectId"), &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "size": f.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId"), "access": if edit { "edit" } else { "view" }, "kind": "file" })).await?;
-            Ok(collab_view(a))
-        }
-        "collab:link-file" => {
-            let t = hub.active();
-            let url = x.s("url").trim().to_string();
-            if !url.starts_with("https://") {
-                return Err("https:// 로 시작하는 Drive 공유 링크를 붙여 넣어 주세요.".into());
-            }
-            let meta = a.google.link_meta(&url).await.unwrap_or(Value::Null);
-            let typed = x.s("name").trim().to_string();
-            let name = if !typed.is_empty() { typed } else if !meta.s("name").is_empty() { meta.s("name") } else { "Drive 파일".into() };
-            t.add_file(&x.s("projectId"), &json!({ "name": name, "url": url, "driveId": meta.s("id"), "mimeType": meta.s("mimeType"), "size": meta.s("size").parse::<i64>().unwrap_or(0), "taskId": x.s("taskId"), "access": "link", "kind": "link" })).await?;
-            Ok(collab_view(a))
-        }
-        "collab:file-access" => {
-            let t = hub.active();
-            let pid = x.s("projectId");
-            let f = t.file(&pid, &x.s("id")).ok_or("그 자료를 찾을 수 없어요.")?;
-            if f.s("by") != t.my_uid() {
-                return Err("올린 사람만 바꿀 수 있어요.".into());
-            }
-            if f.s("driveId").is_empty() || f.s("access") == "link" {
-                return Err("붙여 넣은 링크는 Google Drive 에서 직접 공유 설정을 바꿔 주세요.".into());
-            }
-            let edit = x.b("edit");
-            a.google.set_file_access(&f.s("driveId"), edit).await?;
-            t.set_file_access(&pid, &f.s("id"), edit).await?;
-            Ok(collab_view(a))
-        }
-        "collab:task-note" => {
-            // 작업마다 팀이 함께 쓰는 Google 문서 하나. 이미 있으면 그것을 연다
-            let t = hub.active();
-            let (pid, tid) = (x.s("projectId"), x.s("taskId"));
-            if let Some(f) = t.files_of(&pid).into_iter().find(|f| f.s("kind") == "note" && f.s("taskId") == tid) {
-                crate::system::open_url(&f.s("url"));
-                return Ok(json!({ "view": collab_view(a), "opened": true }));
-            }
-            let (title, html) = t.task_note_html(&pid, &tid).ok_or("그 작업을 찾을 수 없어요.")?;
-            let f = a.google.create_doc(&t.name(), &title, &html, true).await?;
-            t.add_file(&pid, &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "taskId": tid, "access": "edit", "kind": "note" })).await?;
-            crate::system::open_url(&f.s("webViewLink"));
-            Ok(json!({ "view": collab_view(a), "created": true }))
-        }
-        "collab:report" => {
-            let t = hub.active();
-            let pid = x.s("projectId");
-            hub.sync_team(&t).await;
-            let (title, html) = t.project_report_html(&pid).ok_or("프로젝트를 찾을 수 없어요.")?;
-            let f = a.google.create_doc(&t.name(), &title, &html, true).await?;
-            t.add_file(&pid, &json!({ "name": f.s("name"), "url": f.s("webViewLink"), "driveId": f.s("id"), "mimeType": f.s("mimeType"), "access": "edit", "kind": "report" })).await?;
-            crate::system::open_url(&f.s("webViewLink"));
-            Ok(json!({ "view": collab_view(a), "created": true }))
-        }
-        "collab:delete-file" => {
-            hub.active().delete_file(&x.s("projectId"), &x.s("id")).await?;
-            Ok(collab_view(a))
-        }
-        c if c.starts_with("collab:") => {
-            let t = hub.active();
-            match c {
-                "collab:save-profile" => drop(t.save_profile(&x).await?),
-                "collab:create-project" => drop(t.create_project(&x).await?),
-                "collab:update-project" => t.update_project(&x.s("id"), &x).await?,
-                "collab:set-active" => t.set_active_project(&x.s("id")),
-                "collab:add-task" => drop(t.add_task(&x.s("projectId"), &x).await?),
-                "collab:edit-task" => t.edit_task(&x.s("projectId"), &x.s("id"), &x).await?,
-                "collab:delete-task" => {
-                    if x["teamId"].as_str().is_some_and(|id| Some(id) != t.id.as_deref()) { return Err("팀이 바뀌었어요.".into()); }
-                    let pid = x.s("projectId");
-                    t.check_allocation_project(&pid)?;
-                    t.delete_task(&pid, &x.s("id")).await?;
-                }
-                "collab:accept" => {
-                    t.accept(&x.s("id")).await?;
-                    // 작업을 맡으면 내 시간표를 다시 짠다
-                    a.schedule.view(false).await;
-                }
-                "collab:object" => t.object(&x.s("id"), &x.s("reason")).await?,
-                "collab:status" => {
-                    t.set_status(&x.s("id"), &x.s("status")).await?;
-                    let a2 = a.clone();
-                    tauri::async_runtime::spawn(async move {
-                        a2.schedule.view(false).await;
-                    });
-                }
-                "collab:toggle-prep" => t.toggle_prep(&x.s("id"), x.i("index").max(0) as usize).await?,
-                _ => return Err(format!("알 수 없는 요청: {c}")),
-            }
-            Ok(collab_view(a))
-        }
-
-        // ---------- 외부 연결 ----------
-        "ext:status" => Ok(ext_view(a)),
-        "tg:set-bot" => {
-            let t = hub.active();
-            t.tg_set_bot(x.as_str().unwrap_or("")).await?;
-            t.tg_sync().await?;
-            Ok(ext_view(a))
-        }
-        "tg:start-link" => {
-            let r = hub.active().tg_start_link()?;
-            crate::system::open_url(&r.s("url"));
-            Ok(json!({ "url": r.s("url"), "view": ext_view(a) }))
-        }
-        "tg:check-link" => {
-            let mut r = hub.active().tg_check_link().await?;
-            r["view"] = ext_view(a);
-            Ok(r)
-        }
-        "tg:team-alerts" => {
-            hub.active().tg_set_team_alerts(x.as_bool().unwrap_or(false)).await?;
-            Ok(ext_view(a))
-        }
-        "tg:away" => {
-            let on = x.as_bool().unwrap_or(false);
-            a.stores.settings.update(|s| s["telegramAway"] = json!(on));
-            Ok(ext_view(a))
-        }
-        "tg:unlink" => {
-            hub.active().tg_unlink().await?;
-            Ok(ext_view(a))
-        }
-        "tg:test" => {
-            hub.active().tg_test().await?;
-            Ok(ext_view(a))
-        }
-        "g:configure" => {
-            a.google.configure(x.as_str().unwrap_or(""))?;
-            Ok(ext_view(a))
-        }
-        "g:login" => {
-            a.google.login().await?;
-            // 다른 컴퓨터에서 쓰던 팀이 Google 계정에 있으면 바로 가져온다
-            let text = if a.local_mode {
-                None
-            } else {
-                match a.google.restore_account().await {
-                    Ok(t) => {
-                        on_settings_changed(a);
-                        Some(t)
-                    }
-                    Err(e) => Some(format!("Google 과 연결됐어요. 다만 팀 되찾기는 하지 못했어요: {e}")),
-                }
-            };
-            Ok(json!({ "view": ext_view(a), "text": text }))
-        }
-        "account:restore" => {
-            let text = a.google.restore_account().await?;
-            on_settings_changed(a);
-            Ok(json!({ "text": text, "team": team_view(a) }))
-        }
-        "app:open-url" => {
-            let u = x.as_str().unwrap_or("");
-            if !u.starts_with("https://") {
-                return Err("열 수 없는 주소예요.".into());
-            }
-            crate::system::open_url(u);
+        "calendar:cancel" => {
+            a.google.cancel_login().await;
             Ok(Value::Null)
         }
+        "calendar:change" => {
+            a.google
+                .change_calendar(
+                    x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    x["change"].clone(),
+                )
+                .await
+        }
+        "calendar:check-change" => {
+            a.google
+                .check_calendar_change(
+                    x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    &x.s("reviewId"),
+                )
+                .await
+        }
+        "calendar:forget" => {
+            a.google.forget_calendar(
+                x["epoch"].as_u64().unwrap_or(0),
+                &x.s("folderId"),
+                &x.s("reviewId"),
+            );
+            Ok(Value::Null)
+        }
+        "analysis:prepare" => {
+            a.google
+                .prepare_ai_review(
+                    x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    x["source"].clone(),
+                )
+                .await
+        }
+        "analysis:run" => {
+            a.google
+                .run_ai_review(
+                    x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    &x.s("reviewId"),
+                    x["confirmed"] == true,
+                    option_env!("SAI_TEAM_AI_ENDPOINT"),
+                )
+                .await
+        }
+        "analysis:commit" => {
+            a.google
+                .commit_ai_review(
+                    x["epoch"].as_u64().ok_or("계정을 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    &x.s("reviewId"),
+                    x["choices"].clone(),
+                    x["confirmed"] == true,
+                )
+                .await
+        }
+        "analysis:forget" => {
+            a.google.forget_ai_review(
+                x["epoch"].as_u64().unwrap_or(0),
+                &x.s("folderId"),
+                &x.s("reviewId"),
+            );
+            Ok(Value::Null)
+        }
+        "team-ai:status" => {
+            a.google
+                .team_ai_status(
+                    x["epoch"].as_u64().ok_or("계정을 다시 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    option_env!("SAI_TEAM_AI_ENDPOINT"),
+                )
+                .await
+        }
+        "team-ai:connect" => {
+            a.google
+                .connect_team_ai(
+                    x["epoch"].as_u64().ok_or("계정을 다시 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    option_env!("SAI_TEAM_AI_ENDPOINT"),
+                )
+                .await
+        }
+        "collab:load" | "collab:sync" => {
+            a.google
+                .collaboration(
+                    x["epoch"].as_u64().ok_or("계정을 다시 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    ch == "collab:sync",
+                )
+                .await
+        }
+        "collab:save" => {
+            a.google
+                .save_collaboration(
+                    x["epoch"].as_u64().ok_or("계정을 다시 확인해 주세요.")?,
+                    &x.s("folderId"),
+                    x["edit"].clone(),
+                )
+                .await
+        }
+        "files:list"
+        | "files:sources"
+        | "files:upload"
+        | "files:retry"
+        | "files:discard"
+        | "files:download"
+        | "files:import"
+        | "files:retry-import"
+        | "files:discard-import"
+        | "files:open"
+        | "files:cancel" => crate::file_transfer::command(a, win, ch, x).await,
+        "teams:status" => a.google.team_status().await,
+        "teams:browse" => {
+            a.google
+                .browse_team_folders(
+                    x["epoch"].as_u64().ok_or("계정 연결을 확인해 주세요.")?,
+                    &x.s("page"),
+                )
+                .await
+        }
+        "teams:enable" | "teams:create" | "teams:connect" | "teams:invite" | "teams:remove"
+        | "teams:open" => {
+            let epoch = x["epoch"].as_u64().ok_or("팀 목록을 다시 확인해 주세요.")?;
+            let result = match ch {
+                "teams:enable" => {
+                    a.google.enable_team_drive(epoch).await?;
+                    let _ = a.google.sync_profile().await;
+                    Value::Null
+                }
+                "teams:create" => a.google.create_team_folder(epoch, &x.s("name")).await?,
+                "teams:connect" => {
+                    a.google
+                        .connect_team_folder(epoch, &x.s("folderId"))
+                        .await?
+                }
+                "teams:invite" => {
+                    a.google
+                        .invite_team_folder(epoch, &x.s("folderId"), &x.s("email"))
+                        .await?
+                }
+                "teams:remove" => {
+                    a.google.remove_team_folder(epoch, &x.s("folderId")).await?;
+                    Value::Null
+                }
+                "teams:open" => {
+                    let url = a.google.open_team_folder(epoch, &x.s("folderId")).await?;
+                    if a.google.profile_status()["epoch"] != epoch {
+                        return Err("계정 연결이 바뀌었어요.".into());
+                    }
+                    crate::system::open_url(&url);
+                    return ok();
+                }
+                _ => unreachable!(),
+            };
+            let sync = a.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = sync.google.sync_profile().await;
+                let _ = sync.handle.emit_to("chat", "profile:changed", ());
+            });
+            on_settings_changed(a);
+            Ok(json!({"result":result,"state":a.google.team_status().await?}))
+        }
+        "legacy:status" | "legacy:export" | "legacy:open-original" | "legacy:open-exports" => {
+            crate::legacy::command(a, ch).await
+        }
+        "g:login" => {
+            readable(&a.stores.settings)?;
+            a.google.login().await?;
+            persist(&a.stores.settings)?;
+            // 상태 캐시의 오류가 로그인·로그아웃 자체를 막지 않게 한다.
+            a.stores.google_connection.flush();
+            let _ = a.google.sync_profile().await;
+            on_settings_changed(a);
+            Ok(workspace_status(a))
+        }
+        "g:resume" => {
+            readable(&a.stores.settings)?;
+            a.google.resume().await?;
+            let _ = a.google.sync_profile().await;
+            on_settings_changed(a);
+            Ok(workspace_status(a))
+        }
+        "g:upgrade" => {
+            readable(&a.stores.settings)?;
+            a.google
+                .enable_team_drive(
+                    x["epoch"]
+                        .as_u64()
+                        .ok_or("계정 정보를 다시 확인해 주세요.")?,
+                )
+                .await?;
+            let _ = a.google.sync_profile().await;
+            on_settings_changed(a);
+            Ok(workspace_status(a))
+        }
+        "g:cancel-login" => {
+            a.google.cancel_login().await;
+            Ok(workspace_status(a))
+        }
         "g:logout" => {
+            a.file_jobs.cancel();
+            readable(&a.stores.settings)?;
             a.google.logout().await?;
-            Ok(ext_view(a))
+            persist(&a.stores.settings)?;
+            a.stores.google_connection.flush();
+            on_settings_changed(a);
+            Ok(workspace_status(a))
         }
-        "g:sync" => Ok(json!({ "result": a.google.sync_todo().await?, "view": ext_view(a) })),
-        "g:availability" => a.google.availability(x.os("projectId").as_deref()).await,
-
-        // ---------- 내 작업 시간표 ----------
-        "sched:view" => Ok(a.schedule.view(x.b("refresh")).await),
-        "sched:replan" => Ok(a.schedule.replan().await),
-        "sched:apply" => a.schedule.apply().await,
-        "sched:edit" => a.schedule.edit(&x).await,
-        "sched:chat" => a.schedule.chat(&x.s("text")).await,
-        "sched:clear-chat" => {
-            a.schedule.clear_chat();
-            Ok(a.schedule.view(false).await)
+        "profile:status" => Ok(a.google.profile_status()),
+        "profile:sync" => {
+            let _ = a.google.sync_profile().await;
+            on_settings_changed(a);
+            Ok(a.google.profile_status())
         }
-
-        // ---------- 업데이트 ----------
+        "profile:update" => {
+            a.google
+                .update_profile(
+                    x["epoch"]
+                        .as_u64()
+                        .ok_or("계정 정보를 다시 확인해 주세요.")?,
+                    x["patch"].clone(),
+                )
+                .await?;
+            on_settings_changed(a);
+            let sync = a.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = sync.google.sync_profile().await;
+                let _ = sync.handle.emit_to("chat", "profile:changed", ());
+            });
+            Ok(a.google.profile_status())
+        }
+        "app:open-drive" => {
+            crate::system::open_url("https://drive.google.com/drive/u/0/my-drive");
+            ok()
+        }
+        "chat:start" => {
+            readable(&a.stores.private_conv)?;
+            if x.s("mode") != "free" {
+                return Err("지금은 개인 AI 대화만 사용할 수 있어요.".into());
+            }
+            let result = a.chat.start("free", None).await;
+            persist(&a.stores.private_conv)?;
+            Ok(result)
+        }
+        "chat:send" => {
+            readable(&a.stores.private_conv)?;
+            let session = a.chat.find(&x.s("id")).ok_or("대화를 찾을 수 없어요.")?;
+            if session.mode != "free" {
+                return Err("이전 대화는 기록에서 확인하고 새 대화를 시작해 주세요.".into());
+            }
+            let text: String = x.s("text").chars().take(50000).collect();
+            let stream_id = x.s("streamId");
+            let w = win.clone();
+            let on_text = move |full: &str| {
+                let _ = w.emit_to(
+                    "chat",
+                    "chat:stream",
+                    json!({"streamId":stream_id,"text":full}),
+                );
+            };
+            let result = a
+                .chat
+                .send(&session.id, &text, false, Some(&on_text))
+                .await?;
+            persist(&a.stores.private_conv)?;
+            Ok(result)
+        }
+        "chat:list" => {
+            readable(&a.stores.private_conv)?;
+            Ok(a.chat.list())
+        }
+        "chat:get" => {
+            readable(&a.stores.private_conv)?;
+            Ok(a.chat.get(x.as_str().unwrap_or("")))
+        }
         "update:status" => Ok(a.updater.state()),
         "update:check" => Ok(a.updater.check_in_background(a)),
         "update:install" => {
             a.updater.install(a);
             ok()
         }
-
-        // ---------- 설정 ----------
         "settings:get" => Ok(public_settings(a)),
         "settings:set" => {
+            readable(&a.stores.settings)?;
+            readable(&a.stores.private_conv)?;
             let p = x;
+            // Google reads the settings store too; resolve this before taking its write lock.
+            let local_frequency = !a.google.is_ready();
             let mut error = None;
             a.stores.settings.update(|s| {
                 let f = p.s("frequency");
-                if ["low", "normal", "high"].contains(&f.as_str()) {
+                if local_frequency && ["low", "normal", "high"].contains(&f.as_str()) {
                     s["frequency"] = json!(f);
                 }
                 if p.get("dnd").is_some() {
@@ -586,200 +403,61 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             if let Some(e) = error {
                 return Err(e);
             }
+            persist(&a.stores.settings)?;
             a.chat.purge_old();
+            persist(&a.stores.private_conv)?;
             on_settings_changed(a);
             Ok(public_settings(a))
         }
         "settings:reset-dampened" => ok(),
         "ai:set-key" => {
+            readable(&a.stores.settings)?;
             a.ai.set_key(x.as_str().unwrap_or(""));
+            persist(&a.stores.settings)?;
             Ok(public_settings(a))
         }
         "ai:test" => Ok(a.ai.test().await),
         "ai:set-openai" => {
-            if !x.is_object() || ["key", "model"].iter().any(|k| x.get(*k).is_some_and(|v| !v.is_string())) {
+            readable(&a.stores.settings)?;
+            if !x.is_object()
+                || ["key", "model"]
+                    .iter()
+                    .any(|k| x.get(*k).is_some_and(|v| !v.is_string()))
+            {
                 return Err("GPT 연결 설정의 형식이 올바르지 않아요.".into());
             }
             a.ai.configure_openai(x["key"].as_str(), x["model"].as_str())?;
+            persist(&a.stores.settings)?;
             Ok(public_settings(a))
         }
         "ai:test-openai" => Ok(a.ai.test_openai().await),
-        // 보고 있는 팀에 내 키를 공유하거나 끈다
-        "ai:share-team" => {
-            let Some(key) = a.ai.own_key() else { return Err("먼저 내 Claude API 키를 저장해 주세요.".into()) };
-            hub.active().claude_share(&key).await?;
-            a.ai.set_shared(hub.shared_claude_key());
-            Ok(public_settings(a))
-        }
-        "ai:unshare-team" => {
-            hub.active().claude_unshare().await?;
-            a.ai.set_shared(hub.shared_claude_key());
-            Ok(public_settings(a))
-        }
-        _ => Err(format!("알 수 없는 요청: {ch}")),
+        _ => Err("이 기능은 새 Google 작업 공간으로 전환 중이에요.".into()),
     }
+}
+
+fn workspace_status(a: &Arc<App>) -> Value {
+    json!({ "google": a.google.status(), "profile": a.google.profile_status(), "teamsReady": false, "filesReady": false, "teamAiReady": false })
+}
+
+fn readable(store: &sai_core::store::Store) -> Result<(), String> {
+    match store.load_error() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+fn persist(store: &sai_core::store::Store) -> Result<(), String> {
+    store.try_flush().map_err(|_| "기기에 저장하지 못했어요. 기존 원본은 덮어쓰지 않아요. 저장 공간과 파일 상태를 확인해 주세요.".into())
 }
 
 fn public_settings(a: &Arc<App>) -> Value {
     let s = a.stores.settings.get();
     json!({
-        "catName": s["catName"], "frequency": s["frequency"], "quietUntil": s["quietUntil"], "dnd": s["dnd"],
-        "retentionDays": s["retentionDays"], "ai": s["ai"], "hasApiKey": a.ai.has_key(),
-        "hasOwnKey": a.ai.own_key().is_some(), "usingSharedKey": a.ai.using_shared(),
-        "hasOpenAiKey": a.ai.has_openai_key(), "openAiModel": a.ai.openai_model(), "openAiKeyPersistent": cfg!(windows),
-        "teamConnected": a.hub.active().is_connected(), "teamName": a.hub.active().name(),
-        "teamShare": a.hub.active().claude_status(),
-    })
-}
-
-fn after_team(a: &Arc<App>) -> R {
-    on_settings_changed(a);
-    // 팀을 만들거나 들어가거나 나가면 Google 계정에도 맡겨 둔다 (나가서 0개가 된 것도 반영)
-    crate::app::backup_later(a, true);
-    Ok(team_view(a))
-}
-
-fn team_view(a: &Arc<App>) -> Value {
-    let hub = &a.hub;
-    let t = hub.active();
-    let c = t.cache_get();
-    let me = c.s("myUid");
-    let cfg = a.stores.settings.read(|s| s["firebase"].clone());
-    let cfg = if cfg.is_object() { cfg } else { crate::app::builtin_firebase() };
-    let mut v = t.status();
-    v["configured"] = json!(a.local_mode || !cfg.s("apiKey").is_empty());
-    v["projectId"] = json!(if a.local_mode { "로컬 시험 모드".into() } else { cfg.s("projectId") });
-    v["localMode"] = json!(a.local_mode);
-    v["teamServer"] = a.stores.settings.read(|s| s["teamServer"].clone());
-    v["teamServerNotice"] = a.stores.settings.read(|s| s["teamServerNotice"].clone());
-    // 앱에 팀 서버 설정이 들어 있으면 화면에서 바꿀 일이 없다 (잘못 건드리면 팀 연결이 끊긴다)
-    v["canEditFirebase"] = json!(!a.local_mode && crate::app::builtin_firebase().s("apiKey").is_empty());
-    v["teams"] = json!(hub
-        .all()
-        .iter()
-        .map(|b| {
-            let st = b.state().unwrap_or(Value::Null);
-            let c = b.cache_get();
-            json!({
-                "teamId": b.id, "name": st.s("name"), "joinCode": st.s("joinCode"), "displayName": st.s("displayName"),
-                "active": b.id == t.id, "memberCount": c.arr("members").len(), "lastSync": c.i("lastSync"), "lastError": c["lastError"],
-            })
-        })
-        .collect::<Vec<_>>());
-    v["activeTeamId"] = json!(t.id);
-    v["canDissolve"] = json!(!me.is_empty() && c["createdBy"] == me);
-    v["members"] = json!(t
-        .members(true)
-        .into_iter()
-        .map(|mut m| {
-            m["me"] = json!(m.s("uid") == me);
-            m
-        })
-        .collect::<Vec<_>>());
-    v["proposals"] = json!(t.proposals());
-    let advice: Vec<_> = t.visible_advice().into_iter().map(|mut r| {
-        if !r.b("custom") {
-            if let Some(t) = topic(&r.s("topic")) {
-                r["title"] = json!(t.label);
-                r["text"] = json!(t.advice[0]);
-            }
-        }
-        r
-    }).collect();
-    v["inboxCount"] = json!(advice.len());
-    v["receivedAdvice"] = json!(advice);
-    v["account"] = if a.local_mode { Value::Null } else { a.google.account_status() };
-    v["googleSignedIn"] = json!(a.google.is_ready());
-    v
-}
-
-fn collab_view(a: &Arc<App>) -> Value {
-    let t = a.hub.active();
-    if !t.is_connected() {
-        return json!({ "connected": false });
-    }
-    let d = t.collab_data();
-    let uid = t.my_uid();
-    let hidden = d["hiddenProjects"][&uid].as_object();
-    let (hidden_projects, projects): (Vec<_>, Vec<_>) = d.arr("projects").into_iter().partition(|p| hidden.is_some_and(|h| h.contains_key(&p.s("id"))));
-    let members = t.collab_members();
-    let name_of: HashMap<String, String> = members.iter().map(|m| (m.s("uid"), m.s("name"))).collect();
-    let project = t.active_project();
-    let tasks: Vec<Value> = project
-        .as_ref()
-        .map(|p| {
-            t.tasks_of(&p.s("id"))
-                .into_iter()
-                .map(|mut x| {
-                    let assignee = x.s("assignee");
-                    x["assigneeName"] = if assignee.is_empty() { Value::Null } else { json!(name_of.get(&assignee).cloned().unwrap_or_else(|| "나간 팀원".into())) };
-                    x["objectionNames"] = json!(x.obj("objections").keys().map(|u| name_of.get(u).cloned().unwrap_or_else(|| "팀원".into())).collect::<Vec<_>>());
-                    x
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    json!({
-        "connected": true,
-        "ai": { "hasClaudeKey": a.ai.has_project_claude_key(&t), "hasOpenaiKey": a.ai.has_openai_key() },
-        "teamId": t.id,
-        "teamName": t.name(),
-        "teams": a.hub.teams(),
-        "myUid": t.my_uid(),
-        "myProfile": t.my_profile(),
-        "members": members,
-        "projects": projects, "hiddenProjects": hidden_projects, "isAdmin": t.is_admin(),
-        "project": project,
-        "tasks": tasks,
-        "files": project.as_ref().map(|p| {
-            let me = t.my_uid();
-            t.files_of(&p.s("id")).into_iter().map(|mut f| {
-                let by = f.s("by");
-                f["byName"] = json!(name_of.get(&by).cloned().unwrap_or_else(|| "나간 팀원".into()));
-                f["mine"] = json!(by == me);
-                f
-            }).collect::<Vec<_>>()
-        }).unwrap_or_default(),
-        "google": { "signedIn": a.google.is_ready(), "drive": a.google.has_drive() },
-        "objectionReasons": OBJECTION_REASONS,
-    })
-}
-
-/// 알림으로 팀이 바뀌어도 이전 화면의 전송이나 삭제가 새 팀에 적용되지 않게 한다.
-fn drive_team(a: &Arc<App>, args: &Value) -> Result<sai_core::team::Team, String> {
-    let team = a.hub.active();
-    if let Some(expected) = args["teamId"].as_str() {
-        if team.id.as_deref() != Some(expected) {
-            return Err("보고 있는 팀이 바뀌었어요. 팀을 확인한 뒤 다시 시도해 주세요.".into());
-        }
-    }
-    Ok(team)
-}
-
-async fn drive_feed(a: &Arc<App>) -> Value {
-    let t = a.hub.active();
-    if !t.is_connected() {
-        return json!({ "connected": false, "teamId": t.id });
-    }
-    let (list, error) = t.shares().await;
-    json!({
-        "connected": true,
-        "teamId": t.id,
-        "teamName": t.name(),
-        "memberCount": t.members(true).len(),
-        "backendKind": a.hub.backend_kind(),
-        "google": { "signedIn": a.google.is_ready(), "drive": a.google.has_drive(), "email": a.google.status()["email"] },
-        "items": t.shares_view(&list),
-        "error": error,
-    })
-}
-
-fn ext_view(a: &Arc<App>) -> Value {
-    let t = a.hub.active();
-    json!({
-        "teamConnected": t.is_connected(),
-        "telegram": t.tg_status(),
-        "telegramAway": a.stores.settings.read(|s| s.b("telegramAway")),
-        "google": a.google.status(),
+        "catName":s["catName"], "frequency":s["frequency"], "dnd":s["dnd"],
+        "googleProfile":a.google.profile_status(),
+        "retentionDays":s["retentionDays"], "ai":s["ai"],
+        "hasApiKey":a.ai.has_key(), "hasOwnKey":a.ai.own_key().is_some(),
+        "hasOpenAiKey":a.ai.has_openai_key(), "openAiModel":a.ai.openai_model(),
+        "openAiKeyPersistent":cfg!(windows),
+        "storageWarning": a.stores.settings.load_error().or_else(|| a.stores.private_conv.load_error()).or_else(|| a.stores.google_connection.load_error()),
     })
 }

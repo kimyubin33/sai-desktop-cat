@@ -4,7 +4,39 @@
 
 **2026-11-17부터 후속 개발은 [개발 방향과 단계별 실행 계획](docs/development-direction.md)을 기준으로 진행합니다.** 팀원 간 톡·PC 서버·Firebase 의존과 공용 AI 키 배포를 정리하고, Google 계정 복원 → 파일·협업 → 팀 AI 중계 → 개인 Calendar 순서로 전환합니다. 일반 사용자에게 서버 설정을 요구하지 않습니다.
 
-현재 v0.9.14 코드에는 이전 서버·PC 톡 구조가 남아 있습니다. 새 문서의 1단계부터 구현하며, 문서 정리가 기능 전환 완료를 의미하지 않습니다. 아래 기능·설정 설명은 전환 전 코드와 기존 릴리스의 기록입니다.
+현재 작업본은 **1단계 정리와 로컬 검증을 마치고, 2~5단계 기본 경로를 구현해 6단계의 전체 흐름 점검을 진행하는 상태**입니다. 먹물 질감의 파일·협업·AI·설정 화면으로 바꾸고 톡·PC 연결·기존 서버 동기화 실행을 제거했습니다. 개인 대화 기록과 설정은 유지하며 이전 팀 자료는 원본을 두고 선택 사본으로 내보냅니다. Google 계정 설정·팀 복원·파일 전송·협업 변경 기록·AI 후보 검토와 본인 기본 Calendar의 일정 추가·수정·삭제를 연결했습니다. Windows 설치 기본 동작, 실제 Google 파일·협업·Calendar와 Claude 샘플 분석, 별도 계정의 팀 권한 회수 후 차단까지 확인했습니다. 승인한 앤드위브 AI 한 팀의 상시 연결을 하루 10회로 활성화했고 상태 조회·앱 표시를 확인했습니다. 다른 PC·새 설치·다른 역할·실제 팀원 분석과 운영 지속성 검증은 남아 있습니다. [화면 개편](docs/patches/2026-11-17-ink-workspace.md), [자료 보존·내보내기 검증](docs/patches/2026-11-17-legacy-preservation.md)을 참고하세요.
+
+정식 릴리스는 아직 v0.9.14입니다. 아래 패치 기록은 작업본의 진행 상황이고, **기존 릴리스 기록** 및 **현재 코드의 기능 — 전환 전** 절은 과거 동작입니다.
+
+[검증판 마무리](docs/patches/2026-11-18-preview-checkpoint.md)에서 다른 PC 검증을 사용자 요청으로 보류하고 현재 코드·문서·설치 파일을 정리했습니다. 전체 자동 검사 **259개**, Wasm·Windows x64 릴리스·NSIS 빌드와 최종 화면 확인을 통과했습니다. 설정의 팀 AI 안내와 계정 버튼의 접근성 이름을 정리했고, 승인한 한 팀의 하루 10회 AI 연결은 유지합니다. 최신 로컬 설치 묶음은 `target/Sai-Preview-Checkpoint-20261118-win-x64.zip`입니다.
+
+[전체 흐름·검증 빌드 점검](docs/patches/2026-11-17-workspace-readiness.md)에서는 시작 시 계정·팀 표시 복구, 오래된 비동기 응답 차단과 입력 중인 설정 보존을 수정했습니다. 독립된 두 PC 저장소를 사용하는 모의 통합 흐름을 추가해 자동 검사 **222개**와 Wasm·Windows x64 개발 빌드를 확인했습니다. CI는 일반 소스 검사와 수동 검증 설치 파일 생성으로 구분하며, 전환 중 정식 릴리스를 자동 발행하지 않습니다. 실계정·실기기·설치 파일 검증을 완료했다는 의미는 아닙니다.
+
+후속 [Windows 독립 미리보기 패키지](docs/patches/2026-11-17-preview-installer.md)에서 실제 x64 설치판·포터블판·ZIP을 만들었습니다. 기존 사이와 별도 자료 공간에서 실행되고 시작 프로그램 값을 보존함을 확인했으며, 관련 검사 **13개**가 통과했습니다. 새 앱 화면 자동 검사는 도구의 앱 제어 승인 시간초과로 완료하지 못했습니다. 실제 설치·Google·두 PC·ARM64 검증과 팀 AI 배포는 남아 있습니다.
+
+최신 [설치·재실행 확인](docs/patches/2026-11-17-install-restart.md)에서는 ARM64 Windows 개발 PC에서 x64 Setup의 **설치 → 설정 저장 → 종료 → 수정판 재설치 → 복원 → 제거**를 확인했습니다. 이번에는 설치판 화면 검사도 완료했고, 미리보기에서 동작하지 않는 업데이트 버튼을 숨겼습니다. 관련 자동 검사 **10개**와 새 Wasm·릴리스·NSIS 빌드를 통과했으며 로컬 ZIP을 갱신했습니다. 실제 Google·두 PC·새 PC·다른 CPU 검증과 공용 Claude 배포는 별도입니다.
+
+이어 [실제 Google 확인](docs/patches/2026-11-17-google-live-check.md)에서 기존 실계정의 로그인 재사용·기존 팀 복원, 검증 폴더 생성, PC 업로드·Drive 사본·다운로드와 협업 할 일 저장을 확인했습니다. TXT 원본과 두 다운로드의 SHA-256이 일치했고 정상 파일 작업에서 추가 로그인·동의를 요구하지 않았습니다. Calendar는 승인받은 종일 검증 일정 1개를 등록하고 실제 제목·날짜를 재조회했습니다. 새로고침·앱 재실행 후에도 추가 로그인 없이 기존 일정으로 인식하고 새 일정 추가 화면을 제공하지 않음을 확인했습니다. 검증 팀·업무 복원과 삭제된 일정의 재생성 차단도 확인했습니다. Calendar 수정·삭제·중복 요청·동시 등록, 새 로그인·다른 계정·두 PC·대용량·Google 문서·권한 철회와 공용 Claude 배포까지 확인한 결과는 아닙니다.
+
+공용 Claude의 [런타임·배포 준비 점검](docs/patches/2026-11-17-team-ai-runtime-readiness.md)과 [Cloudflare 연결](docs/patches/2026-11-17-team-ai-cloudflare-connect.md)에 이어, 승인된 [합성 문서 분석 1회](docs/patches/2026-11-18-team-ai-live-verification.md)가 실제 앱에서 성공했습니다. Google 권한 조회의 빈 페이지 토큰 문제를 재현·수정했고, 재로그인 없이 저장된 동의로 요약·할 일 후보 1개·마감일·근거를 확인했습니다. 이어 준비 검사 **49개**를 통과한 도구로 [별도 계정의 접근·권한 회수](docs/patches/2026-11-18-team-member-access-check.md)를 실제 검증했습니다. 초대 후 파일 해시 일치와 중계의 팀원 인식, 같은 로그인 상태에서 권한 회수 후 폴더·파일 404와 중계 403을 확인했습니다. 앱에서도 해당 팀과 편집·AI 사용이 비활성화됐습니다. 임시 공유 권한 회수·허용 팀 0개·비공개 배포·외부 404·Secret 보존을 확인했고 이번 추가 Claude 분석은 0회입니다. 검증 범위는 한 PC의 두 Google 계정이며, 일반 팀 상시 사용과 다른 PC·역할 검증은 남아 있습니다.
+
+[첫 운영 활성화](docs/patches/2026-11-18-team-ai-normal-operation.md)는 구체적인 조건에 대한 승인 후 **앤드위브 AI 한 팀·서비스/팀 전체 하루 10회**로 공개 연결을 적용했습니다. 실제 소유자 상태 200·한도 10, 미허용 팀 403과 반복 조회의 사용 횟수 보존, 앱의 0 / 10회 표시를 확인했습니다. 읽기 도구 검사 4개와 필수 Secret 이름 보존을 확인했으며 기존 키·서명키·사용 기록을 유지했습니다. 이번 추가 Claude 분석·협업 저장·Calendar 등록은 0회입니다.
+
+[새 PC 복원 확인 준비](docs/patches/2026-11-18-new-pc-restore-check.md)에서 같은 Google 계정의 팀·설정·파일·협업 복원 관련 기존 자동 검사 **25개**를 확인하고, 설치 파일·안내·빌드 정보·체크섬만 담은 Windows x64 ZIP을 만들었습니다. 기존 로그인 토큰이나 개인 설정은 넣지 않았고 ZIP의 파일 목록·각 파일 해시를 대조했습니다. 실제 다른 PC의 설치·로그인·복원은 사용자 요청으로 보류하고 현재 검증판을 마무리합니다. 이번 추가 유료 분석·Drive 변경·일정 등록은 없습니다.
+
+[내 기본 캘린더 패치](docs/patches/2026-11-17-my-calendar.md)는 **협업 할 일 → 내 일정 → 날짜 확인 → 본인 기본 캘린더에 종일 일정 추가**를 제공합니다. Calendar 권한을 별도로 한 번 연결하고 재사용하며, 같은 할 일의 기존 일정은 보존합니다. 이 첫 패치에서 자동 검사 **202개**, 가상 화면·Wasm·Windows 빌드를 확인했습니다. 이후 아래 패치에서 일정 갱신·삭제를 연결했습니다. 실제 Google·두 PC 검증과 자동 등록은 남아 있습니다.
+
+후속 [연결 일정 관리](docs/patches/2026-11-17-calendar-management.md)에서 **현재 일정 조회 → 업무와 비교 → 검토한 수정·삭제**를 연결했습니다. 확인 이후 다른 변경이 있으면 멈추고, 응답 유실 후 재확인은 조회만 수행합니다. 완료한 업무에서도 내 일정만 삭제할 수 있으며 팀 할 일은 유지합니다. 최신 자동 검사 **215개**와 가상 화면·Wasm·Windows 빌드를 확인했습니다. 실계정·두 PC 검증과 자동화는 남아 있습니다.
+
+2단계의 [Google 로그인 기반](docs/patches/2026-11-17-google-login-foundation.md), [개인 설정 동기화](docs/patches/2026-11-17-google-profile-sync.md), [팀 폴더 패치](docs/patches/2026-11-17-drive-team-folders.md)를 추가했습니다. 사용자는 연결 JSON을 입력하지 않습니다. 이름·기본 설정·팀 참조를 Drive 앱 전용 공간에 저장·복원하고, 최소 파일 권한에서 팀 만들기·계정 지정 초대·Google 폴더 선택·현재 접근 확인을 연결했습니다. 당시 파일 전송은 **폴더 열기**로 연결했고, 자동 검사 100개와 Wasm·Windows 빌드를 확인했습니다. 실제 Google 계정·메일 배달·두 PC·다른 사용자가 추가한 하위 파일의 앱 접근 검증은 남아 있습니다.
+
+3단계의 [앱 안 파일 전송 패치](docs/patches/2026-11-17-drive-files.md)에서 **파일 보기 → 올리기·받기**를 연결했습니다. 파일당 25MB, 계정별 대기 8개를 지원하며 전송 취소·같은 작업 재시도·내용 확인·기존 로컬 파일 보호를 적용했습니다. 일반 파일은 앱에서 받고 Google 문서는 Drive에서 엽니다. 자동 검사 **115개**, 가상 자료 UI와 Wasm·Windows 빌드를 확인했습니다. 실제 Google·두 PC·파일 선택창의 전체 검증은 아직 완료하지 않았습니다.
+
+[Drive 가져오기·로그인 반복 수정](docs/patches/2026-11-17-drive-import-session.md)은 위 최소 권한·외부 선택창 방식을 대체합니다. 사용자 승인에 따라 첫 로그인에 Drive 전체 접근을 함께 받고, 앱 안의 내 Drive·공유받은 자료·이름 검색에서 파일을 고릅니다. **사본 추가**는 원본을 유지하면서 팀 폴더에 실제 사본을 만듭니다. 기존 로그인은 연결 갱신 한 번이 필요합니다. 정상 파일 작업은 저장된 로그인으로 처리하며, 토큰 철회·만료 시에는 재로그인이 필요할 수 있습니다.
+
+[협업 기본 패치](docs/patches/2026-11-17-drive-collaboration.md)는 **협업 → 팀 선택 → 프로젝트·할 일 추가/수정**을 연결합니다. 담당자·마감일·진행 상태를 팀 Drive에 보관하고, 앱 실행 중 협업 화면에서 30초마다 확인합니다. 동시 수정은 두 내용을 보존해 사용자 확인으로 정리하고, 전송 실패는 계정별 로컬 대기를 이어 보냅니다. AI 분석·Calendar 자동 등록은 아직 연결하지 않았습니다. 실계정·두 PC 검증은 별도입니다.
+
+[팀 Claude 중계 기반](docs/patches/2026-11-17-team-claude-gateway.md)은 공용 키의 서비스 보관, Google 팀 권한 확인, 사용 한도·중복 호출 차단과 앱 연결 상태를 준비합니다. 이어 [파일·텍스트 AI 검토](docs/patches/2026-11-17-ai-review.md)에서 Google 문서·UTF-8 TXT/MD/CSV의 본문 확인 → 분석 → 근거·담당자·날짜 검토 → 선택한 할 일만 협업 저장을 연결했습니다. 당시 자동 검사 185개와 가상 자료 화면·Wasm·Windows 빌드를 확인했습니다. 이후 키 등록·승인된 실계정 샘플 분석 1회·검증 후 비공개 복귀를 확인했고, 별도 운영 승인으로 앤드위브 AI 한 팀의 연결을 활성화했습니다. 주소가 없는 빌드는 본문 확인까지만 가능하며, 연결 정보를 넣은 검증판은 [운영 계약](services/team-ai/README.md)에 따라 허용한 팀에서 사용할 수 있습니다.
 
 ### 기존 릴리스 기록: v0.9.14 — PC 톡 준비 기능
 
@@ -14,36 +46,34 @@
 
 ## 기술 구성
 
-**Tauri 2 + Rust**로 만듭니다. 팀 동기화·상담 흐름·배분·시간표·Google·Telegram·AI·저장·업데이트 같은 로직은 모두 Rust(`core/`, `src-tauri/`)이고, 화면(`ui/`)만 HTML·CSS와 화면을 그리는 짧은 JS입니다. 설치 파일이 작고(수 MB) 메모리를 적게 씁니다. Windows 10·11에 기본으로 들어 있는 WebView2로 화면을 그립니다.
+**Tauri 2 + Rust**로 만듭니다. Google·파일·협업·AI·일정·저장 로직은 Rust(`core/`, `src-tauri/`), 화면 동작은 Rust/Wasm(`ui-app/`), 레이아웃은 HTML·CSS(`ui/`)입니다. Windows에서는 WebView2로 화면을 그립니다. 공용 Claude 키를 보호하는 중계 소스는 `services/team-ai/`에 있으며 현재 승인한 한 팀의 상시 연결을 활성화했습니다.
 
 ## 실행
 
 Rust(rustup, `rustup target add wasm32-unknown-unknown`)와 Node.js(Tauri 빌드 도구용)가 필요합니다. 앱 화면은 Rust로 작성해 WebAssembly 로 만듭니다 (`cargo run -p xtask -- ui`, 빌드할 때 자동 실행).
 
 ```bash
-npm install          # Tauri 빌드 도구 설치
+npm ci               # Tauri 빌드 도구 설치
 npm run dev          # 개발 실행
 npm test             # 핵심 로직 테스트 (cargo test --workspace)
-npm run check:firebase  # 실제 Firebase 에서 팀 기능·권한 규칙 점검 (인터넷 필요)
-npm run build        # 설치 파일 만들기 (Windows 에서)
+node --test services/team-ai/gateway.test.mjs scripts/check-google-client.test.mjs scripts/build-preview.test.mjs
+node scripts/check-google-client.mjs  # 개발 측 연결 정보의 형식 확인 (내용 출력 없음)
+npm run build:preview # 현재 전환 중인 검증 설치 파일 만들기 (Windows)
 ```
 
-### 팀원에게 나눠 주기 · 새 버전 배포 (자동 업데이트)
+ARM Windows에서 x64 개발 도구를 쓰는 현재 로컬 검증은 `cargo test --locked --workspace --target x86_64-pc-windows-msvc -- --test-threads=4`로 실행합니다. Firebase 실계정 검사는 과거 구현용이며 현재 Google 작업 공간의 검증 절차에 포함하지 않습니다.
 
-- 팀원은 [Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)의 `Sai-Setup-x.y.z.exe`를 한 번 설치하면 됩니다. 스냅드래곤 같은 ARM 노트북(Windows on ARM)은 `Sai-Setup-x.y.z-arm64.exe`를 받으면 에뮬레이션 없이 더 빠르게 돌아갑니다. 설치 없이 쓰려면 `Sai-Portable-x.y.z.exe` 하나만 실행해도 됩니다.
-- 설치된 사이는 켤 때와 3시간마다 새 버전을 확인합니다. 새 버전이 있으면 받아서 `SHA256SUMS.txt`로 확인해 두고, 고양이가 "지금 적용"할지 묻습니다. "나중에"를 고르면 프로그램을 끌 때 적용됩니다.
-- 포터블로 쓰던 사람이 업데이트를 적용하면 설치 화면이 떠서 설치 버전으로 바뀝니다.
-- 0.7.x 이하(Electron 버전)를 쓰던 사람은 새 설치 파일을 한 번 설치하고, 예전 사이는 "앱 및 기능"에서 지워 주세요. 팀·프로젝트·작업은 서버에 있어서 그대로이고, 이 컴퓨터의 설정·로그인은 다시 해야 합니다.
+### 전환 중 검증 설치 파일
 
-새 버전을 배포하는 방법:
+PR과 `main` 소스 변경은 [Google 작업 공간 검사](.github/workflows/check-workspace.yml)로 Wasm·Rust·중계·빌드 설정 모의 검사를 실행합니다. Google 계정이나 유료 AI 연결은 사용하지 않습니다.
 
-1. `Cargo.toml`의 `[workspace.package]` `version`을 올립니다 (예: 0.8.0 → 0.8.1).
-2. 커밋해서 `main`에 push 합니다.
+[Windows 검증 설치 파일](.github/workflows/build-windows.yml)은 개발자가 GitHub Actions에서 수동 실행합니다. 개발 측 `GOOGLE_CLIENT_JSON`이 없거나 데스크톱 앱 형식이 아니면 중단합니다. 중계가 준비됐다면 공개 원점만 `SAI_TEAM_AI_ENDPOINT` 저장소 변수로 제공합니다. 일반 사용자가 서버·JSON·공용 AI 키를 설정하지 않습니다. 자세한 형식은 [빌드 설정](config/README.md)을 따릅니다.
 
-그러면 GitHub Actions가 Windows에서 앱 테스트·데스크톱 팀 서버 권한·앱 연동을 점검한 뒤 설치 파일을 만들어 Releases에 올립니다. 이미 배포된 버전이면 아무것도 하지 않습니다.
-Google 연결 정보가 설치 파일에 들어가도록 저장소 **Settings → Secrets and variables → Actions**에 `GOOGLE_CLIENT_JSON` 시크릿을 넣어 두세요 (형식은 `config/README.md`).
+통과하면 CPU별 Actions 아티팩트에 `Sai-Preview-Setup-0.9.14[-arm64].exe`, `Sai-Preview-Portable-0.9.14[-arm64].exe`와 체크섬을 보관합니다. 옛 PC 서버 ZIP은 포함하지 않고 Releases·자동 업데이트 메타데이터를 발행하지 않습니다. 버전만 올려 `main`에 푸시해도 정식 배포되지 않습니다. 이 워크플로의 실제 실행과 ARM64 앱 빌드는 아직 확인하지 않았습니다. 로컬 x64 NSIS 기본 설치 시험의 범위는 [최신 기록](docs/patches/2026-11-17-install-restart.md)을 따릅니다.
 
-Windows를 우선 대상으로 만들었고, macOS·Linux에서도 실행됩니다 (Linux는 투명 부분 클릭 통과가 제한될 수 있음).
+검증판은 **사이 미리보기**라는 별도 앱으로 설치합니다. 앱 ID·실행 파일·자료 저장 공간·시작 메뉴가 기존 사이와 다르고, 시작 프로그램과 정식 자동 업데이트는 사용하지 않습니다. 로컬·CI 모두 `npm run build:preview`를 사용하며, 결과는 `target/preview-dist/win-x64` 또는 `win-arm64`에 모읍니다. ARM Windows에서 x64 도구로 빌드할 때는 `npm run build:preview -- --target x86_64-pc-windows-msvc --ui-host-target x86_64-pc-windows-msvc`를 사용합니다. 일반 `npm run build`는 기존 제품 설정으로 빌드하므로 전환 중 검증 배포에 사용하지 않습니다.
+
+[기존 Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)는 전환 전 제품입니다. 새 Google 작업 공간의 설치·이전·권한·실기기 검증을 마친 뒤 정식 배포와 업데이트 경로를 다시 확정합니다. 현재 검증 대상은 Windows이며 다른 OS의 동작을 보장하지 않습니다.
 
 ## 현재 코드의 기능 — 전환 전
 

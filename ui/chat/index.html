@@ -1,433 +1,91 @@
 <!doctype html>
 <html lang="ko" data-window="chat">
-<head>
-  <meta charset="utf-8" />
-  <title>사이와 이야기</title>
-  <link rel="stylesheet" href="chat.css" />
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>사이</title><link rel="stylesheet" href="chat.css"></head>
 <body>
-  <header class="top">
-    <canvas id="avatar" width="48" height="48" aria-hidden="true"></canvas>
-    <div class="who">
-      <strong id="catName">사이</strong>
-      <select id="teamSwitch" class="team-switch hidden" title="보고 있는 팀 (협업·정리함·공유 기본값)"></select>
-      <span id="engine" class="engine"></span>
-    </div>
-    <nav class="tabs" role="tablist">
-      <button role="tab" data-tab="chat" class="active">대화</button>
-      <button role="tab" data-tab="notes">정리함</button>
-      <button role="tab" data-tab="collab">협업</button>
-      <button role="tab" data-tab="drive">Drive</button>
-      <button role="tab" data-tab="settings">설정</button>
-    </nav>
-  </header>
-
-  <!-- 대화 -->
-  <section id="tab-chat" class="tab active">
-    <div class="privacy-note">
-      대화 기록은 이 컴퓨터에 보관해요. 팀원에게는 내가 확인한 문안만 전달돼요.
-    </div>
-    <div id="messages" class="messages" aria-live="polite"></div>
-    <div id="modePicker" class="mode-picker">
-      <p>어떤 이야기를 해 볼까요?</p>
-      <button data-mode="complaint">팀원 일로 속상해요</button>
-      <button id="promiseMode" data-mode="promise">팀 약속 잡기</button>
-      <button data-mode="explain">내 사정을 이야기하고 싶어요</button>
-      <button data-mode="free">그냥 이야기할래요</button>
-      <button data-mode="schedule">일정 조정하기</button>
-    </div>
-    <section id="deliveryPanel" class="delivery-panel hidden" aria-label="AI 공유 문안 작성"></section>
-    <footer id="composer" class="composer hidden">
-      <div class="helpers">
-        <button id="skipBtn" class="link">이 질문 건너뛰기</button>
-        <button id="summarizeBtn" class="link">지금까지 정리하기</button>
-        <button id="complaintDelivery" class="link hidden">AI 공유 문안 만들기</button>
-        <button id="clearScheduleChat" class="link hidden">일정 대화 삭제</button>
-        <button id="newBtn" class="link">새 대화</button>
-      </div>
-      <div class="row">
-        <textarea id="input" rows="2" placeholder="편하게 적어 주세요 (Enter 보내기, Shift+Enter 줄바꿈)"></textarea>
-        <button id="sendBtn" class="primary">보내기</button>
-      </div>
-    </footer>
-  </section>
-
-  <!-- 정리함 -->
-  <section id="tab-notes" class="tab">
-    <h2>팀 약속</h2>
-    <p class="hint">대화에서 AI와 약속을 작성해 팀에 제안할 수 있어요. 두 명 이상인 팀에서 모두 동의하면 팀 약속이 돼요.</p>
-    <div><button id="notesPromise">팀 약속 잡기</button></div>
-    <div id="proposals" class="list"></div>
-    <h2>공유 대기함</h2>
-    <p class="hint">대화에서 AI와 작성하고 승인한 문안의 전송 상태를 확인하세요. 승인한 문안은 AI 연결이 끊겨도 팀 동기화 때 전달됩니다.</p>
-    <div id="outbox" class="list"></div>
-    <section id="receivedAdviceSection" class="hidden">
-      <h2>받은 조언</h2>
-      <div id="receivedAdvice" class="list"></div>
-    </section>
-    <h2>나의 대화 기록</h2>
-    <p class="hint">이 컴퓨터에만 저장돼요. 보관 기간이 지나면 자동으로 지워져요.</p>
-    <div id="sessions" class="list"></div>
-    <div id="sessionView" class="session-view hidden"></div>
-  </section>
-
-  <!-- 협업 -->
-  <section id="tab-collab" class="tab">
-    <div id="collabRoot" class="collab"></div>
-  </section>
-
-  <!-- 팀 Drive 함 -->
-  <section id="tab-drive" class="tab">
-    <div id="driveRoot" class="drive">
-      <div class="drive-modes" role="group" aria-label="팀 공간 보기">
-        <button id="driveChatMode" aria-pressed="true" aria-controls="driveFeed">기존 서버 톡</button>
-        <button id="driveFilesMode" aria-pressed="false" aria-controls="driveFeed">파일 공유</button>
-        <button id="drivePcMode" aria-pressed="false" aria-controls="pcTalkRoot">PC 톡</button>
-      </div>
-      <div id="serverDrive" class="server-drive">
-      <div id="driveHead" class="drive-head"></div>
-      <div class="drive-content">
-        <div id="driveFeed" class="drive-feed" role="region" aria-labelledby="driveChatMode"></div>
-        <div id="drivePicker" class="drive-picker hidden"></div>
-      </div>
-      <div id="driveChatComposer" class="drive-composer">
-        <div class="row">
-          <textarea id="driveText" rows="1" maxlength="1000" aria-label="팀 메시지" placeholder="메시지 작성…"></textarea>
-          <button id="driveSend" class="primary">보내기</button>
-        </div>
-        <span id="driveChatStatus" class="status" role="status"></span>
-      </div>
-      <div id="driveFilesComposer" class="drive-composer hidden">
-        <textarea id="driveCaption" rows="1" maxlength="1000" aria-label="파일 설명 (선택)" placeholder="파일과 함께 보낼 설명 (선택)"></textarea>
-        <div class="row">
-          <button id="driveChooseLocal">내 컴퓨터에서 선택</button>
-          <button id="driveChooseGoogle">Google Drive에서 선택</button>
-          <input id="driveFileInput" type="file" multiple hidden>
-        </div>
-        <label class="check"><input id="driveEdit" type="checkbox" checked> 받은 팀원도 고칠 수 있게 (끄면 보기만)</label>
-        <span id="driveFilesStatus" class="status" role="status"></span>
-      </div>
-      </div>
-      <section id="pcTalkRoot" class="pc-talk hidden" aria-label="승인 장치의 PC 톡">
-        <div class="inline">
-          <label for="pcTalkTeam">PC 팀</label>
-          <select id="pcTalkTeam"><option value="">PC 팀 선택</option></select>
-          <button type="button" id="pcTalkRefresh">새로 읽기</button>
-          <button type="button" id="pcTalkSettings" class="link">장치 승인·연결 설정</button>
-        </div>
-        <p id="pcTalkAudience" class="hint"></p>
-        <p id="pcTalkConnection" class="hint"></p>
-        <p class="hint">기존 서버 톡과 별도의 PC 팀 대화예요. 작성자는 서명된 장치 ID로 표시하며, 기존 계정 이름을 자동 연결하지 않아요. 시각은 작성 PC 기준이고 ‘저장 확인’은 읽음 표시가 아니에요.</p>
-        <div id="pcTalkFeed" class="drive-feed" role="region" aria-label="이 PC에 보관한 PC 톡"></div>
-        <div class="inline">
-          <button type="button" id="pcTalkOlder">이전 톡</button>
-          <button type="button" id="pcTalkNewer">최근 톡</button>
-        </div>
-        <label><input type="checkbox" id="pcTalkConsent" /> 위 PC 팀의 승인 장치에 톡과 내 삭제 요청을 전달해요. 승인 범위가 바뀌면 다시 확인해요.</label>
-        <div class="row">
-          <textarea id="pcTalkText" rows="2" maxlength="1000" aria-label="PC 팀 메시지" placeholder="이 PC에 먼저 저장할 메시지…"></textarea>
-          <button type="button" id="pcTalkSend" class="primary" disabled>이 PC에 저장·전달 대기</button>
-        </div>
-        <p id="pcTalkMessage" class="status" role="status"></p>
-      </section>
-    </div>
-  </section>
-
-  <!-- 설정 -->
-  <section id="tab-settings" class="tab">
-    <div class="settings">
-      <fieldset id="teamBox">
-        <legend>팀 연결</legend>
-        <div id="teamList" class="list team-list"></div>
-        <div id="teamStatus" class="team-status"></div>
-        <details id="desktopServer" class="team-create hidden">
-          <summary>팀 서버 선택</summary>
-          <label for="desktopServerUrl">데스크톱 서버 주소</label>
-          <input type="url" id="desktopServerUrl" spellcheck="false" autocomplete="off" placeholder="https://팀에서-알려준-주소" />
-          <div class="inline">
-            <button type="button" id="desktopCheck">연결 확인</button>
-              <button type="button" id="desktopLocal">이 PC 주소 넣기</button>
-            <button type="button" id="desktopApply" disabled>이 서버 사용</button>
-            <button type="button" id="desktopRestore" class="link hidden">Firebase로 돌아가기</button>
-          </div>
-          <p class="hint">서버 PC에서는 http://127.0.0.1:8765 를 입력하세요. 다른 PC에서는 팀 운영자가 알려 준 HTTPS 주소를 사용하세요.</p>
-            <p class="hint">팀 톡·팀 자료 목록·협업 기록은 선택한 팀 서버를 사용해요. Google Drive·캘린더는 각 PC에서 Google에 직접 연결해요. 서버 PC가 켜져 있고 팀 서버가 실행 중이어야 팀원끼리 톡을 주고받을 수 있어요.</p>
-          <button type="button" id="desktopMyUid" class="link">내 팀 계정 ID 확인</button>
-          <input type="text" id="desktopUid" class="hidden" aria-label="내 팀 계정 ID" readonly />
-          <p id="desktopMsg" class="status" role="status"></p>
-        </details>
-        <div id="teamConfig">
-          <p class="hint">Firebase 콘솔 → 프로젝트 설정 → 내 앱(웹)의 <b>firebaseConfig</b>를 그대로 붙여 넣어 주세요. 팀원 모두 같은 값을 넣어야 해요. 자세한 방법은 저장소의 docs/firebase-setup.md 에 있어요.</p>
-          <textarea id="fbConfig" rows="4" placeholder='const firebaseConfig = { apiKey: "...", projectId: "..." }'></textarea>
-          <div class="inline"><button type="button" id="fbSave">Firebase 설정 저장</button></div>
-        </div>
-        <div id="teamConnected" class="hidden">
-          <div id="memberList" class="list"></div>
-          <div id="adminBox" class="admin-box"></div>
-          <div class="inline">
-            <button type="button" id="teamSyncBtn">지금 동기화</button>
-            <button type="button" id="teamLeave" class="danger">보고 있는 팀 나가기</button>
-            <button type="button" id="fbEdit" class="link">Firebase 설정 바꾸기</button>
-          </div>
-        </div>
-        <div id="teamJoin" class="hidden">
-          <div id="teamJoinTitle" class="label"></div>
-          <label>팀에 보일 내 이름
-            <input type="text" id="displayName" maxlength="30" placeholder="예: 유빈" />
-          </label>
-          <div class="inline">
-            <input type="text" id="joinCode" maxlength="6" placeholder="참여 코드 6자리" class="code" />
-            <button type="button" id="teamJoinBtn" class="primary">참여하기</button>
-          </div>
-          <p class="hint">한 팀에 같은 이름은 한 명만 들어올 수 있어요.</p>
-          <details class="team-create">
-            <summary>새 팀 만들기</summary>
-            <input type="text" id="teamName" maxlength="60" placeholder="새 팀 이름" />
-            <p class="hint">팀을 만드는 사람이 관리자예요. 관리자만 팀원을 내보낼 수 있고, 다른 컴퓨터에서도 이 아이디·비밀번호로 관리자가 돼요. 비밀번호는 다시 볼 수 없으니 기억해 두세요.</p>
-            <div class="inline">
-              <input type="text" id="adminId" maxlength="30" placeholder="관리자 아이디 (3자 이상)" autocomplete="off" />
-              <input type="password" id="adminPw" maxlength="100" placeholder="관리자 비밀번호 (6자 이상)" autocomplete="new-password" />
-            </div>
-            <div class="inline"><button type="button" id="teamCreate">팀 만들기</button></div>
-          </details>
-        </div>
-        <span id="teamMsg" class="status"></span>
-      </fieldset>
-      <fieldset id="meshProbeBox">
-        <legend>PC 연결 실험</legend>
-        <details id="meshProbeDetails">
-          <summary>같은 네트워크의 PC 연결 확인</summary>
-          <p class="hint">자동 호스트를 준비하는 연결 진단이에요. 이번 단계에서는 확인 신호만 주고받으며, 팀 톡이나 파일을 전송하지 않아요. 양쪽 PC에서 실험을 켜고 연결 정보를 서로 등록하세요.</p>
-          <label for="meshProbeAddress">연결을 받을 이 PC의 LAN 주소</label>
-          <select id="meshProbeAddress" aria-label="연결 실험 LAN 주소"></select>
-          <label class="check"><input type="checkbox" id="meshProbeConsent" /> 선택한 LAN에서 15분 동안 연결 실험을 여는 데 동의해요.</label>
-          <div class="inline">
-            <button type="button" id="meshProbeStart">실험 시작</button>
-            <button type="button" id="meshProbeStop" disabled>실험 중지</button>
-            <button type="button" id="meshProbeRefresh">상태 새로고침</button>
-          </div>
-          <p id="meshProbeState" class="hint" role="status">실행하지 않았어요.</p>
-          <div id="meshProbeRunning" class="hidden">
-            <label for="meshProbeCard">상대에게 전달할 내 연결 정보</label>
-            <textarea id="meshProbeCard" rows="4" readonly spellcheck="false" aria-label="상대에게 전달할 공개 연결 정보"></textarea>
-            <p class="hint">상대 PC의 화면과 아래 인증서 지문이 같은지 확인하세요. 다시 시작하면 연결 정보와 지문이 바뀌어요.</p>
-            <p id="meshProbeFingerprint" class="mesh-fingerprint"></p>
-            <label for="meshProbePeerCard">상대 PC에서 받은 연결 정보</label>
-            <textarea id="meshProbePeerCard" rows="4" maxlength="8192" spellcheck="false" placeholder="상대 PC의 공개 연결 정보를 붙여 넣으세요"></textarea>
-            <button type="button" id="meshProbeAdd">상대 정보 등록</button>
-            <div id="meshProbePeers" class="list"></div>
-            <div id="meshProbeDiscovered" class="hint"></div>
-          </div>
-          <p class="hint">이번 실험은 사설 IPv4 LAN을 지원해요. Windows의 앱 통신 허용이 필요할 수 있어요. 게스트 Wi-Fi나 회사 네트워크에서 PC 사이 통신을 막으면 연결할 수 없어요.</p>
-          <p id="meshProbeMessage" class="status" role="status"></p>
-        </details>
-      </fieldset>
-      <fieldset id="meshIdentityBox">
-        <legend>PC 팀 장치 등록 준비</legend>
-        <details>
-          <summary>내 장치와 관리자 승인 정보</summary>
-          <p class="hint">자동 호스트의 신원과 승인 자료를 준비하는 단계예요. 기존 팀을 이전하거나 연결 실험의 권한을 자동 변경하지 않아요. 개인키는 이 Windows 사용자 계정으로 보호해 저장해요.</p>
-          <p id="meshIdentityStatus" class="hint">내 장치를 아직 만들지 않았어요.</p>
-          <button type="button" id="meshIdentityCreate">내 장치 만들기</button>
-          <p id="meshIdentityDevice" class="mesh-fingerprint"></p>
-          <label for="meshIdentityTeam">준비 중인 PC 팀</label>
-          <select id="meshIdentityTeam" aria-label="신원 등록용 PC 팀"></select>
-          <p id="meshIdentityTeamInfo" class="hint"></p>
-          <p id="meshIdentityFingerprint" class="mesh-fingerprint"></p>
-          <div class="inline">
-            <input type="text" id="meshIdentityTeamName" maxlength="60" placeholder="새 PC 팀 이름" aria-label="새 PC 팀 이름" />
-            <button type="button" id="meshIdentityCreateTeam">새 PC 팀 준비 (관리자)</button>
-          </div>
-          <p class="hint">운영 관리자 한 명의 키를 모든 PC 팀에서 함께 사용해요. 관리자가 팀을 준비해 승인 정보를 전달하면, 팀원은 관리자 화면과 지문을 대조해 등록해요. 팀원은 등록 요청을 만들어 관리자에게 전달하고, 관리자는 승인 후 갱신된 승인 정보를 돌려줘요.</p>
-          <div class="inline">
-            <button type="button" id="meshIdentityRequest">내 등록 요청 만들기</button>
-            <button type="button" id="meshIdentityExport">승인 정보 내보내기</button>
-          </div>
-          <label for="meshIdentityOutput">전달할 공개 자료</label>
-          <textarea id="meshIdentityOutput" rows="4" readonly spellcheck="false" aria-label="전달할 공개 장치 등록 자료"></textarea>
-          <label for="meshIdentityInput">받은 등록 요청 또는 승인 정보</label>
-          <textarea id="meshIdentityInput" rows="4" maxlength="1048576" spellcheck="false" aria-label="받은 장치 등록 자료"></textarea>
-          <label for="meshIdentityPin">처음 팀 등록 시 관리자 화면에서 확인한 지문</label>
-          <input type="text" id="meshIdentityPin" maxlength="64" spellcheck="false" autocomplete="off" aria-label="직접 확인한 관리자 지문" />
-          <div class="inline">
-            <button type="button" id="meshIdentityImport">승인 정보 등록</button>
-            <button type="button" id="meshIdentityApprove">장치 등록 승인 (관리자)</button>
-          </div>
-          <div id="meshIdentityDevices" class="list"></div>
-          <p id="meshIdentityMessage" class="status" role="status"></p>
-          <details>
-            <summary>승인 장치 연결과 암호화된 준비 톡 교환</summary>
-            <p class="hint">위에서 선택한 PC 팀의 준비 기능이에요. 저장은 먼저 이 PC에서 완료해요. 별도로 기록 교환에 동의한 양쪽 장치가 암호화 기록 교환을 누르면 준비 톡과 저장 확인을 교환해요. 기존 팀 톡은 아래에서 선택해 이 PC에 별도 보관할 수 있어요. 기존 팀 톡 화면의 서버 연결 전환은 아직 제공하지 않아요.</p>
-            <p id="meshLocalStatus" class="hint"></p>
-            <div id="meshLocalMessages" class="list"></div>
-            <label for="meshLocalText">이 PC에 보관할 톡</label>
-            <textarea id="meshLocalText" rows="3" maxlength="32768" placeholder="선택한 PC 팀의 현재 승인 장치들에게 교환할 준비 톡"></textarea>
-            <div class="inline">
-              <button type="button" id="meshLocalSave" disabled>이 PC에 저장</button>
-              <button type="button" id="meshLocalRefresh">저장 상태 새로 고침</button>
-            </div>
-            <p id="meshLocalMessage" class="status" role="status"></p>
-            <hr />
-            <p id="meshSessionStatus" class="hint">승인 장치 연결 확인이 꺼져 있어요.</p>
-            <label for="meshSessionAddress">연결 확인에 사용할 LAN</label>
-            <select id="meshSessionAddress"><option value="">이 PC의 LAN 선택</option></select>
-            <label><input type="checkbox" id="meshSessionConsent" /> 선택한 LAN에서 최대 15분 동안 승인 장치 연결 확인을 열어요.</label>
-            <label><input type="checkbox" id="meshExchangeConsent" /> 선택한 PC 팀의 암호화된 준비 톡 수신과 기록 교환을 허용해요. 양쪽 장치에서 동의해야 해요.</label>
-            <label><input type="checkbox" id="meshAutomaticConsent" /> 같은 LAN의 승인된 PC를 자동으로 찾아 재연결하고 대기 기록을 교환해요. 양쪽에서 켜야 하며 이번 실행 동안 최대 15분만 동작해요.</label>
-            <label><input type="checkbox" id="meshCourierConsent" /> 준비 톡의 암호문 중계와 대표 PC 후보로 참여해요. 작성 PC가 꺼져도 받은 사본을 전달할 수 있어요. 중지해도 이미 전달한 사본은 회수되지 않아요.</label>
-            <label><input type="checkbox" id="meshRestoreConsent" /> 이 팀과 Windows 네트워크를 기억하고 앱 시작(Windows 로그인 자동 실행 포함)·절전 복귀 때 자동 연결해요. 앱 시작마다 최대 15분이며, 절전 복귀는 남은 시간만 사용해요. 중지하면 이 동의도 해제해요.</label>
-            <p id="meshLifecycleStatus" class="hint">자동 복구는 기본적으로 꺼져 있어요. 개인·도메인 네트워크에서 별도로 선택해 주세요.</p>
-            <p id="meshAutomaticStatus" class="hint">자동 연결은 꺼져 있어요.</p>
-            <p id="meshCourierStatus" class="hint">암호문 중계는 꺼져 있어요. 중계 보관 응답은 최종 수신 확인과 달라요.</p>
-            <p id="meshHostStatus" class="hint">대표 PC 선정은 꺼져 있어요. 연결이 나뉘면 PC마다 대표가 다르게 보일 수 있으며, 관리자 권한은 바뀌지 않아요.</p>
-            <div class="inline">
-              <button type="button" id="meshSessionStart" disabled>선택한 팀으로 연결 확인 시작</button>
-              <button type="button" id="meshSessionStop">중지·자동 복구 해제</button>
-              <button type="button" id="meshSessionRefresh">연결 상태 새로 고침</button>
-            </div>
-            <label for="meshSessionCard">상대에게 전달할 서명된 연결 정보</label>
-            <textarea id="meshSessionCard" rows="3" readonly spellcheck="false"></textarea>
-            <label for="meshSessionInput">상대의 서명된 연결 정보</label>
-            <textarea id="meshSessionInput" rows="3" maxlength="16384" spellcheck="false"></textarea>
-            <button type="button" id="meshSessionAdd" disabled>승인된 상대 연결 정보 등록</button>
-            <p class="hint">자동 연결을 켜면 같은 LAN의 승인된 PC끼리 연결 정보를 확인하고 대기 기록을 이어서 교환해요. 수동 연결에서는 서명된 연결 정보를 서로 등록해요. 기록 교환은 양방향으로 진행하며 한 번에 방향별 최대 8개를 확인해요. 상대가 다른 승인 이력에서 작성한 과거 본문은 자동 교환하지 않아요. 승인 이력이 바뀌면 갱신한 뒤 연결을 다시 시작하세요.</p>
-            <div id="meshSessionPeers" class="list"></div>
-            <p id="meshSessionMessage" class="status" role="status"></p>
-          </details>
-          <details>
-            <summary>기존 팀 톡 확인·이 PC에 보관</summary>
-            <p class="hint">위에서 선택한 PC 팀의 관리자만 사용할 수 있어요. 기존 서버에서 공개 톡을 새로 조회하며, 기존 팀의 현재 관리자 계정도 필요해요. 화면 캐시·개인 문안·파일 링크·약속 제안·연동 설정은 이전하지 않아요.</p>
-            <label for="meshMigrationSource">읽어 올 기존 팀</label>
-            <select id="meshMigrationSource"><option value="">기존 팀 선택</option></select>
-            <div class="inline">
-              <button type="button" id="meshMigrationPreview">서버에서 새로 읽어 미리보기</button>
-              <button type="button" id="meshMigrationSelect">새 톡 첫 200개 선택</button>
-              <button type="button" id="meshMigrationClear">선택 해제</button>
-            </div>
-            <p id="meshMigrationSummary" class="hint">미리보기만으로 보관하거나 발송하지 않아요.</p>
-            <div id="meshMigrationRows" class="list mesh-archive-list"></div>
-            <label><input type="checkbox" id="meshMigrationConsent" /> 원문을 확인했고, 선택한 톡을 이 PC에만 보관해요. 원본의 수정·삭제는 자동 반영되지 않으며, 이 사본을 다른 PC로 전송하지 않아요.</label>
-            <button type="button" id="meshMigrationCommit" disabled>선택한 톡을 이 PC에 보관</button>
-            <p id="meshMigrationMessage" class="status" role="status"></p>
-            <hr />
-            <p id="meshArchiveSummary" class="hint">보관 목록은 현재 PC 팀을 선택한 뒤 새로 읽을 수 있어요.</p>
-            <div id="meshArchiveRows" class="list mesh-archive-list"></div>
-            <div class="inline">
-              <button type="button" id="meshArchivePrevious">이전 보관 목록</button>
-              <button type="button" id="meshArchiveNext">다음 보관 목록</button>
-              <button type="button" id="meshArchiveRefresh">보관 목록 새로 읽기</button>
-            </div>
-          </details>
-        </details>
-      </fieldset>
-      <fieldset id="updateBox">
-        <legend>버전 · 업데이트</legend>
-        <div id="updateInfo" class="team-status"></div>
-        <div class="inline">
-          <button type="button" id="updateCheck">업데이트 확인</button>
-          <button type="button" id="updateInstall" class="primary hidden">지금 적용하고 다시 시작</button>
-        </div>
-        <p class="hint">새 버전이 나오면 알아서 받아 두고 고양이가 알려 줘요. "나중에"를 고르면 프로그램을 끌 때 적용돼요.</p>
-      </fieldset>
-      <fieldset id="extBox">
-        <legend>외부 연결</legend>
-        <div id="extRoot"></div>
-      </fieldset>
-    </div>
-    <form id="settingsForm" class="settings">
-      <fieldset>
-        <legend>말 걸기</legend>
-        <label>말 거는 빈도
-          <select name="frequency">
-            <option value="low">가끔 (25~45분)</option>
-            <option value="normal">보통 (10~20분)</option>
-            <option value="high">자주 (4~8분)</option>
-          </select>
-        </label>
-        <p class="hint">사이는 업무 도우미라 아예 끄는 기능은 없어요. 회의·발표 중에는 고양이 오른쪽 클릭 → <b>잠시 조용히(1시간)</b>나 <b>집중 모드(최대 2시간)</b>를 쓰면 되고, 시간이 지나면 저절로 다시 말을 걸어요.</p>
-        <label class="check"><input type="checkbox" name="dndOn" /> 방해 금지 시간 (잠·휴식 시간, 하루 최대 10시간)</label>
-        <div class="inline">
-          <input type="time" name="dndStart" value="23:00" /> 부터
-          <input type="time" name="dndEnd" value="08:00" /> 까지
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>대화 기록</legend>
-        <label>보관 기간
-          <select name="retentionDays">
-            <option value="7">7일</option>
-            <option value="30">30일</option>
-            <option value="90">90일</option>
-            <option value="0">직접 지울 때까지</option>
-          </select>
-        </label>
-        <button type="button" id="deleteAll" class="danger">대화 기록 모두 지우기</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>AI 연결 (선택)</legend>
-        <p class="hint">Claude는 대화·일정 조정과 프로젝트 업무 배분에 사용해요. Claude로 대화하면 대화 내용이 Anthropic으로 전송돼요.</p>
-        <label class="check"><input type="checkbox" name="aiEnabled" /> 상담 흐름 문장도 AI로 다듬기</label>
-        <label>Claude API 키
-          <input type="password" name="apiKey" placeholder="저장된 키가 있으면 비워 두세요" autocomplete="off" />
-        </label>
-        <label>Claude 모델
-          <input type="text" name="model" />
-        </label>
-        <div class="inline">
-          <button type="button" id="testAi">Claude 연결 확인</button>
-          <button type="button" id="removeClaude" class="link hidden">내 Claude 키 삭제</button>
-          <span id="aiStatus" class="status"></span>
-        </div>
-        <div id="teamKey" class="team-key"></div>
-        <label>GPT API 키 (OpenAI)
-          <input type="password" name="openAiKey" autocomplete="off" placeholder="OpenAI API 키 입력" />
-        </label>
-        <label>GPT 모델
-          <input type="text" name="openAiModel" maxlength="80" placeholder="OpenAI 모델 ID" />
-        </label>
-        <div class="inline">
-          <button type="button" id="testOpenAi">GPT 연결 확인</button>
-          <button type="button" id="removeOpenAi" class="link hidden">내 GPT 키 삭제</button>
-          <span id="openAiStatus" class="status" role="status"></span>
-        </div>
-        <p class="hint">공유 문안·팀 약속을 작성할 때는 해당 대화를, 프로젝트 업무를 배분할 때는 기획서와 팀 프로필을 선택한 AI에 보냅니다. 사용료는 해당 키의 계정에 청구돼요.</p>
-      </fieldset>
-
-      <fieldset>
-        <legend>사이가 하는 일</legend>
-        <p class="hint">
-          사이의 조언에는 일반적인 협업 원칙과, 팀원들이 공유를 허용한 고민에서 정리한 일반적인 주제가 반영될 수 있어요.
-          팀 약속 제안은 내 이름으로 팀 톡에도 올라갑니다. 개인에게 보낸 조언도 작은 팀에서는 상황을 통해 보낸 사람을 짐작할 수 있어요.
-          화면 감시, 키 입력 수집, 다른 메신저 내용 열람은 하지 않아요.
-        </p>
-      </fieldset>
-      <div class="inline">
-        <button type="submit" class="primary">저장</button>
-        <span id="saveStatus" class="status"></span>
-      </div>
-    </form>
-  </section>
-
-  <template id="summaryTpl">
-    <div class="card summary">
-      <div class="card-head">
-        <strong>정리 카드</strong>
-        <span class="badge">나만 볼 수 있어요</span>
-      </div>
-      <dl class="fields"></dl>
-      <div class="topics-block">
-        <div class="label">상담 주제 <span class="hint">(눌러서 수정)</span></div>
-        <div class="chips"></div>
-      </div>
-      <div class="card-actions">
-        <button class="edit link">내용 고치기</button>
-        <button class="share primary">AI 공유 문안 만들기</button>
-      </div>
-    </div>
-  </template>
-
-  <script type="module" src="../pkg/boot.js"></script>
-</body>
-</html>
+<svg class="svg-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<symbol id="i-files" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+<symbol id="i-team" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m3 9v-2a6 6 0 0 0-2-4"/></symbol>
+<symbol id="i-ai" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5ZM20 2v4m-2-2h4"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+<symbol id="i-google" viewBox="0 0 24 24"><path d="M20 12.2c0-.6-.1-1.2-.2-1.7H12v3h4.5a4.5 4.5 0 0 1-4.5 3.4A5 5 0 1 1 15.4 8l2.2-2.2A8 8 0 1 0 20 12.2Z" fill="currentColor" stroke="none"/></symbol>
+</svg>
+<div class="app-shell">
+<aside class="sidebar">
+<a class="brand" href="#drive" data-go="drive" aria-label="사이 파일 홈"><span class="brand-mark">사이</span><span class="brand-caption">함께하는 작은 공간</span></a>
+<div class="nav-caption">WORKSPACE</div>
+<nav class="tabs" aria-label="주 메뉴">
+<button class="active" data-tab="drive" aria-current="page"><svg><use href="#i-files"/></svg><span>파일</span><i></i></button>
+<button data-tab="collab"><svg><use href="#i-team"/></svg><span>협업</span><i></i></button>
+<button data-tab="chat"><svg><use href="#i-ai"/></svg><span>AI</span><i></i></button>
+<button data-tab="settings"><svg><use href="#i-settings"/></svg><span>설정</span><i></i></button>
+</nav>
+<div class="sidebar-bottom"><div class="companion"><canvas id="avatar" width="48" height="48" aria-hidden="true"></canvas><div><strong id="catName">사이</strong><span>당신의 작업 곁에</span></div></div><button class="account-mini" data-go="settings" aria-label="계정 설정 열기"><span class="account-initial" aria-hidden="true">G</span><span id="accountLabel">Google 계정 연결</span><span aria-hidden="true">↗</span></button></div>
+</aside>
+<main class="main">
+<header class="topbar"><div><span class="topbar-brand">사이</span><span class="slash">/</span><span id="pageLabel">파일</span></div><span class="preview-label"><i></i>새로운 사이 · 미리보기</span></header>
+<section id="tab-drive" class="tab active" aria-label="파일">
+<div class="page-content"><div class="section-meta"><span>01 / FILES</span><span>더 가볍게, 더 가까이</span></div>
+<div id="teamOverview"><div class="file-hero"><div class="hero-copy"><h1>파일은 한곳에.<br><span>협업은 가볍게.</span></h1><p>팀의 자료를 모으고, AI와 함께 정리하는 공간.<br>Google 계정으로 시작할 새로운 사이입니다.</p><button class="primary" id="googleConnect" data-google><svg><use href="#i-google"/></svg><span>Google로 시작하기</span><svg><use href="#i-arrow"/></svg></button><p id="accountHint" class="micro" role="status">연결 상태를 확인하고 있어요.</p></div>
+<div class="ink-art" aria-hidden="true"><div class="orbit"></div><div class="orbit second"></div><div class="paper back"></div><div class="paper front"><span class="paper-mark">사이</span><div class="paper-rule"></div><div class="paper-stroke"></div><span class="paper-caption">작은 연결,<br>함께 만드는 다음.</span><span class="paper-number">01 — ∞</span></div><span class="art-caption">A LITTLE SPACE, TOGETHER.</span></div></div>
+<div class="workspace-notice"><i class="notice-dot"></i><p><strong>팀 폴더로 가볍게 시작해요.</strong> 소유자는 팀원을 초대하고, 팀원은 초대받은 폴더를 선택해요.</p></div>
+<section id="teamSpace" aria-label="팀 폴더"><div class="files-heading"><div><h2>함께 쓰는 공간</h2><p>Google Drive에 보관하는 팀 파일</p></div><button id="teamRefresh" class="text-button" type="button" disabled>새로고침 ↻</button></div><div class="team-actions"><button id="teamEnable" class="subtle" type="button" disabled>Google 연결 갱신 →</button><button id="teamNew" class="subtle" type="button" disabled>팀 만들기 ＋</button><button id="teamPick" class="text-button" type="button" disabled>초대받은 팀 연결 →</button></div><p id="teamMessage" class="settings-note" role="status">Google 로그인 후 팀 폴더를 연결할 수 있어요.</p><button id="teamCancel" class="text-button hidden" type="button">브라우저 연결 취소</button><button id="teamResume" class="text-button hidden" type="button">만들던 팀 이어 만들기 →</button><form id="teamCreateForm" class="team-create-form hidden"><label class="field-label">팀 이름<input id="teamName" type="text" maxlength="100" required placeholder="함께하는 팀의 이름"></label><div class="inline"><button class="subtle" type="submit">폴더 만들기</button><button id="teamCreateCancel" class="text-button" type="button">닫기</button></div></form><div id="teamList" class="team-list"></div><p class="micro">초대한 Google 계정에만 공유해요. 팀을 고르면 앱 안에서 파일을 올리고 내려받을 수 있어요.</p></section>
+</div><section id="filesPanel" class="files-panel hidden" aria-label="선택한 팀의 파일"><div class="files-heading"><div><span class="eyebrow">TEAM FILES</span><h2 id="filesTitle">팀 파일</h2></div><button id="filesBack" class="text-button" type="button">팀 목록으로 ←</button></div><div class="team-actions"><button id="fileUpload" class="primary" type="button" disabled>파일 올리기 ↑</button><button id="filePick" class="subtle" type="button" disabled>내 Drive에서 가져오기</button><button id="fileAnalyze" class="text-button" type="button" disabled>AI로 할 일 정리</button><button id="fileRefresh" class="text-button" type="button">새로고침 ↻</button></div><p class="micro">팀 폴더 바로 안의 파일을 표시해요. PC 올리기·받기는 25MB까지, 내 Drive 파일은 사본으로 추가해요.</p><p id="fileMessage" class="settings-note" role="status"></p><progress id="fileProgress" class="file-progress hidden" max="100" aria-label="파일 전송 진행"></progress><button id="fileCancel" type="button" class="text-button hidden">파일 작업 취소</button><div id="fileList" class="file-list"></div><button id="fileMore" class="text-button hidden" type="button">더 불러오기 ↓</button><section id="uploadQueueSection" class="upload-queue hidden"><h3>전송 대기</h3><p class="micro">중단된 작업의 저장 결과를 확인하거나 다시 시도할 수 있어요. 원본이 바뀌었다면 새로 선택해 주세요.</p><div id="uploadQueue"></div></section></section>
+<footer class="page-footer"><span>필요한 것만, 편안하게.</span><span>SAI — YOUR SHARED SPACE</span></footer></div></section>
+<section id="tab-collab" class="tab" aria-label="협업" hidden><div class="page-content">
+<div class="section-meta"><span>02 / TOGETHER</span><span>함께 정리하는 흐름</span></div>
+<div class="page-heading compact"><h1>함께 정리하는<br><span>다음 한 걸음.</span></h1><p>작은 프로젝트부터 오늘의 할 일까지.<br>팀의 Drive에 보관하고 함께 이어가요.</p></div>
+<div class="work-toolbar"><label class="sr-only" for="collabTeam">협업할 팀</label><select id="collabTeam" aria-label="협업할 팀"><option value="">연결된 팀이 없어요</option></select><div class="inline"><button id="collabRefresh" class="text-button" type="button" disabled>동기화 ↻</button><button id="collabProjectNew" class="subtle" type="button" disabled>프로젝트 ＋</button><button id="collabTaskNew" class="primary" type="button" disabled>할 일 ＋</button></div></div>
+<p id="collabMessage" class="settings-note" role="status">파일 화면에서 Google로 로그인하고 팀을 연결해 주세요.</p>
+<form id="collabForm" class="work-form hidden"><div class="files-heading"><h2 id="collabFormTitle">할 일 정리</h2><button id="collabFormCancel" class="text-button" type="button">닫기</button></div><p id="collabFormHint" class="micro"></p><label class="field-label">제목<input id="collabTitle" type="text" maxlength="160" required placeholder="어떤 일을 함께 할까요?"></label><div id="collabTaskFields" class="work-fields"><label class="field-label">프로젝트<select id="collabProject"><option value="">프로젝트 없음</option></select></label><label class="field-label">담당자<input id="collabAssignee" type="text" maxlength="120" placeholder="이름 또는 Google 이메일"></label><label class="field-label">마감일<input id="collabDue" type="date" min="0001-01-01" max="9999-12-31"></label></div><div class="work-save"><label class="field-label">진행 상태<select id="collabStatus"><option value="todo">시작 전</option><option value="doing">진행 중</option><option value="done">완료</option></select></label><button class="primary" type="submit">팀에 저장 →</button></div></form>
+<div id="collabBoard" class="work-board"></div><section class="team-ai-connection" aria-label="팀 Claude"><div><h2>팀 Claude</h2><p id="teamAiMessage" class="settings-note" role="status">팀 Claude를 준비하고 있어요.</p><p class="micro">전송할 내용을 확인하고, 검토한 할 일만 팀에 추가해요.</p></div><button id="teamAiAnalyze" class="subtle" type="button" disabled>내용으로 할 일 정리 →</button><button id="teamAiRefresh" class="text-button" type="button" disabled>연결 확인 ↻</button></section><div class="collab-footer"><p><span id="collabSyncNote" class="status-tag">팀 Drive</span> 실행 중에는 30초마다 새 내용을 확인해요. AI로 검토한 할 일을 추가할 수 있어요. 할 일의 내 일정에서 기본 캘린더에 추가해요.</p><button class="text-button" data-go="drive">팀 파일 보기 →</button></div>
+</div></section>
+<section id="tab-chat" class="tab ai-tab" aria-label="개인 AI" hidden>
+<div class="ai-top"><div><span class="eyebrow">03 / AI COMPANION</span><h1>생각을 위한 작은 여백.</h1></div><button id="newConversation" class="subtle" type="button">새 대화 ＋</button></div>
+<div class="ai-status"><i class="notice-dot"></i><span id="engine">개인 AI 연결 확인 중</span><span class="ai-private">개인 대화 · 이 기기에 보관</span></div>
+<div id="messages" class="messages" role="log" aria-label="개인 AI 대화" aria-live="polite"><div class="ai-welcome" id="aiWelcome"><svg class="ai-emblem"><use href="#i-ai"/></svg><h2>어떤 생각을 나눌까요?</h2><p>복잡한 생각도, 작은 아이디어도 편하게 남겨 주세요.</p><div class="suggestions"><button data-prompt="오늘 할 일을 정리하고 싶어요.">오늘 할 일 정리하기 ↗</button><button data-prompt="복잡한 생각을 정리하는 걸 도와주세요.">생각을 차분히 정리하기 ↗</button></div></div></div>
+<div class="composer-wrap"><div id="aiError" class="inline-error hidden" role="status"></div><form id="composer" class="composer"><label class="sr-only" for="input">AI에게 보낼 메시지</label><textarea id="input" rows="2" maxlength="50000" placeholder="편하게 이야기해 주세요. Shift + Enter로 줄바꿈"></textarea><button id="sendBtn" class="send-button" type="submit" aria-label="메시지 보내기"><svg><use href="#i-up"/></svg></button></form><div class="composer-caption"><span>AI는 실수할 수 있어요. 중요한 내용은 확인해 주세요.</span><button id="historyToggle" class="text-button" type="button" aria-expanded="false" aria-controls="historyPanel">이전 대화</button></div><div id="historyPanel" class="history-panel hidden"><div id="sessions"></div><div id="sessionView" class="hidden"></div></div></div></section>
+<section id="tab-settings" class="tab" aria-label="설정" hidden><div class="page-content settings-content">
+<div class="section-meta"><span>04 / PREFERENCES</span><span>나에게 맞는 사이</span></div><div class="page-heading compact"><h1>편안하게, 내 방식대로.</h1><p>계정과 꼭 필요한 설정만 모았어요.</p></div>
+<section class="settings-card"><div class="card-heading"><svg><use href="#i-google"/></svg><div><h2>Google 계정</h2><p id="googleAccountText">연결 상태 확인 중</p></div><button id="settingsGoogleConnect" class="subtle" data-google type="button">연결하기</button></div><p class="settings-note">이름과 기본 설정을 다른 PC에서도 이어 써요. 파일 화면에서 팀 폴더를 만들거나 초대받은 폴더를 선택해요.</p><div id="googleMessage" role="status" class="settings-note"></div><button id="googleCancel" type="button" class="text-button hidden">로그인 취소</button><button id="googleLogout" type="button" class="text-button hidden">이 기기에서 로그아웃</button></section>
+<section id="profileSection" class="settings-card hidden"><div class="card-heading"><div><h2>어디서나 같은 사이</h2><p>이름과 기본 설정을 Google 계정에 보관해요.</p></div><button id="profileSync" class="text-button" type="button">동기화 ↻</button></div><form id="profileForm"><label class="field-label">내 이름<input id="profileName" type="text" maxlength="60" autocomplete="nickname" disabled></label><label class="field-label">고양이 이름<input id="profileCat" type="text" maxlength="30" required disabled></label><label class="setting-row"><span><strong>말 거는 빈도</strong><small>다른 PC에도 적용해요.</small></span><select id="profileFrequency" aria-label="동기화할 말 거는 빈도" disabled><option value="low">가끔</option><option value="normal">보통</option><option value="high">자주</option></select></label><div class="save-row"><span id="profileMessage" role="status"></span><button class="subtle" type="submit" disabled>계정에 저장</button></div></form><p class="micro">개인 AI 키와 대화 기록은 이 기기에만 보관해요. 파일 화면에서 팀 폴더를 만들거나 초대받은 폴더를 선택해요.</p></section>
+<form id="settingsForm"><section class="settings-card"><h2>이 기기의 설정</h2><label id="localFrequency" class="setting-row"><span><strong>말 거는 빈도</strong><small>바탕화면 고양이의 조언</small></span><select name="frequency" aria-label="말 거는 빈도"><option value="low">가끔</option><option value="normal">보통</option><option value="high">자주</option></select></label><label class="setting-row"><span><strong>개인 대화 보관</strong><small>이 기기의 대화 기록에 적용해요.</small></span><select name="retentionDays" aria-label="개인 대화 보관 기간"><option value="0">계속 보관</option><option value="7">7일</option><option value="30">30일</option><option value="90">90일</option></select></label></section>
+<details class="settings-card advanced"><summary><span>개인 AI 연결</span><span class="summary-caption">고급 설정 ＋</span></summary><p class="settings-note">팀 AI의 연결 상태는 협업 화면에서 확인해요. 개인 자유 대화는 Claude 연결을 사용해요. OpenAI 연결도 이 기기에 보관하며 입력한 키는 팀에 공유하지 않아요.</p><label class="setting-row"><span><strong>개인 AI 사용</strong><small>직접 연결한 AI로 답변받기</small></span><input name="aiEnabled" type="checkbox" aria-label="개인 AI 사용"></label><label class="field-label">Claude API 키<input name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="새 키를 입력할 때만 채워 주세요"></label><label class="field-label">Claude 모델<input name="model" type="text" maxlength="80"></label><button id="removeClaude" type="button" class="text-button hidden">저장된 Claude 키 지우기</button><div class="field-divider"></div><label class="field-label">OpenAI API 키<input name="openAiKey" type="password" autocomplete="off" spellcheck="false" placeholder="새 키를 입력할 때만 채워 주세요"></label><label class="field-label">OpenAI 모델<input name="openAiModel" type="text" maxlength="80"></label><button id="removeOpenAi" type="button" class="text-button hidden">저장된 OpenAI 키 지우기</button><p class="micro">새 키를 입력하지 않으면 기존 연결을 유지해요. API 사용 비용은 개인 계정에 청구돼요.</p></details>
+<div class="save-row"><span id="settingsMessage" role="status"></span><button id="saveSettings" class="primary" type="submit">변경 저장 <svg><use href="#i-arrow"/></svg></button></div></form>
+<p id="storageWarning" class="settings-note error hidden" role="status"></p>
+<details id="legacySection" class="settings-card advanced"><summary><span>이전 자료 보관</span><span class="summary-caption">이 기기의 자료 ＋</span></summary><p class="settings-note">원본은 그대로 두고, 이 기기에 남은 팀·업무·파일 링크만 사본으로 저장해요. 대화 본문·로그인 정보·API 키 설정·팀 참여 코드는 내보내지 않아요. 새 팀으로 자동 업로드하지 않아요.</p><p id="legacyCounts" class="settings-note" role="status">자료를 확인하고 있어요.</p><p id="legacyPcNotice" class="settings-note hidden">이전 PC 톡의 보관 파일도 원래 위치에 남아 있어요. 이번 내보내기에는 포함하지 않아요.</p><div class="legacy-actions"><button id="legacyExport" class="subtle" type="button" disabled>자료 내보내기</button><button id="legacyOpenExports" class="subtle hidden" type="button">저장 폴더 열기 ↗</button><button id="legacyOpenOriginal" class="text-button" type="button">원본 폴더 열기 ↗</button></div><p id="legacyMessage" class="settings-note" role="status"></p><p class="micro">사본은 팀 이름과 업무 내용을 담은 JSON 파일이에요. 외부에 공유할 때는 내용을 먼저 확인해 주세요. 파일 원본은 다운로드하지 않아요.</p></details>
+<section class="update-row"><div><strong>사이 <span id="appVersion"></span></strong><p id="updateStatus" role="status">버전 확인 중</p></div><div class="inline"><button id="updateCheck" class="subtle" type="button">업데이트 확인</button><button id="updateInstall" class="primary hidden" type="button">적용하기</button></div></section>
+</div></section>
+</main></div>
+<dialog id="calendarDialog" class="drive-picker calendar-dialog" aria-labelledby="calendarTitle">
+<header><div><p class="eyebrow">MY CALENDAR</p><h2 id="calendarTitle">내 일정으로 이어가기.</h2></div><button id="calendarClose" class="text-button" type="button" autofocus>닫기</button></header>
+<p id="calendarAccount" class="micro"></p><p class="eyebrow">업무 제목</p><h3 id="calendarTaskTitle"></h3>
+<p class="settings-note">업무 제목과 확인한 날짜로 종일 일정을 관리해요. 변경한 내용을 확인하기 전에는 수정하거나 삭제하지 않아요.</p>
+<section id="calendarCurrent" class="calendar-current hidden"><p class="eyebrow">현재 Calendar 일정</p><strong id="calendarCurrentTitle"></strong><p id="calendarCurrentDates" class="micro"></p></section>
+<label class="field-label">반영할 날짜<input id="calendarDate" type="date" min="0001-01-01" max="9998-12-31" disabled></label>
+<p class="micro">첫 연결에 내 소유 캘린더의 일정 읽기·쓰기 권한이 필요해요. 앱은 내 기본 캘린더에서 이 할 일의 일정만 확인하며, 다른 일정 목록은 읽지 않아요. 연결 정보는 이 PC에 보호해 보관해요.</p>
+<button id="calendarConnect" class="subtle" type="button" disabled>내 Calendar 연결 →</button><button id="calendarCancel" class="text-button hidden" type="button">연결 취소</button>
+<section id="calendarSaveSection"><label class="analysis-choice"><input id="calendarAck" type="checkbox" disabled><span id="calendarSaveLabel">제목과 날짜를 확인했고, 내 기본 캘린더에 추가하겠습니다.</span></label><button id="calendarAdd" class="primary" type="button" disabled>내 캘린더에 추가 →</button></section>
+<details id="calendarDeletePanel" class="calendar-delete hidden"><summary>연결된 일정 삭제</summary><p class="micro">아래 버튼은 표시된 내 Calendar 일정만 삭제해요. 팀의 할 일과 Drive 파일은 유지해요.</p><label class="analysis-choice"><input id="calendarDeleteAck" type="checkbox" disabled><span>현재 표시된 내 일정을 삭제하겠습니다.</span></label><button id="calendarDelete" class="text-button" type="button" disabled>내 일정 삭제</button></details>
+<p id="calendarMessage" class="settings-note" role="status"></p><button id="calendarVerify" class="subtle hidden" type="button">전송 결과 다시 확인</button><button id="calendarReload" class="text-button" type="button">최신 내용 확인 ↻</button>
+<footer><small>기본 캘린더의 공유 설정에 따라 일정이 보일 수 있어요.<br>업무 변경·완료는 확인한 뒤 직접 반영해요.</small></footer>
+</dialog>
+<dialog id="analysisDialog" class="drive-picker analysis-dialog" aria-labelledby="analysisTitle">
+<header><div><p class="eyebrow">WITH CLAUDE</p><h2 id="analysisTitle">자료에서 다음 할 일까지.</h2><small id="analysisTeam"></small></div><button id="analysisClose" class="text-button" type="button" autofocus>닫기</button></header>
+<section id="analysisEntry"><p class="settings-note">팀 파일의 ‘AI로 정리’를 누르거나, 분석할 부분만 여기에 붙여 넣어 주세요. Google 문서와 UTF-8 TXT·MD·CSV를 24KB까지 읽을 수 있어요.</p><label class="sr-only" for="analysisInput">분석할 텍스트</label><textarea id="analysisInput" rows="9" maxlength="24576" placeholder="내용을 준비하면 전송 전에 다시 확인해요."></textarea><button id="analysisPrepare" class="subtle" type="button">보낼 내용 확인 →</button></section>
+<section id="analysisPreview" class="hidden"><h3>전송할 내용</h3><p id="analysisSource" class="micro"></p><label class="sr-only" for="analysisText">전송할 본문 미리보기</label><textarea id="analysisText" rows="10" readonly></textarea><p class="micro">이 본문을 사이 팀 AI 서비스와 Anthropic에 보내요. 전송한 내용은 두 서비스가 처리하며, 확인 전에는 분석하지 않아요.</p><p id="analysisConnection" class="settings-note" role="status"></p><button id="analysisConnect" class="subtle hidden" type="button">팀 AI 연결 범위 확인 →</button><label class="analysis-choice"><input id="analysisSendAck" type="checkbox"><span id="analysisSendLabel">내용과 처리 서비스를 확인했어요.</span></label><button id="analysisRun" class="primary" type="button" disabled>확인한 내용 분석 →</button></section>
+<section id="analysisResults" class="hidden"><h3>분석 결과</h3><p id="analysisSummary" class="analysis-summary"></p><div id="analysisCandidates"></div><label class="field-label">추가할 프로젝트<select id="analysisProject"><option value="">프로젝트 없음</option></select></label><p class="micro">팀에는 선택한 할 일의 제목·담당자·마감일과 프로젝트만 저장해요. 요약·원문·근거 인용은 자동으로 저장하지 않아요.</p><label class="analysis-choice"><input id="analysisShareAck" type="checkbox"><span>선택한 할 일을 검토했고 팀원과 공유하겠습니다.</span></label><button id="analysisSave" class="primary" type="button" disabled>선택한 할 일 팀에 추가</button></section>
+<p id="analysisMessage" class="settings-note" role="status"></p><footer><small>AI는 실수할 수 있어요. 날짜와 담당자를 확인해 주세요.</small><button id="analysisOpenCollab" class="text-button" type="button">협업 보기 →</button></footer>
+</dialog>
+<dialog id="drivePicker" class="drive-picker" aria-labelledby="drivePickerTitle" aria-describedby="drivePickerNote">
+<header><div><p class="eyebrow">GOOGLE DRIVE</p><h2 id="drivePickerTitle">내 Drive에서 가져오기</h2></div><button id="drivePickerClose" class="text-button" type="button" autofocus>닫기</button></header>
+<p id="drivePickerNote" class="settings-note"></p>
+<div id="drivePickerTools"><div class="inline"><button id="drivePickerMine" class="subtle" type="button">내 Drive</button><button id="drivePickerShared" class="subtle" type="button">공유받은 자료</button></div><form id="drivePickerSearch" class="picker-search"><input id="drivePickerQuery" type="search" maxlength="80" placeholder="파일 이름으로 찾기" aria-label="Drive 파일 이름"><button class="subtle" type="submit">찾기</button></form></div>
+<div class="picker-location"><button id="drivePickerBack" class="text-button" type="button">← 이전</button><strong id="drivePickerLocation"></strong></div>
+<div id="drivePickerList" class="drive-picker-list" aria-label="Drive 목록"></div>
+<p id="drivePickerMessage" class="settings-note" role="status"></p><button id="drivePickerMore" class="subtle hidden" type="button">더 보기</button>
+<footer><small id="drivePickerSelection"></small><button id="drivePickerImport" class="primary" type="button" disabled>사본 추가 (0)</button></footer>
+</dialog>
+<script type="module" src="../pkg/boot.js"></script>
+</body></html>

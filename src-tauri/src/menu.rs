@@ -8,7 +8,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Wry};
+use tauri::{AppHandle, Emitter, Wry};
 
 pub fn build(app: &AppHandle, a: &Arc<App>) -> tauri::Result<Menu<Wry>> {
     let s = a.stores.settings.get();
@@ -31,7 +31,9 @@ pub fn build(app: &AppHandle, a: &Arc<App>) -> tauri::Result<Menu<Wry>> {
             &MenuItem::with_id(app, "focus-0", "집중 모드 끝내기", focusing, None::<&str>)?,
         ],
     )?;
-    let fr = |id: &str, label: &str| CheckMenuItem::with_id(app, format!("freq-{id}"), label, true, freq == id, None::<&str>);
+    let profile = a.google.profile_status();
+    let frequency_ready = profile["signedIn"] != true || profile["ready"] == true;
+    let fr = |id: &str, label: &str| CheckMenuItem::with_id(app, format!("freq-{id}"), label, frequency_ready, freq == id, None::<&str>);
     let freq_menu = Submenu::with_items(app, "말 거는 빈도", true, &[&fr("low", "가끔")?, &fr("normal", "보통")?, &fr("high", "자주")?])?;
     let update_label = if a.updater.is_ready() { format!("새 버전 {} 적용하기", a.updater.latest().unwrap_or_default()) } else { format!("업데이트 확인 (지금 {})", a.updater.current) };
     Menu::with_items(
@@ -43,8 +45,8 @@ pub fn build(app: &AppHandle, a: &Arc<App>) -> tauri::Result<Menu<Wry>> {
             &item("quiet", &if quieting { format!("잠시 조용히 하는 중 ({}까지)", fmt_time(s.i("quietUntil"))) } else { "잠시 조용히 (1시간)".into() })?,
             &focus,
             &freq_menu,
-            &item("notes", "정리함")?,
-            &item("collab", "협업 (업무·일정)")?,
+            &item("files", "파일 공간 열기")?,
+            &item("collab", "협업")?,
             &item("settings", "설정")?,
             &item("update", &update_label)?,
             &PredefinedMenuItem::separator(app)?,
@@ -74,7 +76,7 @@ pub fn on_event(app: &AppHandle, a: &Arc<App>, e: MenuEvent) {
             let q = a.stores.settings.read(|s| s.i("quietUntil")) > now_ms();
             quiet_for(app, a, if q { 0 } else { 60 });
         }
-        "notes" => open_chat(app, a, "notes", json!({})),
+        "files" => open_chat(app, a, "drive", json!({})),
         "collab" => open_chat(app, a, "collab", json!({})),
         "settings" => open_chat(app, a, "settings", json!({})),
         "update" => {
@@ -105,8 +107,20 @@ pub fn on_event(app: &AppHandle, a: &Arc<App>, e: MenuEvent) {
         }
         x if x.starts_with("freq-") => {
             let f = x[5..].to_string();
-            a.stores.settings.update(|s| s["frequency"] = json!(f));
-            on_settings_changed(a);
+            if a.google.is_ready() {
+                let epoch = a.google.profile_status()["epoch"].as_u64().unwrap_or(0);
+                let a = a.clone();
+                tauri::async_runtime::spawn(async move {
+                    if a.google.update_profile(epoch, json!({"frequency":f})).await.is_ok() {
+                        on_settings_changed(&a);
+                        let _ = a.google.sync_profile().await;
+                        let _ = a.handle.emit_to("chat", "profile:changed", ());
+                    }
+                });
+            } else {
+                a.stores.settings.update(|s| s["frequency"] = json!(f));
+                on_settings_changed(a);
+            }
         }
         _ => {}
     }

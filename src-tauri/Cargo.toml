@@ -7,12 +7,7 @@ description = "사이 — 바탕화면을 돌아다니며 조언하고, 팀의 �
 default-run = "sai"
 
 [features]
-connection-test = []
-
-[[bin]]
-name = "sai-connection-test"
-path = "src/connection_test.rs"
-required-features = ["connection-test"]
+preview = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -34,4 +29,4 @@ rand = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
-windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_Foundation", "Win32_System_Power", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls_Dialogs", "Win32_Storage_FileSystem"] }

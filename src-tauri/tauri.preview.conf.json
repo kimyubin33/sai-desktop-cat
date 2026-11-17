@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "사이 미리보기",
+  "mainBinaryName": "sai-preview",
+  "identifier": "com.kimyubin33.sai.preview",
+  "bundle": {
+    "shortDescription": "Google 작업 공간 검증판",
+    "longDescription": "Google 로그인으로 파일·협업·개인 일정을 이어 쓰는 사이의 검증판",
+    "windows": {
+      "nsis": {
+        "installerHooks": null,
+        "startMenuFolder": "사이 미리보기"
+      }
+    }
+  }
+}

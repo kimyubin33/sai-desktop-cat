@@ -22,7 +22,7 @@ version = "0.3"
 features = [
   "Window", "Document", "Element", "HtmlElement", "Node", "NodeList", "Text", "DomTokenList", "CssStyleDeclaration",
   "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlButtonElement", "HtmlCanvasElement", "HtmlFormElement",
-  "HtmlOptionElement", "HtmlDetailsElement", "HtmlTemplateElement", "DocumentFragment",
+  "HtmlOptionElement", "HtmlDetailsElement", "HtmlDialogElement", "HtmlTemplateElement", "DocumentFragment",
   "CanvasRenderingContext2d", "ImageData", "DomRect", "Location", "UrlSearchParams",
   "Event", "EventTarget", "MouseEvent", "PointerEvent", "KeyboardEvent", "InputEvent", "ScrollIntoViewOptions", "ScrollBehavior", "ScrollLogicalPosition",
   "Performance", "FileList", "File", "Blob", "DragEvent", "DataTransfer",

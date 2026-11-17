@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub mod team_server;
+pub mod legacy;
 
 #[derive(Clone)]
 pub struct Store {
@@ -15,34 +16,55 @@ pub struct Store {
 struct Inner {
     file: Option<PathBuf>,
     data: Value,
+    overlay: Option<Value>,
     dirty: bool,
+    load_error: Option<String>,
 }
 
 impl Store {
     pub fn open(file: impl AsRef<Path>, defaults: Value) -> Self {
         let file = file.as_ref().to_path_buf();
         let mut data = defaults;
-        if let Ok(raw) = std::fs::read_to_string(&file) {
-            if let Ok(v) = serde_json::from_str::<Value>(&raw) {
-                deep_merge(&mut data, &v);
-            }
-        }
-        Store { inner: Arc::new(Mutex::new(Inner { file: Some(file), data, dirty: false })) }
+        let load_error = match std::fs::read_to_string(&file) {
+            Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+                Ok(v) if !data.is_object() || v.is_object() => { deep_merge(&mut data, &v); None }
+                _ => Some("저장된 자료의 형식을 읽지 못했어요. 원본을 보호하기 위해 저장을 중단했어요.".into()),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => Some("저장된 자료를 읽지 못했어요. 원본을 보호하기 위해 저장을 중단했어요.".into()),
+        };
+        Store { inner: Arc::new(Mutex::new(Inner { file: Some(file), data, overlay: None, dirty: false, load_error })) }
     }
 
     /// 파일 없이 메모리에만 (테스트용)
     pub fn memory(defaults: Value) -> Self {
-        Store { inner: Arc::new(Mutex::new(Inner { file: None, data: defaults, dirty: false })) }
+        Store { inner: Arc::new(Mutex::new(Inner { file: None, data: defaults, overlay: None, dirty: false, load_error: None })) }
     }
+
+    /// 읽기 실패를 빈 자료로 간주해 원본을 덮어쓰지 않는다. 내용이나 비밀 값을 오류에 넣지 않는다.
+    pub fn load_error(&self) -> Option<String> { self.inner.lock().unwrap().load_error.clone() }
 
     /// 지금 내용의 복사본
     pub fn get(&self) -> Value {
-        self.inner.lock().unwrap().data.clone()
+        let g = self.inner.lock().unwrap();
+        let mut value = g.data.clone();
+        if let Some(overlay) = &g.overlay { deep_merge(&mut value, overlay); }
+        value
     }
 
     /// 읽기만 (복사 없이)
     pub fn read<R>(&self, f: impl FnOnce(&Value) -> R) -> R {
-        f(&self.inner.lock().unwrap().data)
+        let g = self.inner.lock().unwrap();
+        if let Some(overlay) = &g.overlay {
+            let mut value = g.data.clone();
+            deep_merge(&mut value, overlay);
+            f(&value)
+        } else { f(&g.data) }
+    }
+
+    /// Account preferences affect readers only. They never enter the local settings file.
+    pub fn set_overlay(&self, overlay: Option<Value>) {
+        self.inner.lock().unwrap().overlay = overlay;
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut Value) -> R) -> R {
@@ -66,12 +88,30 @@ impl Store {
     pub fn try_flush(&self) -> std::io::Result<()> {
         let mut g = self.inner.lock().unwrap();
         if !g.dirty { return Ok(()); }
+        if let Some(error) = &g.load_error { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error.clone())); }
         if let Some(file) = &g.file {
             if let Some(dir) = file.parent() { std::fs::create_dir_all(dir)?; }
             let tmp = file.with_extension("json.tmp");
             std::fs::write(&tmp, serde_json::to_vec_pretty(&g.data)?)?;
             std::fs::rename(&tmp, file)?;
         }
+        g.dirty = false;
+        Ok(())
+    }
+
+    /// 검증한 로그인 정보처럼 즉시 보관해야 하는 변경. 쓰기 실패 시 메모리의 기존 값도 유지한다.
+    pub fn commit(&self, change: impl FnOnce(&mut Value)) -> std::io::Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        if let Some(error) = &g.load_error { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error.clone())); }
+        let mut next = g.data.clone();
+        change(&mut next);
+        if let Some(file) = &g.file {
+            if let Some(dir) = file.parent() { std::fs::create_dir_all(dir)?; }
+            let tmp = file.with_extension("json.tmp");
+            std::fs::write(&tmp, serde_json::to_vec_pretty(&next)?)?;
+            std::fs::rename(tmp, file)?;
+        }
+        g.data = next;
         g.dirty = false;
         Ok(())
     }
@@ -115,6 +155,8 @@ pub struct Stores {
     /// 내 작업 시간표와 일정 조정 대화
     pub schedule: Store,
     pub advice_history: Store,
+    /// Google 연결 상태는 이전 팀 캐시와 별도로 기록한다.
+    pub google_connection: Store,
 }
 
 impl Stores {
@@ -129,6 +171,7 @@ impl Stores {
             team_cache: Store::open(shared.join("team-cache.json"), json!({ "teams": {}, "shownProposals": {} })),
             schedule: Store::open(d.join("private").join("schedule.json"), json!({})),
             advice_history: Store::open(d.join("advice-history.json"), json!({ "recent": [] })),
+            google_connection: Store::open(d.join("private/google-connection.json"), json!({})),
         }
     }
 
@@ -140,11 +183,12 @@ impl Stores {
             team_cache: Store::memory(json!({ "teams": {}, "shownProposals": {} })),
             schedule: Store::memory(json!({})),
             advice_history: Store::memory(json!({ "recent": [] })),
+            google_connection: Store::memory(json!({})),
         }
     }
 
     pub fn flush_all(&self) {
-        for s in [&self.settings, &self.private_conv, &self.shared_outbox, &self.team_cache, &self.schedule, &self.advice_history] {
+        for s in [&self.settings, &self.private_conv, &self.shared_outbox, &self.team_cache, &self.schedule, &self.advice_history, &self.google_connection] {
             s.flush();
         }
     }

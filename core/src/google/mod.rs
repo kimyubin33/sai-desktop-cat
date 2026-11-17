@@ -1,7 +1,19 @@
 //! Google 캘린더·할 일 연결: 로그인 창 열기, 빈 시간 계산, 할 일 동기화, 시간표 일정 반영.
+mod agenda;
 pub mod calendar;
+mod collab;
 pub mod drive;
+mod files;
+mod login;
 pub mod oauth;
+mod profile;
+mod review;
+mod team_ai;
+mod teams;
+pub use files::{
+    safe_name as safe_download_name, Download as DownloadedFile, Progress as FileProgress,
+    MAX_BYTES as MAX_FILE_BYTES,
+};
 pub mod tasks;
 
 use crate::schedule::time_plan::Interval;
@@ -10,12 +22,9 @@ use crate::team::Hub;
 use crate::time::{now_ms, DAY};
 use crate::util::J;
 use crate::{err, Result};
-use oauth::{auth_url, parse_google_client, pkce, GoogleAuth};
+use oauth::{parse_google_client, GoogleAuth};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-const LOGIN_TIMEOUT_SECS: u64 = 5 * 60;
 
 pub type OpenUrl = Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -29,11 +38,246 @@ struct Inner {
     builtin: Option<Value>,
     auth: Mutex<Option<Arc<GoogleAuth>>>,
     open_url: OpenUrl,
+    login: login::Login,
+    profiles: profile::Profiles,
+    teams: teams::Teams,
+    files: files::Files,
+    collab: collab::Collaboration,
+    reviews: review::Reviews,
+    agenda: agenda::Agenda,
 }
 
 impl Google {
+    pub async fn calendar_preview(&self, epoch: u64, folder: &str, task: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .agenda
+            .preview(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                &self.0.collab,
+                epoch,
+                folder,
+                task,
+            )
+            .await
+    }
+    pub async fn connect_calendar(&self, epoch: u64) -> Result<Value> {
+        self.0
+            .login
+            .run_for(
+                self.auth()?,
+                self.0.open_url.clone(),
+                oauth::Purpose::Calendar,
+                Some(epoch),
+            )
+            .await?;
+        let auth = self.auth()?;
+        let lease = auth.lease().await?;
+        auth.with_lease(&lease, || {
+            if lease.epoch() == epoch {
+                Ok(json!({"epoch":epoch,"connected":auth.calendar_connected()}))
+            } else {
+                err("계정 연결이 바뀌었어요.")
+            }
+        })
+        .await
+    }
+    pub async fn add_to_calendar(&self, epoch: u64, folder: &str, value: Value) -> Result<Value> {
+        let add =
+            serde_json::from_value(value).map_err(|_| "등록할 할 일과 날짜를 확인해 주세요.")?;
+        let auth = self.auth()?;
+        agenda::add(
+            &auth,
+            &self.0.profiles,
+            &self.0.teams,
+            &self.0.collab,
+            epoch,
+            folder,
+            add,
+        )
+        .await
+    }
+    pub async fn change_calendar(&self, epoch: u64, folder: &str, value: Value) -> Result<Value> {
+        let change = serde_json::from_value(value)
+            .map_err(|_| "수정·삭제할 일정의 확인 정보를 확인해 주세요.")?;
+        let auth = self.auth()?;
+        self.0
+            .agenda
+            .change(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                &self.0.collab,
+                epoch,
+                folder,
+                change,
+            )
+            .await
+    }
+    pub async fn check_calendar_change(
+        &self,
+        epoch: u64,
+        folder: &str,
+        review: &str,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .agenda
+            .check(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                folder,
+                review,
+            )
+            .await
+    }
+    pub fn forget_calendar(&self, epoch: u64, folder: &str, review: &str) {
+        self.0.agenda.forget(epoch, folder, review);
+    }
+    pub async fn prepare_ai_review(&self, epoch: u64, folder: &str, input: Value) -> Result<Value> {
+        let input =
+            serde_json::from_value(input).map_err(|_| "분석할 파일이나 텍스트를 확인해 주세요.")?;
+        let auth = self.auth()?;
+        self.0
+            .reviews
+            .prepare(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                &self.0.files,
+                &self.0.collab,
+                epoch,
+                folder,
+                input,
+            )
+            .await
+    }
+    pub async fn run_ai_review(
+        &self,
+        epoch: u64,
+        folder: &str,
+        review: &str,
+        confirmed: bool,
+        endpoint: Option<&str>,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .reviews
+            .run(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                &self.0.files,
+                &self.0.collab,
+                epoch,
+                folder,
+                review,
+                confirmed,
+                endpoint,
+            )
+            .await
+    }
+    pub async fn commit_ai_review(
+        &self,
+        epoch: u64,
+        folder: &str,
+        review: &str,
+        choices: Value,
+        confirmed: bool,
+    ) -> Result<Value> {
+        let choices =
+            serde_json::from_value(choices).map_err(|_| "검토한 할 일 선택을 확인해 주세요.")?;
+        let auth = self.auth()?;
+        self.0
+            .reviews
+            .commit(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                &self.0.files,
+                &self.0.collab,
+                epoch,
+                folder,
+                review,
+                choices,
+                confirmed,
+            )
+            .await
+    }
+    pub fn forget_ai_review(&self, epoch: u64, folder: &str, review: &str) {
+        self.0.reviews.forget(epoch, folder, review);
+    }
+    pub async fn connect_team_ai(
+        &self,
+        epoch: u64,
+        folder: &str,
+        endpoint: Option<&str>,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        team_ai::Client::new(endpoint)?
+            .connect(&auth, &self.0.profiles, &self.0.teams, epoch, folder)
+            .await
+    }
+    /// Native integration only. Frontend analysis must use the explicit review session flow.
+    pub async fn analyze_team_text(
+        &self,
+        epoch: u64,
+        folder: &str,
+        endpoint: Option<&str>,
+        attempt: Value,
+    ) -> Result<Value> {
+        let attempt: team_ai::Attempt = serde_json::from_value(attempt)
+            .map_err(|_| "분석할 내용과 요청 정보를 확인해 주세요.")?;
+        let auth = self.auth()?;
+        team_ai::Client::new(endpoint)?
+            .analyze(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                folder,
+                &attempt,
+            )
+            .await
+    }
+    pub async fn team_ai_status(
+        &self,
+        epoch: u64,
+        folder: &str,
+        endpoint: Option<&str>,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        team_ai::Client::new(endpoint)?
+            .status(&auth, &self.0.profiles, &self.0.teams, epoch, folder)
+            .await
+    }
+    pub async fn collaboration(&self, epoch: u64, folder: &str, sync: bool) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .collab
+            .load(&auth, &self.0.profiles, &self.0.teams, epoch, folder, sync)
+            .await
+    }
+    pub async fn save_collaboration(&self, epoch: u64, folder: &str, edit: Value) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .collab
+            .save(&auth, &self.0.profiles, &self.0.teams, epoch, folder, edit)
+            .await
+    }
     /// builtin: 설치 파일에 함께 들어간 OAuth 클라이언트 { clientId, clientSecret }
-    pub fn new(settings: Store, team_cache: Store, hub: Hub, builtin: Option<Value>, open_url: OpenUrl) -> Google {
+    pub fn new(
+        settings: Store,
+        team_cache: Store,
+        hub: Hub,
+        builtin: Option<Value>,
+        open_url: OpenUrl,
+        profile_dir: std::path::PathBuf,
+    ) -> Google {
         // 앱에 들어 있던 연결 정보를 이 컴퓨터의 설정에도 남겨 둔다.
         // 나중에 연결 정보가 빠진 버전으로 업데이트되더라도 Google 연결이 끊기지 않게 하기 위해서다.
         if let Some(b) = &builtin {
@@ -42,7 +286,24 @@ impl Google {
                 settings.update(|s| s["googleClient"] = b);
             }
         }
-        Google(Arc::new(Inner { settings, team_cache, hub, builtin, auth: Mutex::new(None), open_url }))
+        let files_dir = profile_dir.join("file-transfers-v1");
+        let collab_dir = profile_dir.join("collaboration-v1");
+        let reviews_dir = profile_dir.join("ai-reviews-v1");
+        Google(Arc::new(Inner {
+            settings,
+            team_cache,
+            hub,
+            builtin,
+            auth: Mutex::new(None),
+            open_url,
+            login: login::Login::default(),
+            profiles: profile::Profiles::new(profile_dir),
+            teams: teams::Teams::default(),
+            files: files::Files::new(files_dir),
+            collab: collab::Collaboration::new(collab_dir),
+            reviews: review::Reviews::new(reviews_dir),
+            agenda: agenda::Agenda::default(),
+        }))
     }
 
     fn client(&self) -> Option<Value> {
@@ -55,9 +316,14 @@ impl Google {
     }
 
     fn auth(&self) -> Result<Arc<GoogleAuth>> {
-        let Some(c) = self.client() else { return err("Google 연결 정보(OAuth 클라이언트)가 아직 없어요. 설정 → 외부 연결에서 넣어 주세요.") };
+        let Some(c) = self.client() else {
+            return err("이 빌드의 Google 연결을 준비하고 있어요. 연결 정보가 포함된 앱으로 업데이트해 주세요.");
+        };
         let mut g = self.0.auth.lock().unwrap();
-        if g.as_ref().map(|a| a.client_id != c.s("clientId")).unwrap_or(true) {
+        if g.as_ref()
+            .map(|a| a.client_id != c.s("clientId"))
+            .unwrap_or(true)
+        {
             *g = Some(Arc::new(GoogleAuth::new(&c, self.0.settings.clone())));
         }
         Ok(g.clone().unwrap())
@@ -87,69 +353,367 @@ impl Google {
 
     // ---------- 로그인 ----------
     pub async fn login(&self) -> Result<Value> {
-        let a = self.auth()?;
-        let (verifier, challenge) = pkce();
-        let state = crate::team::backend::random_code(16);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("로그인 창을 열지 못했어요: {e}"))?;
-        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-        let redirect = format!("http://127.0.0.1:{port}");
-        (self.0.open_url)(&auth_url(&a.client_id, &redirect, &challenge, &state));
-
-        let wait = async {
-            loop {
-                let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
-                let mut buf = vec![0u8; 8192];
-                let n = sock.read(&mut buf).await.unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]).to_string();
-                let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
-                let url = url::Url::parse(&format!("http://127.0.0.1{path}")).map_err(|e| e.to_string())?;
-                if url.path() != "/" {
-                    let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
-                    continue;
-                }
-                let q: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
-                let page = |ok: bool, msg: &str| {
-                    let body = format!(
-                        "<!doctype html><meta charset=\"utf-8\"><title>사이</title><body style=\"font-family:sans-serif;padding:40px;text-align:center\"><h2>{}</h2><p>{}</p><p>이 창은 닫아도 돼요.</p></body>",
-                        if ok { "사이와 Google 연결 완료" } else { "연결하지 못했어요" },
-                        msg
-                    );
-                    format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body)
-                };
-                if q.get("state").map(|s| s.as_str()) != Some(state.as_str()) {
-                    let _ = sock.write_all(page(false, "요청이 맞지 않아요. 사이에서 다시 시도해 주세요.").as_bytes()).await;
-                    return Err("로그인 요청이 맞지 않아요.".to_string());
-                }
-                if let Some(e) = q.get("error") {
-                    let _ = sock.write_all(page(false, "로그인을 취소했거나 권한을 허용하지 않았어요.").as_bytes()).await;
-                    return Err(format!("Google 로그인 취소: {e}"));
-                }
-                let code = q.get("code").cloned().unwrap_or_default();
-                return match a.exchange_code(&code, &verifier, &redirect).await {
-                    Ok(email) => {
-                        let msg = format!("{}으로 연결됐어요.", email.clone().unwrap_or_else(|| "Google 계정".into()));
-                        let _ = sock.write_all(page(true, &msg).as_bytes()).await;
-                        Ok(json!({ "email": email }))
-                    }
-                    Err(e) => {
-                        let _ = sock.write_all(page(false, &e).as_bytes()).await;
-                        Err(e)
-                    }
-                };
-            }
-        };
-        match tokio::time::timeout(std::time::Duration::from_secs(LOGIN_TIMEOUT_SECS), wait).await {
-            Ok(Ok(v)) => {
-                self.record(json!({ "lastError": null }));
-                Ok(v)
-            }
-            Ok(Err(e)) => Err(e),
-            Err(_) => err("5분 안에 로그인을 마치지 못했어요. 다시 시도해 주세요."),
+        let auth = self.auth()?;
+        if auth.has_session() && auth.has_full_drive() {
+            return Ok(json!({"email":auth.verified_identity().await?.email}));
         }
+        let result = self
+            .0
+            .login
+            .run(self.auth()?, self.0.open_url.clone())
+            .await;
+        if result.is_ok() {
+            self.record(json!({ "lastError": null }));
+        }
+        result
+    }
+
+    pub async fn cancel_login(&self) {
+        self.0.login.cancel();
+        let _guard = self.0.login.idle().await;
+    }
+
+    pub async fn resume(&self) -> Result<()> {
+        // 계정 신원 확인만 수행한다. 이전 Firebase 팀 백업은 읽거나 갱신하지 않는다.
+        self.auth()?.verified_identity().await?;
+        Ok(())
+    }
+
+    pub fn profile_status(&self) -> Value {
+        let Ok(auth) = self.auth() else {
+            return json!({"epoch":0,"signedIn":false,"ready":false});
+        };
+        let (epoch, active) = auth.active_context();
+        match active {
+            Some(identity) => {
+                let mut v = self.0.profiles.status(&identity.subject, epoch);
+                v["signedIn"] = json!(true);
+                v
+            }
+            None => json!({"epoch":epoch,"signedIn":false,"ready":false}),
+        }
+    }
+    pub async fn sync_profile(&self) -> Result<()> {
+        let auth = self.auth()?;
+        self.0.profiles.sync(&auth, &self.0.settings).await
+    }
+    pub async fn update_profile(&self, epoch: u64, patch: Value) -> Result<()> {
+        let auth = self.auth()?;
+        self.0
+            .profiles
+            .update(&auth, &self.0.settings, epoch, patch)
+            .await
+    }
+    pub async fn team_status(&self) -> Result<Value> {
+        let auth = self.auth()?;
+        let (epoch, active) = auth.active_context();
+        if active.is_none() {
+            return Ok(json!({"epoch":epoch,"signedIn":false,"ready":false,"teams":[]}));
+        }
+        self.0.teams.view(&auth, &self.0.profiles).await
+    }
+    pub async fn enable_team_drive(&self, epoch: u64) -> Result<()> {
+        self.0
+            .login
+            .run_for(
+                self.auth()?,
+                self.0.open_url.clone(),
+                oauth::Purpose::Files,
+                Some(epoch),
+            )
+            .await?;
+        Ok(())
+    }
+    pub async fn create_team_folder(&self, epoch: u64, name: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .create(&auth, &self.0.profiles, epoch, name)
+            .await
+    }
+    pub async fn pick_team_folder(&self, epoch: u64) -> Result<Value> {
+        let auth = self.auth()?;
+        let selected = self
+            .0
+            .login
+            .run_for(
+                auth.clone(),
+                self.0.open_url.clone(),
+                oauth::Purpose::Folder,
+                Some(epoch),
+            )
+            .await?;
+        self.0
+            .teams
+            .join(&auth, &self.0.profiles, epoch, &selected.s("folderId"))
+            .await
+    }
+    pub async fn invite_team_folder(&self, epoch: u64, folder: &str, email: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .invite(&auth, &self.0.profiles, epoch, folder, email)
+            .await
+    }
+    pub async fn open_team_folder(&self, epoch: u64, folder: &str) -> Result<String> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .open(&auth, &self.0.profiles, epoch, folder)
+            .await
+    }
+    pub async fn remove_team_folder(&self, epoch: u64, folder: &str) -> Result<()> {
+        let auth = self.auth()?;
+        let lease = auth.lease().await?;
+        if lease.epoch() != epoch {
+            return err("계정 연결이 바뀌었어요.");
+        }
+        if self.0.files.has_pending(lease.subject(), folder)? {
+            return err("이 팀에 전송 대기 파일이 있어요. 파일 보기에서 먼저 다시 올리거나 대기 사본을 지워 주세요.");
+        }
+        self.0
+            .collab
+            .remove_team(&auth, &self.0.profiles, &self.0.teams, epoch, folder)
+            .await
+    }
+    pub async fn list_team_files(&self, epoch: u64, folder: &str, page: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .list(&auth, &self.0.profiles, &self.0.teams, epoch, folder, page)
+            .await
+    }
+    pub async fn team_file_info(&self, epoch: u64, folder: &str, file: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .info(&auth, &self.0.profiles, &self.0.teams, epoch, folder, file)
+            .await
+    }
+    pub async fn check_file_upload(&self, epoch: u64, folder: &str) -> Result<()> {
+        let auth = self.auth()?;
+        let (_, team) = self
+            .0
+            .teams
+            .access(&auth, &self.0.profiles, epoch, folder)
+            .await?;
+        if team["canUpload"] != true {
+            return err("이 팀 폴더에는 파일을 올릴 권한이 없어요.");
+        }
+        Ok(())
+    }
+    pub async fn upload_team_file(
+        &self,
+        epoch: u64,
+        folder: &str,
+        name: &str,
+        bytes: &[u8],
+        progress: FileProgress,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        let operation = self
+            .0
+            .files
+            .stage(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                folder,
+                name,
+                bytes,
+            )
+            .await?;
+        self.0
+            .files
+            .retry(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                &operation,
+                progress,
+            )
+            .await
+    }
+    pub async fn retry_team_file(
+        &self,
+        epoch: u64,
+        folder: &str,
+        operation: &str,
+        progress: FileProgress,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .check_pending_target(&auth, epoch, folder, operation)
+            .await?;
+        self.0
+            .files
+            .retry(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                operation,
+                progress,
+            )
+            .await
+    }
+    pub async fn discard_team_upload(
+        &self,
+        epoch: u64,
+        folder: &str,
+        operation: &str,
+    ) -> Result<()> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .check_pending_target(&auth, epoch, folder, operation)
+            .await?;
+        self.0.files.discard(&auth, epoch, operation).await
+    }
+    pub async fn pick_team_files(&self, epoch: u64, folder: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .access(&auth, &self.0.profiles, epoch, folder)
+            .await?;
+        let chosen = self
+            .0
+            .login
+            .run_for(
+                auth.clone(),
+                self.0.open_url.clone(),
+                oauth::Purpose::SelectedFiles,
+                Some(epoch),
+            )
+            .await?;
+        let ids: Vec<String> = chosen["fileIds"]
+            .as_array()
+            .ok_or("선택한 파일을 확인하지 못했어요.")?
+            .iter()
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect();
+        self.0
+            .files
+            .selected(&auth, &self.0.profiles, &self.0.teams, epoch, folder, &ids)
+            .await
+    }
+    pub async fn browse_drive_files(
+        &self,
+        epoch: u64,
+        mode: &str,
+        parent: &str,
+        query: &str,
+        page: &str,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .browse(&auth, epoch, mode, parent, query, page)
+            .await
+    }
+    pub async fn browse_team_folders(&self, epoch: u64, page: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .browse(&auth, &self.0.profiles, epoch, page)
+            .await
+    }
+    pub async fn connect_team_folder(&self, epoch: u64, folder: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .join(&auth, &self.0.profiles, epoch, folder)
+            .await
+    }
+    pub async fn import_drive_files(
+        &self,
+        epoch: u64,
+        folder: &str,
+        ids: &[String],
+        progress: FileProgress,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .import(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                folder,
+                ids,
+                progress,
+            )
+            .await
+    }
+    pub async fn retry_drive_import(
+        &self,
+        epoch: u64,
+        folder: &str,
+        op: &str,
+        progress: FileProgress,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .retry_import(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                folder,
+                op,
+                progress,
+            )
+            .await
+    }
+    pub async fn discard_drive_import(&self, epoch: u64, folder: &str, op: &str) -> Result<()> {
+        let auth = self.auth()?;
+        self.0.files.discard_import(&auth, epoch, folder, op).await
+    }
+    pub async fn download_team_file(
+        &self,
+        epoch: u64,
+        folder: &str,
+        file: &str,
+        progress: FileProgress,
+    ) -> Result<DownloadedFile> {
+        let auth = self.auth()?;
+        self.0
+            .files
+            .download(
+                &auth,
+                &self.0.profiles,
+                &self.0.teams,
+                epoch,
+                folder,
+                file,
+                progress,
+            )
+            .await
+    }
+    pub async fn with_current_account<T>(
+        &self,
+        epoch: u64,
+        finish: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let auth = self.auth()?;
+        let lease = auth.lease().await?;
+        if lease.epoch() != epoch {
+            return err("계정 연결이 바뀌어 저장하지 않았어요.");
+        }
+        auth.with_lease(&lease, finish).await
     }
 
     pub async fn logout(&self) -> Result<()> {
-        self.auth()?.sign_out().await;
+        self.0.login.cancel();
+        let _guard = self.0.login.idle().await;
+        self.auth()?.sign_out().await?;
+        self.0.reviews.clear();
+        self.0.agenda.clear();
         self.record(json!({ "lastSync": 0, "lastResult": null, "lastError": null }));
         Ok(())
     }
@@ -157,7 +721,11 @@ impl Google {
     // ---------- 다른 컴퓨터로 옮기기 (Drive 숨김 폴더) ----------
     /// 지금 버전에 필요한 Drive 권한(숨김 폴더 + 내 드라이브)을 모두 받았는지. 예전 로그인이면 다시 로그인해야 한다
     pub fn has_drive(&self) -> bool {
-        self.auth().ok().and_then(|a| a.tokens()).map(|t| scope_ok(&t.s("scope"))).unwrap_or(false)
+        self.auth()
+            .ok()
+            .and_then(|a| a.tokens())
+            .map(|t| scope_ok(&t.s("scope")))
+            .unwrap_or(false)
     }
 
     fn record_account(&self, patch: Value) {
@@ -177,17 +745,24 @@ impl Google {
     /// 이 컴퓨터에서 한 번이라도 되찾기를 확인한 뒤에만 쓴다 (새 컴퓨터의 빈 목록으로 덮어쓰지 않도록)
     /// allow_empty: 이 컴퓨터에서 마지막 팀을 나갔을 때만 참. 그 밖에는 팀이 없는 목록으로 덮어쓰지 않는다
     pub async fn backup_account(&self, allow_empty: bool) -> Result<bool> {
-        if !self.is_ready() || !self.has_drive() || !self.0.team_cache.read(|c| c["account"].b("checked")) {
+        if !self.is_ready()
+            || !self.has_drive()
+            || !self.0.team_cache.read(|c| c["account"].b("checked"))
+        {
             return Ok(false);
         }
-        let Some(snap) = self.0.hub.account_snapshot() else { return Ok(false) };
+        let Some(snap) = self.0.hub.account_snapshot() else {
+            return Ok(false);
+        };
         if snap.arr("teams").is_empty() && !allow_empty {
             return Ok(false);
         }
         let a = self.auth()?;
         match drive::appdata_write(&a, &self.0.hub.account_filename(), &snap).await {
             Ok(()) => {
-                self.record_account(json!({ "savedAt": now_ms(), "teams": snap.arr("teams").len(), "error": null }));
+                self.record_account(
+                    json!({ "savedAt": now_ms(), "teams": snap.arr("teams").len(), "error": null }),
+                );
                 Ok(true)
             }
             Err(e) => {
@@ -203,7 +778,9 @@ impl Google {
             return err("먼저 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
         }
         if !self.has_drive() {
-            return err("팀을 옮기려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
+            return err(
+                "팀을 옮기려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).",
+            );
         }
         let a = self.auth()?;
         let snap = match drive::appdata_read(&a, &self.0.hub.account_filename()).await {
@@ -214,19 +791,37 @@ impl Google {
             }
         };
         let text = match snap {
-            None => "Google 계정에 맡겨 둔 팀이 아직 없어요. 지금 이 컴퓨터의 팀을 맡겨 둘게요.".to_string(),
+            None => "Google 계정에 맡겨 둔 팀이 아직 없어요. 지금 이 컴퓨터의 팀을 맡겨 둘게요."
+                .to_string(),
             // 맡겨 둔 목록에 팀이 없으면 이 컴퓨터의 팀을 그대로 둔다
-            Some(snap) if snap.arr("teams").is_empty() => "Google 계정에 맡겨 둔 팀이 없어요. 지금 이 컴퓨터의 팀을 맡겨 둘게요.".to_string(),
+            Some(snap) if snap.arr("teams").is_empty() => {
+                "Google 계정에 맡겨 둔 팀이 없어요. 지금 이 컴퓨터의 팀을 맡겨 둘게요.".to_string()
+            }
             Some(snap) => {
                 let r = self.0.hub.restore_account(&snap).await?;
-                let restored: Vec<String> = r.arr("restored").iter().map(|x| x.as_str().unwrap_or("").to_string()).collect();
-                let rejoined: Vec<String> = r.arr("rejoined").iter().map(|x| x.as_str().unwrap_or("").to_string()).collect();
+                let restored: Vec<String> = r
+                    .arr("restored")
+                    .iter()
+                    .map(|x| x.as_str().unwrap_or("").to_string())
+                    .collect();
+                let rejoined: Vec<String> = r
+                    .arr("rejoined")
+                    .iter()
+                    .map(|x| x.as_str().unwrap_or("").to_string())
+                    .collect();
                 let mut parts = vec![];
                 if !restored.is_empty() {
-                    parts.push(format!("팀 {}개를 되찾았어요: {}", restored.len(), restored.join(", ")));
+                    parts.push(format!(
+                        "팀 {}개를 되찾았어요: {}",
+                        restored.len(),
+                        restored.join(", ")
+                    ));
                 }
                 if !rejoined.is_empty() {
-                    parts.push(format!("이 컴퓨터에만 있던 {}에도 같은 계정으로 다시 들어갔어요", rejoined.join(", ")));
+                    parts.push(format!(
+                        "이 컴퓨터에만 있던 {}에도 같은 계정으로 다시 들어갔어요",
+                        rejoined.join(", ")
+                    ));
                 }
                 if parts.is_empty() {
                     "이미 Google 계정의 팀과 같아요.".into()
@@ -251,12 +846,20 @@ impl Google {
             return err("Google Drive 를 쓰려면 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
         }
         if !self.has_drive() {
-            return err("Drive 를 쓰려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
+            return err(
+                "Drive 를 쓰려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).",
+            );
         }
         self.auth()
     }
 
-    pub async fn list_drive(&self, mode: &str, folder: &str, query: &str, page: &str) -> Result<Value> {
+    pub async fn list_drive(
+        &self,
+        mode: &str,
+        folder: &str,
+        query: &str,
+        page: &str,
+    ) -> Result<Value> {
         let a = self.drive_auth()?;
         drive::list(&a, mode, folder, query, page).await
     }
@@ -268,7 +871,13 @@ impl Google {
         let mut f = drive::get(&a, id).await?;
         let access = if f["capabilities"].b("canShare") {
             match drive::set_access(&a, id, edit).await {
-                Ok(()) => if edit { "edit" } else { "view" },
+                Ok(()) => {
+                    if edit {
+                        "edit"
+                    } else {
+                        "view"
+                    }
+                }
                 Err(_) => "link",
             }
         } else {
@@ -288,12 +897,25 @@ impl Google {
         drive::set_access(&a, drive_id, edit).await
     }
 
-    pub async fn create_doc(&self, team_name: &str, title: &str, html: &str, edit: bool) -> Result<Value> {
+    pub async fn create_doc(
+        &self,
+        team_name: &str,
+        title: &str,
+        html: &str,
+        edit: bool,
+    ) -> Result<Value> {
         let a = self.drive_auth()?;
         drive::create_doc(&a, &format!("사이 - {team_name}"), title, html, edit).await
     }
 
-    pub async fn upload_file(&self, team_name: &str, name: &str, mime: &str, bytes: Vec<u8>, edit: bool) -> Result<Value> {
+    pub async fn upload_file(
+        &self,
+        team_name: &str,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+        edit: bool,
+    ) -> Result<Value> {
         if !self.is_ready() {
             return err("파일을 올리려면 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
         }
@@ -327,7 +949,9 @@ impl Google {
         match calendar::query_busy(&a, now, until).await {
             Ok(busy) => {
                 let week = calendar::free_hours(&busy, now, now + 7 * DAY, 9, 22);
-                let to_dl = deadline.filter(|d| *d > now).map(|d| calendar::free_hours(&busy, now, d, 9, 22));
+                let to_dl = deadline
+                    .filter(|d| *d > now)
+                    .map(|d| calendar::free_hours(&busy, now, d, 9, 22));
                 self.record(json!({ "lastCalendar": now, "lastError": null }));
                 Ok(json!({ "week": week, "toDeadline": to_dl, "window": "9시~22시" }))
             }
@@ -338,7 +962,11 @@ impl Google {
     /// 시간표가 쓰는 바쁜 시간 (사이가 만든 일정 포함)
     pub async fn busy_between(&self, from: i64, to: i64) -> (Vec<Interval>, bool, Option<String>) {
         if !self.is_ready() {
-            return (vec![], false, Some("Google 캘린더에 로그인하지 않았어요".into()));
+            return (
+                vec![],
+                false,
+                Some("Google 캘린더에 로그인하지 않았어요".into()),
+            );
         }
         let a = match self.auth() {
             Ok(a) => a,
@@ -357,7 +985,12 @@ impl Google {
     }
 
     fn describe(&self, project_id: &str) -> String {
-        let p = self.0.hub.all().into_iter().find_map(|t| t.project(project_id));
+        let p = self
+            .0
+            .hub
+            .all()
+            .into_iter()
+            .find_map(|t| t.project(project_id));
         let mut lines = vec!["사이가 잡은 작업 시간이에요.".to_string()];
         if let Some(p) = p {
             lines.push(format!("프로젝트: {}", p.s("title")));
@@ -368,12 +1001,27 @@ impl Google {
 
     pub async fn create_block_event(&self, b: &Value) -> Result<String> {
         let a = self.auth()?;
-        calendar::create_event(&a, &format!("사이: {}", b.s("title")), &self.describe(&b.s("projectId")), b.i("start"), b.i("end"), &b.s("taskId")).await
+        calendar::create_event(
+            &a,
+            &format!("사이: {}", b.s("title")),
+            &self.describe(&b.s("projectId")),
+            b.i("start"),
+            b.i("end"),
+            &b.s("taskId"),
+        )
+        .await
     }
 
     pub async fn patch_block_event(&self, event_id: &str, b: &Value) -> Result<()> {
         let a = self.auth()?;
-        calendar::patch_event(&a, event_id, &format!("사이: {}", b.s("title")), b.i("start"), b.i("end")).await
+        calendar::patch_event(
+            &a,
+            event_id,
+            &format!("사이: {}", b.s("title")),
+            b.i("start"),
+            b.i("end"),
+        )
+        .await
     }
 
     pub async fn remove_block_event(&self, event_id: &str) -> Result<()> {
@@ -386,7 +1034,13 @@ impl Google {
         if self.client().is_none() || !self.is_ready() {
             return Ok(None);
         }
-        let teams: Vec<_> = self.0.hub.all().into_iter().filter(|t| t.is_connected()).collect();
+        let teams: Vec<_> = self
+            .0
+            .hub
+            .all()
+            .into_iter()
+            .filter(|t| t.is_connected())
+            .collect();
         if teams.is_empty() {
             return Ok(None);
         }
@@ -397,14 +1051,20 @@ impl Google {
             let me = t.my_uid();
             for p in t.collab_data().arr("projects") {
                 let pid = p.s("id");
-                let mine: Vec<Value> = t.tasks_of(&pid).into_iter().filter(|x| x.s("assignee") == me && x.b("accepted")).collect();
+                let mine: Vec<Value> = t
+                    .tasks_of(&pid)
+                    .into_iter()
+                    .filter(|x| x.s("assignee") == me && x.b("accepted"))
+                    .collect();
                 let links = self.0.settings.read(|s| s["googleTaskLinks"].obj(&pid));
                 if mine.is_empty() && links.is_empty() {
                     continue;
                 }
                 let r = async {
-                    let list_id = tasks::ensure_list(&a, &format!("사이 · {}", p.s("title"))).await?;
-                    tasks::sync_tasks(&a, &list_id, &mine, &links, &p.s("deadline"), &p.s("title")).await
+                    let list_id =
+                        tasks::ensure_list(&a, &format!("사이 · {}", p.s("title"))).await?;
+                    tasks::sync_tasks(&a, &list_id, &mine, &links, &p.s("deadline"), &p.s("title"))
+                        .await
                 }
                 .await;
                 let r = match r {
@@ -433,13 +1093,22 @@ impl Google {
 
     pub fn status(&self) -> Value {
         let c = self.client();
-        let t = c.as_ref().and_then(|_| self.0.settings.read(|s| crate::secret::decrypt_json_field(s, "googleTokensEnc")));
+        let auth = c.as_ref().and_then(|_| self.auth().ok());
+        let t = auth.as_ref().and_then(|a| a.tokens());
+        let active = auth.as_ref().and_then(|a| a.active_identity());
         let s = self.0.team_cache.read(|c| c["google"].clone());
         json!({
             "configured": c.is_some(),
             "builtin": self.0.settings.read(|s| s["googleClient"].is_null()) && self.0.builtin.is_some(),
-            "signedIn": t.as_ref().map(|t| !t.s("refreshToken").is_empty()).unwrap_or(false),
-            "email": t.as_ref().and_then(|t| t.os("email")),
+            "signedIn": active.is_some(),
+            "email": active.map(|identity| identity.email),
+            "hasSession": auth.as_ref().is_some_and(|a| a.has_session()),
+            "hasCredentials": auth.as_ref().is_some_and(|a| a.has_credentials()),
+            "needsReauth": auth.as_ref().is_some_and(|a| a.needs_reauth()),
+            "loginPending": self.0.login.busy(),
+            "appData": t.as_ref().is_some_and(|t| oauth::account_scopes(&t.s("scope"))),
+            "driveFile": auth.as_ref().is_some_and(|a|a.has_file_scope()),
+            "driveFull": auth.as_ref().is_some_and(|a|a.has_full_drive()),
             "lastSync": s.i("lastSync"),
             "lastResult": s.get("lastResult").cloned().unwrap_or(Value::Null),
             "lastError": s.get("lastError").cloned().unwrap_or(Value::Null),
@@ -448,11 +1117,17 @@ impl Google {
     }
 
     pub fn configure(&self, text: &str) -> Result<Value> {
-        let Some(c) = parse_google_client(text) else { return err("클라이언트 ID(…apps.googleusercontent.com)와 보안 비밀번호(GOCSPX-…)를 찾지 못했어요.") };
+        if self.0.login.busy() {
+            return err("진행 중인 Google 로그인을 먼저 완료하거나 취소해 주세요.");
+        }
+        let Some(c) = parse_google_client(text) else {
+            return err("클라이언트 ID(…apps.googleusercontent.com)와 보안 비밀번호(GOCSPX-…)를 찾지 못했어요.");
+        };
         let cc = c.clone();
         self.0.settings.update(|s| {
             s["googleClient"] = cc;
             s["googleTokensEnc"] = Value::Null;
+            s["googleCalendarTokensEnc"] = Value::Null;
         });
         *self.0.auth.lock().unwrap() = None;
         Ok(c)
@@ -461,5 +1136,6 @@ impl Google {
 
 fn scope_ok(scope: &str) -> bool {
     let s: Vec<&str> = scope.split_whitespace().collect();
-    s.contains(&"https://www.googleapis.com/auth/drive.appdata") && s.contains(&"https://www.googleapis.com/auth/drive")
+    s.contains(&"https://www.googleapis.com/auth/drive.appdata")
+        && s.contains(&"https://www.googleapis.com/auth/drive")
 }

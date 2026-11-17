@@ -5,66 +5,51 @@
 mod advisor;
 mod app;
 mod cat;
-mod demo;
+mod file_transfer;
 mod ipc;
+mod legacy;
 mod menu;
-mod mesh;
-mod mesh_identity;
-mod mesh_lifecycle;
-mod mesh_migration;
-mod mesh_talk;
-mod mesh_workbench;
-mod peek;
+mod preview;
 mod system;
-mod team_host;
 mod updater;
 
 use std::sync::Arc;
 use tauri::Manager;
 
 fn main() {
-    tauri::Builder::default()
-        // 이미 켜져 있으면 새로 켜지 않고 대화창을 연다
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    {
+        let builder = tauri::Builder::default();
+        if std::env::var_os("SAI_PREVIEW_DIR").is_some() {
+            builder
+        } else {
+            builder
+                // 이미 켜져 있으면 새로 켜지 않고 대화창을 연다
+                .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                    if let Some(a) = app.try_state::<Arc<app::App>>() {
+                        app::open_chat(app, a.inner(), "drive", serde_json::json!({}));
+                    }
+                }))
+        }
+    }
+    .invoke_handler(tauri::generate_handler![ipc::call, ipc::cat_event])
+    .setup(|app| {
+        let a = app::setup(app.handle())?;
+        app.manage(a.clone());
+        Ok(())
+    })
+    .build(tauri::generate_context!())
+    .expect("사이를 시작하지 못했어요")
+    .run(|app, event| match event {
+        tauri::RunEvent::ExitRequested { api, code, .. } => {
+            if code.is_none() && !preview::isolated() {
+                api.prevent_exit();
+            }
+        }
+        tauri::RunEvent::Exit => {
             if let Some(a) = app.try_state::<Arc<app::App>>() {
-                app::open_chat(app, a.inner(), "chat", serde_json::json!({}));
+                a.stores.flush_all();
             }
-        }))
-        .invoke_handler(tauri::generate_handler![ipc::call, ipc::cat_event])
-        .setup(|app| {
-            let a = app::setup(app.handle())?;
-            app.manage(a.clone());
-            demo::maybe_run(app.handle().clone(), a);
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("사이를 시작하지 못했어요")
-        .run(|app, event| match event {
-            // 창을 모두 닫아도 고양이는 남는다
-            tauri::RunEvent::ExitRequested { api, code, .. } => {
-                if code.is_none() {
-                    api.prevent_exit();
-                } else if let Some(a) = app.try_state::<Arc<app::App>>() {
-                    a.mesh_runtime
-                        .event(sai_core::team::mesh::runtime::Event::Exit);
-                }
-            }
-            tauri::RunEvent::Exit => {
-                if let Some(a) = app.try_state::<Arc<app::App>>() {
-                    if let Ok(mut probe) = a.mesh_probe.try_lock() {
-                        probe.take();
-                    }
-                    a.mesh_runtime
-                        .event(sai_core::team::mesh::runtime::Event::Exit);
-                    if let Ok(mut worker) = a.mesh_worker.lock() {
-                        worker.take();
-                    }
-                    if let Ok(mut power) = a.mesh_power.lock() {
-                        power.take();
-                    }
-                    a.stores.flush_all();
-                }
-            }
-            _ => {}
-        });
+        }
+        _ => {}
+    });
 }

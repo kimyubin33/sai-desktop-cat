@@ -1,198 +1,51 @@
-# Windows 설치 파일 만들기 · 새 버전 배포 (Tauri + Rust)
-# (Cargo.toml 이나 이 파일이 바뀐 push 에서만 돈다)
-#
-# 새 버전을 배포하는 방법 (설치된 사이가 자동으로 업데이트됨)
-#   1) Cargo.toml 의 [workspace.package] version 을 올려서 main 에 push 한다 (예: 0.8.0 → 0.8.1)
-#   2) 이 작업이 그 버전이 아직 Releases 에 없으면 Windows(x64)와 Windows on ARM(ARM64)에서 각각 테스트 뒤 설치 파일을 만들어 함께 올린다
-#      이미 있는 버전이면 아무것도 하지 않는다
-#   3) 설치된 사이는 켤 때와 3시간마다 확인해서 받아 두고(SHA256SUMS.txt 로 확인), 고양이가 적용할지 묻는다
-#
-# Actions 탭 → "Windows 설치 파일" → Run workflow 로 직접 실행하면 배포 없이 파일만 만든다 (Artifacts 에서 받기).
-#
-# Google 캘린더·할 일 연결 정보는 저장소에 없으므로 Settings → Secrets and variables → Actions 에
-# GOOGLE_CLIENT_JSON 이름으로 {"clientId":"...","clientSecret":"..."} 를 넣어 두면 설치 파일에 함께 들어간다.
-name: Windows 설치 파일
-
+# 전환 중에는 검증 설치 파일만 만든다. 정식 배포는 실계정·설치 검증 완료 후 별도로 진행한다.
+name: Windows 검증 설치 파일
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['Cargo.toml', '.github/workflows/build-windows.yml']
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
-  version:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-      publish: ${{ steps.ver.outputs.publish }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: 배포할 버전인지 확인
-        id: ver
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          v=$(grep -m1 -E '^version = "' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then echo "publish=never" >> "$GITHUB_OUTPUT"; exit 0; fi
-          if gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "v$v 은 이미 배포됐어요. 건너뜁니다."
-            echo "publish=skip" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=always" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
-    needs: version
-    if: needs.version.outputs.publish != 'skip'
     strategy:
       fail-fast: true
       matrix:
         include:
-          # x64: 파일 이름은 예전 그대로 (이미 설치된 사이의 업데이트가 이 이름을 찾는다)
           - arch: x64
             runner: windows-latest
-            suffix: ''
-          # ARM64: 스냅드래곤 같은 Windows on ARM 노트북에서 에뮬레이션 없이 바로 돈다
+            target: x86_64-pc-windows-msvc
           - arch: arm64
             runner: windows-11-arm
-            suffix: '-arm64'
+            target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.arch }}
-
+          key: preview-${{ matrix.arch }}
       - run: npm ci
-
-      - name: 화면(Rust → WebAssembly) 만들기
-        run: cargo run -p xtask -- ui
-
-      - name: 테스트
-        run: cargo test --locked --workspace --features sai/connection-test -- --test-threads=4
-
-      - uses: actions/setup-python@v5
-        if: matrix.arch == 'x64'
-        with:
-          python-version: '3.12'
-
-      - name: 데스크톱 팀 서버 권한·앱 연동 점검
-        if: matrix.arch == 'x64'
-        run: |
-          python -m pip install -r server/requirements.txt pyinstaller==6.14.2
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m unittest discover -s server -t .
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m server.tests.client_contract
-
-      - name: Google 연결 정보 넣기 (있을 때만)
-        shell: bash
+      - name: 빌드에 Google 데스크톱 연결 정보 포함
         env:
           GOOGLE_CLIENT_JSON: ${{ secrets.GOOGLE_CLIENT_JSON || vars.GOOGLE_CLIENT_JSON }}
-        run: |
-          if [ -n "$GOOGLE_CLIENT_JSON" ]; then
-            mkdir -p config
-            printf '%s' "$GOOGLE_CLIENT_JSON" > config/google-client.json
-            node -e "const j=JSON.parse(require('fs').readFileSync('config/google-client.json','utf8')); if(!(j.clientId||j.client_id||(j.installed&&j.installed.client_id))) throw new Error('형식이 달라요')" \
-              && echo "Google 연결 정보를 넣었어요." \
-              || { echo "::error::GOOGLE_CLIENT_JSON 값의 형식이 JSON 이 아니에요."; exit 1; }
-          else
-            echo "::warning::GOOGLE_CLIENT_JSON 시크릿이 없어요. 설치 후 설정에서 직접 넣어야 해요."
-          fi
-
-      - name: 만들기
-        run: npx tauri build --bundles nsis
-
-      - name: 이 CPU 용 파일인지 확인
-        shell: pwsh
-        run: |
-          $b = [System.IO.File]::ReadAllBytes("target/release/sai.exe")
-          $pe = [BitConverter]::ToInt32($b, 0x3C)
-          $m = '{0:X4}' -f [BitConverter]::ToUInt16($b, $pe + 4)
-          $want = @{ x64 = '8664'; arm64 = 'AA64' }['${{ matrix.arch }}']
-          Write-Host "sai.exe machine = 0x$m (기대값 0x$want)"
-          if ($m -ne $want) { throw "다른 CPU 용으로 만들어졌어요." }
-
-      - name: 파일 모으기
-        shell: bash
-        run: |
-          v="${{ needs.version.outputs.version }}"
-          s="${{ matrix.suffix }}"
-          mkdir -p dist
-          cp target/release/bundle/nsis/*-setup.exe "dist/Sai-Setup-$v$s.exe"
-          cp target/release/sai.exe "dist/Sai-Portable-$v$s.exe"
-          (cd dist && 7z a -tzip "Sai-$v-win-${{ matrix.arch }}.zip" "Sai-Portable-$v$s.exe" >/dev/null)
-          ls -la dist
-
-      - name: 팀 서버 Windows 배포 파일 만들기 및 실행 확인
-        if: matrix.arch == 'x64'
-        shell: pwsh
+        run: node scripts/check-google-client.mjs --write-env
+      - name: 화면 빌드
+        run: cargo run --locked -p xtask -- ui
+      - name: 작업 공간 검사
+        run: cargo test --locked --workspace -- --test-threads=4
+      - name: AI 중계와 빌드 설정 모의 검사
+        run: node --test services/team-ai/gateway.test.mjs scripts/check-google-client.test.mjs scripts/build-preview.test.mjs
+      - name: 검증 설치 파일 만들기
         env:
-          SAI_BUILD_VERSION: ${{ needs.version.outputs.version }}
-        run: ./server/windows/build.ps1
-
+          SAI_TEAM_AI_ENDPOINT: ${{ vars.SAI_TEAM_AI_ENDPOINT }}
+        run: npm run build:preview -- --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
-          name: sai-windows-${{ matrix.arch }}
-          path: dist/*
-
-  release:
-    needs: [version, build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: sai-windows-*
-          merge-multiple: true
-          path: dist
-
-      - name: 확인용 파일 만들기
-        run: |
-          v="${{ needs.version.outputs.version }}"
-          (cd dist && sha256sum Sai-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
-          # 예전(Electron, 0.7.x 이하) 사이의 자동 업데이트가 찾는 안내 파일 → 새 설치 파일(x64)로 넘어오게 한다
-          f="Sai-Setup-$v.exe"
-          sha=$(openssl dgst -sha512 -binary "dist/$f" | base64 -w0)
-          size=$(stat -c %s "dist/$f")
-          printf 'version: %s\nfiles:\n  - url: %s\n    sha512: %s\n    size: %s\npath: %s\nsha512: %s\nreleaseDate: '"'"'%s'"'"'\n' "$v" "$f" "$sha" "$size" "$f" "$sha" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > dist/latest.yml
-          cat dist/latest.yml
-
-      - name: 릴리스 올리기
-        if: needs.version.outputs.publish == 'always'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          v="${{ needs.version.outputs.version }}"
-          gh release create "v$v" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "사이 v$v" --latest \
-            --notes "Windows 설치 파일
-          - 일반 PC(인텔·AMD): Sai-Setup-$v.exe
-          - ARM PC(스냅드래곤 등 Windows on ARM): Sai-Setup-$v-arm64.exe
-          - 팀을 호스팅할 데스크톱(인텔·AMD): Sai-Team-Server-$v-win-x64.zip (압축을 풀고 Start.cmd 실행)
-          설치 없이 쓰려면 Sai-Portable. 설치된 사이는 자동으로 자기 PC 에 맞는 판을 받아요.
-
-          PC 톡 준비 기능
-          - Drive → PC 톡에서 관리자 승인 장치끼리 로컬 저장, 암호화 전달, 상대 저장 확인과 작성 장치의 삭제 요청을 지원합니다.
-          - 현재 연결 범위는 같은 Wi-Fi·유선 LAN입니다. 연결 실행은 동의 후 최대 15분이며 자동 복구는 별도 선택입니다.
-          - PC 톡을 교환할 모든 PC에 같은 새 버전을 적용하고 연결 정보를 다시 만드세요.
-          - 기존 서버 톡·계정 이름·과거 기록은 자동 전환하지 않습니다. 기존 공개 톡의 선택 보관은 관리자 PC 전용 사본입니다.
-          - 실제 여러 PC의 설치·화면·절전 검증과 서로 다른 인터넷 환경의 자동 연결은 남아 있습니다."
-          gh release view "v$v" --repo "$GITHUB_REPOSITORY" --json tagName,assets --jq '"\(.tagName) files=\([.assets[].name] | join(", "))"'
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sai-windows
-          path: dist/*
+          name: sai-preview-windows-${{ matrix.arch }}
+          path: target/preview-dist/win-${{ matrix.arch }}/*
+          if-no-files-found: error

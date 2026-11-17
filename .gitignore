@@ -13,3 +13,6 @@ ui/pkg/
 __pycache__/
 *.sqlite3
 *.sqlite3-*
+services/team-ai/.dev.vars*
+services/team-ai/.env*
+services/team-ai/.wrangler/

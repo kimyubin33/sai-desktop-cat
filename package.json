@@ -7,8 +7,12 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:preview": "node scripts/build-preview.mjs",
     "icons": "tauri icon assets/icon.png -o src-tauri/icons",
     "test": "cargo test --workspace",
+    "test:team-ai": "node --test services/team-ai/gateway.test.mjs services/team-ai/check-deployment.test.mjs",
+    "test:team-ai:runtime": "node --test services/team-ai/runtime.test.mjs",
+    "check:team-ai": "node services/team-ai/check-deployment.mjs",
     "check:firebase": "cargo test -p sai-core --test firebase_real -- --ignored --nocapture"
   },
   "devDependencies": {
