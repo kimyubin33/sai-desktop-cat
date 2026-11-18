@@ -4,7 +4,7 @@
 
 ## 시작하기
 
-1. 사이 미리보기를 설치하고 **Google →**을 누릅니다.
+1. [사이 v1.0.0](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.0)에서 Windows 설치 파일을 받아 실행한 뒤 **Google →**을 누릅니다.
 2. 사용할 Google 계정으로 로그인하고 권한을 확인합니다.
 3. 기존 팀을 열거나 **팀 +**로 만들고, 초대받았다면 **참여**에서 연결합니다.
 

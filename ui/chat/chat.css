@@ -288,20 +288,6 @@ p {
 .slash {
   color:#676f5d;
 }
-.preview-label {
-  display:flex;
-  align-items:center;
-  gap:7px;
-  color:#a0a98f;
-  font-size:10px;
-}
-.preview-label>i {
-  width:5px;
-  height:5px;
-  border-radius:50%;
-  background:#b0bda3;
-  box-shadow:0 0 12px #afc49430;
-}
 .tab {
   flex:1;
   overflow-y:auto;
@@ -1270,9 +1256,6 @@ input[type="checkbox"] {
   }
   .topbar-brand,.slash {
     display:none;
-  }
-  .preview-label {
-    font-size:8px;
   }
   .page-content {
     padding:25px 22px;

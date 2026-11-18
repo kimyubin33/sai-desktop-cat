@@ -2,6 +2,8 @@
 
 사이는 **Google로 로그인해 팀 파일·업무·일정을 AI와 함께 정리하는 간단한 데스크톱 앱**입니다. 바탕화면의 반투명 검은 유리 불꽃을 눌러 개인 AI를 열 수 있습니다. 같은 Google 계정으로 다른 PC에서도 내 팀·이름·설정을 이어 쓰고, 파일과 협업 정보는 Google Drive로 공유하는 방향입니다.
 
+**[사이 v1.0.0 다운로드](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.0)**에서 Windows 설치 파일을 받으세요. Google 로그인은 등록된 테스트 계정에서 확인했습니다. 기존 PC 톡 버전에서 전환하려면 릴리스 페이지에서 직접 설치하세요.
+
 **[사용 설명서](docs/user-guide.md)** — Google 로그인, 팀·파일·AI·내 일정의 사용법과 권한·자료 보관 범위를 정리했습니다. 앱 오른쪽 위 **?**에서도 열 수 있습니다.
 
 [유리 화면 패치](docs/patches/2026-11-18-glass-workspace.md)에서 설명 위주의 화면을 짧은 이름과 아이콘으로 바꾸고, 물방울 모양의 버튼·반투명 유리 창·부드러운 전환을 적용했습니다. Windows x64 미리보기는 `target/Sai-Preview-Glass-20261118-win-x64.zip`으로 보관합니다. 상세 검증 범위와 남은 확인 사항은 패치 기록을 따릅니다.
@@ -10,7 +12,7 @@
 
 현재 작업본은 **1단계 정리와 로컬 검증을 마치고, 2~5단계 기본 경로를 구현해 6단계의 전체 흐름 점검을 진행하는 상태**입니다. 먹물 질감의 파일·협업·AI·설정 화면으로 바꾸고 톡·PC 연결·기존 서버 동기화 실행을 제거했습니다. 개인 대화 기록과 설정은 유지하며 이전 팀 자료는 원본을 두고 선택 사본으로 내보냅니다. Google 계정 설정·팀 복원·파일 전송·협업 변경 기록·AI 후보 검토와 본인 기본 Calendar의 일정 추가·수정·삭제를 연결했습니다. Windows 설치 기본 동작, 실제 Google 파일·협업·Calendar와 Claude 샘플 분석, 별도 계정의 팀 권한 회수 후 차단까지 확인했습니다. 승인한 앤드위브 AI 한 팀의 상시 연결을 하루 10회로 활성화했고 상태 조회·앱 표시를 확인했습니다. 다른 PC·새 설치·다른 역할·실제 팀원 분석과 운영 지속성 검증은 남아 있습니다. [화면 개편](docs/patches/2026-11-17-ink-workspace.md), [자료 보존·내보내기 검증](docs/patches/2026-11-17-legacy-preservation.md)을 참고하세요.
 
-정식 릴리스는 아직 v0.9.14입니다. 아래 패치 기록은 작업본의 진행 상황이고, **기존 릴리스 기록** 및 **현재 코드의 기능 — 전환 전** 절은 과거 동작입니다.
+아래 패치 기록은 v1.0.0으로 전환한 과정입니다. **기존 릴리스 기록**과 **이전 버전의 기능**은 v0.9.x 동작을 설명합니다.
 
 [검증판 마무리](docs/patches/2026-11-18-preview-checkpoint.md)에서 다른 PC 검증을 사용자 요청으로 보류하고 현재 코드·문서·설치 파일을 정리했습니다. 전체 자동 검사 **259개**, Wasm·Windows x64 릴리스·NSIS 빌드와 최종 화면 확인을 통과했습니다. 설정의 팀 AI 안내와 계정 버튼의 접근성 이름을 정리했고, 승인한 한 팀의 하루 10회 AI 연결은 유지합니다. 최신 로컬 설치 묶음은 `target/Sai-Preview-Checkpoint-20261118-win-x64.zip`입니다.
 
@@ -73,13 +75,13 @@ PR과 `main` 소스 변경은 [Google 작업 공간 검사](.github/workflows/ch
 
 [Windows 검증 설치 파일](.github/workflows/build-windows.yml)은 개발자가 GitHub Actions에서 수동 실행합니다. 개발 측 `GOOGLE_CLIENT_JSON`이 없거나 데스크톱 앱 형식이 아니면 중단합니다. 중계가 준비됐다면 공개 원점만 `SAI_TEAM_AI_ENDPOINT` 저장소 변수로 제공합니다. 일반 사용자가 서버·JSON·공용 AI 키를 설정하지 않습니다. 자세한 형식은 [빌드 설정](config/README.md)을 따릅니다.
 
-통과하면 CPU별 Actions 아티팩트에 `Sai-Preview-Setup-0.9.14[-arm64].exe`, `Sai-Preview-Portable-0.9.14[-arm64].exe`와 체크섬을 보관합니다. 옛 PC 서버 ZIP은 포함하지 않고 Releases·자동 업데이트 메타데이터를 발행하지 않습니다. 버전만 올려 `main`에 푸시해도 정식 배포되지 않습니다. 이 워크플로의 실제 실행과 ARM64 앱 빌드는 아직 확인하지 않았습니다. 로컬 x64 NSIS 기본 설치 시험의 범위는 [최신 기록](docs/patches/2026-11-17-install-restart.md)을 따릅니다.
+통과하면 CPU별 Actions 아티팩트에 `Sai-Preview-Setup-<버전>[-arm64].exe`, `Sai-Preview-Portable-<버전>[-arm64].exe`와 체크섬을 보관합니다. 정식 Windows 설치 파일에는 기본 Tauri 설정을 사용하며 [Releases](https://github.com/kimyubin33/sai-desktop-cat/releases)에 게시합니다.
 
 검증판은 **사이 미리보기**라는 별도 앱으로 설치합니다. 앱 ID·실행 파일·자료 저장 공간·시작 메뉴가 기존 사이와 다르고, 시작 프로그램과 정식 자동 업데이트는 사용하지 않습니다. 로컬·CI 모두 `npm run build:preview`를 사용하며, 결과는 `target/preview-dist/win-x64` 또는 `win-arm64`에 모읍니다. ARM Windows에서 x64 도구로 빌드할 때는 `npm run build:preview -- --target x86_64-pc-windows-msvc --ui-host-target x86_64-pc-windows-msvc`를 사용합니다. 일반 `npm run build`는 기존 제품 설정으로 빌드하므로 전환 중 검증 배포에 사용하지 않습니다.
 
-[기존 Releases](https://github.com/kimyubin33/sai-desktop-cat/releases/latest)는 전환 전 제품입니다. 새 Google 작업 공간의 설치·이전·권한·실기기 검증을 마친 뒤 정식 배포와 업데이트 경로를 다시 확정합니다. 현재 검증 대상은 Windows이며 다른 OS의 동작을 보장하지 않습니다.
+[v0.9.14](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v0.9.14)는 기존 PC 톡 설치판의 자동 업데이트 채널입니다. [v1.0.0](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.0)은 직접 설치할 수 있습니다.
 
-## 현재 코드의 기능 — 전환 전
+## 이전 버전의 기능
 
 **바탕화면 고양이 (1단계)**
 - 작업 표시줄 위를 걷고, 앉고, 식빵 자세로 쉬고, 잠듭니다. 도트 그림은 코드로 그려서 외부 이미지가 없습니다.

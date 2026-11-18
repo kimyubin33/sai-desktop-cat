@@ -73,7 +73,16 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             ok()
         }
         "help:open" => {
-            crate::system::open_url("https://github.com/kimyubin33/sai-desktop-cat/blob/work/google-workspace-preview-20261118/docs/user-guide.md");
+            let guide = if crate::preview::BUILD {
+                "https://github.com/kimyubin33/sai-desktop-cat/blob/work/google-workspace-preview-20261118/docs/user-guide.md"
+            } else {
+                concat!(
+                    "https://github.com/kimyubin33/sai-desktop-cat/blob/v",
+                    env!("CARGO_PKG_VERSION"),
+                    "/docs/user-guide.md"
+                )
+            };
+            crate::system::open_url(guide);
             ok()
         }
         // 옛 팀/톡/호스트/공유 키 요청은 이 허용 목록에 포함하지 않는다.
