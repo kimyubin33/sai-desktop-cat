@@ -40,6 +40,11 @@ fn main() {
     .build(tauri::generate_context!())
     .expect("사이를 시작하지 못했어요")
     .run(|app, event| match event {
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } if label == "chat" && preview::isolated() => app.exit(0),
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             if code.is_none() && !preview::isolated() {
                 api.prevent_exit();

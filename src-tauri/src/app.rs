@@ -104,8 +104,6 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
     });
     if !isolated {
         crate::system::ensure_autostart();
-    }
-    if !isolated {
         cat::create(app, &a)?;
     }
     let a_menu = a.clone();
@@ -159,6 +157,13 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
     }
     if isolated {
         create_workspace(app, "chat/index.html?tab=drive".into())?;
+        // Let the first WebView finish opening before starting the desktop window.
+        let desktop = a.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = cat::create(&desktop.handle, &desktop) {
+                eprintln!("바탕화면 사이를 열지 못했어요: {error}");
+            }
+        });
     } else {
         open_chat(app, &a, "drive", json!({}));
     }

@@ -13,8 +13,6 @@ mod teams;
 mod workspace;
 use crate::{api::listen, dom::*};
 use serde_json::Value;
-use wasm_bindgen::JsCast;
-use web_sys::HtmlCanvasElement;
 
 pub fn s(v: &Value, key: &str) -> String {
     v[key].as_str().map(str::to_owned).unwrap_or_default()
@@ -74,15 +72,6 @@ pub fn show_tab(tab: &str) {
 
 pub fn start() {
     chrome::bind();
-    if let Some(avatar) = by_id("avatar") {
-        crate::sprite::render(
-            &avatar.unchecked_into::<HtmlCanvasElement>(),
-            "sit",
-            0,
-            -1,
-            true,
-        );
-    }
     for button in q_all("[data-tab], [data-go]") {
         let tab = button
             .get_attribute("data-tab")

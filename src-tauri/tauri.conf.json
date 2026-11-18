@@ -19,8 +19,8 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.png"],
-    "shortDescription": "고양이 협업 도우미",
-    "longDescription": "바탕화면을 돌아다니며 조언하고, 팀의 고민을 행동 조언으로 정리하는 고양이 협업 도우미",
+    "shortDescription": "데스크톱 협업 도우미",
+    "longDescription": "팀 파일과 업무를 정리하고 바탕화면에서 개인 AI를 여는 협업 도우미",
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {

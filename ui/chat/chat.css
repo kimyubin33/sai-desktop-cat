@@ -211,12 +211,10 @@ p {
   padding:18px 8px;
   border-bottom:1px solid var(--line);
 }
-.companion canvas {
+.companion img {
   width:40px;
   height:40px;
-  image-rendering:pixelated;
-  filter:grayscale(1);
-  opacity:.85;
+  object-fit:contain;
 }
 .companion strong {
   display:block;

@@ -16,13 +16,91 @@ body {
   transform: translateX(-50%);
   width: 96px;
   height: 96px;
-  image-rendering: pixelated;
   cursor: grab;
   touch-action: none;
 }
 
-#cat.dragging {
+#flame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.64;
+  transform-origin: 50% 87%;
+  animation: drift var(--period, 3.6s) ease-in-out infinite;
+  transition: opacity 200ms ease;
+}
+
+#cat.facing-left #flame {
+  scale: -1 1;
+}
+
+#cat:hover #flame {
+  opacity: 0.82;
+}
+
+#cat[data-state="walk"] {
+  --period: 1.25s;
+  --lift: 4px;
+}
+
+#cat[data-state="loaf"],
+#cat[data-state="sleep"] {
+  --period: 5.4s;
+  --lift: 2px;
+  --height: 0.88;
+}
+
+#cat[data-state="sleep"] #flame {
+  opacity: 0.48;
+}
+
+#cat[data-state="talk"] {
+  --period: 1.4s;
+  --lift: 4px;
+  --height: 1.04;
+}
+
+#cat[data-state="drag"] {
   cursor: grabbing;
+  --period: 1s;
+  --height: 1.06;
+}
+
+#cat[data-reaction="dizzy"] #flame {
+  animation: wobble 280ms ease-in-out 4;
+}
+
+#cat[data-reaction="hurt"] #flame {
+  animation: recoil 420ms ease-out;
+}
+
+@keyframes drift {
+  0%, 100% {
+    transform: translateY(0) scaleY(var(--height, 1));
+  }
+  50% {
+    transform: translateY(calc(-1 * var(--lift, 3px))) scaleY(calc(var(--height, 1) + 0.035));
+  }
+}
+
+@keyframes wobble {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(3px); }
+  75% { transform: translateX(-3px); }
+}
+
+@keyframes recoil {
+  30% { transform: scale(1.06, 0.87); }
+  65% { transform: scale(0.98, 1.04); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #cat #flame,
+  .zz {
+    animation: none;
+    transition: none;
+  }
 }
 
 .reaction {

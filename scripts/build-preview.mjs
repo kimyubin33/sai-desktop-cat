@@ -64,7 +64,7 @@ export function collectArtifacts(root,target,version,teamAiConfigured=false) {
   writeFileSync(join(destination,'먼저 읽어주세요.txt'),
     `사이 미리보기 ${version} · Windows ${spec.arch}\n\n`+
     '1. Setup 파일을 실행해 설치하거나 Portable 파일을 바로 실행하세요.\n'+
-    '2. Google로 시작하기를 누르고 브라우저에서 본인 계정으로 로그인하세요.\n'+
+    '2. Google →을 누르고 브라우저에서 본인 계정으로 로그인하세요.\n'+
     '3. 같은 계정의 이름·설정·참여 팀을 복원하고, 파일 보기에서 자료를 올리고 받을 수 있습니다.\n'+
     '4. 내 일정은 사용할 때 Calendar 권한을 한 번 따로 연결합니다. 확인한 일정만 등록·수정·삭제합니다.\n\n'+
     '기존 사이와 별도로 설치되며 기존 PC 자료를 자동으로 가져오거나 지우지 않습니다.\n'+

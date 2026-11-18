@@ -1,255 +1,272 @@
-//! 고양이 창: 도트 고양이를 그리고, 말풍선을 띄우고, 클릭·끌기·오른쪽 클릭을 앱에 알린다.
-//! 투명한 부분은 클릭이 아래 창으로 통과하고, 고양이 그림과 말풍선 위에서만 마우스를 받는다.
-//! 마우스가 그 위에 있는지는 앱이 판단하므로, 여기서는 "마우스를 받을 영역"만 알려 준다.
+//! 바탕화면의 사이와 말풍선. 투명한 여백에서는 아래 창이 마우스를 받는다.
 use crate::api::{cat_event, listen};
 use crate::dom::*;
-use crate::sprite;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{HtmlCanvasElement, MouseEvent, PointerEvent};
+use web_sys::{
+    CanvasRenderingContext2d, DomRect, HtmlCanvasElement, HtmlImageElement, PointerEvent,
+};
 
-struct St {
-    state: String,
-    facing: i32,
-    frame: u32,
-    last_frame_at: f64,
-    blink_until: f64,
+const MASK_SIZE: u32 = 32;
+const HIT_ALPHA: u8 = 24;
+
+#[derive(Default)]
+struct Desktop {
+    mask: Vec<Span>,
+    left: bool,
     bubble: Option<Value>,
-    reaction: Option<&'static str>,
     reaction_until: f64,
-    last_regions: String,
+    last_regions: Vec<[f64; 4]>,
 }
 
-fn frame_ms(state: &str) -> f64 {
-    match state {
-        "walk" => 160.0,
-        "sit" => 700.0,
-        "loaf" => 1200.0,
-        "sleep" => 900.0,
-        "talk" => 220.0,
-        "drag" | "dizzy" | "hurt" => 160.0,
-        _ => 500.0,
+struct Span {
+    y: u32,
+    start: u32,
+    end: u32,
+}
+
+impl Span {
+    fn rect(&self, bounds: &DomRect, left: bool) -> [f64; 4] {
+        let step_x = bounds.width() / f64::from(MASK_SIZE);
+        let step_y = bounds.height() / f64::from(MASK_SIZE);
+        let start = if left {
+            MASK_SIZE - self.end
+        } else {
+            self.start
+        };
+        [
+            bounds.left() + f64::from(start) * step_x,
+            bounds.top() + f64::from(self.y) * step_y,
+            f64::from(self.end - self.start) * step_x,
+            step_y,
+        ]
     }
+}
+
+/// Read the bundled image once, using row spans to leave gaps between flame tips clickable through.
+fn sample_mask(image: &HtmlImageElement) -> Option<Vec<Span>> {
+    let canvas: HtmlCanvasElement = document().create_element("canvas").ok()?.dyn_into().ok()?;
+    canvas.set_width(MASK_SIZE);
+    canvas.set_height(MASK_SIZE);
+    let ctx: CanvasRenderingContext2d = canvas.get_context("2d").ok()??.dyn_into().ok()?;
+    let size = f64::from(MASK_SIZE);
+    ctx.draw_image_with_html_image_element_and_dw_and_dh(image, 0.0, 0.0, size, size)
+        .ok()?;
+    let rgba = ctx.get_image_data(0.0, 0.0, size, size).ok()?.data().0;
+
+    let mut spans = Vec::new();
+    for y in 0..MASK_SIZE {
+        let mut start = None;
+        for x in 0..=MASK_SIZE {
+            let visible =
+                x < MASK_SIZE && rgba[((y * MASK_SIZE + x) * 4 + 3) as usize] >= HIT_ALPHA;
+            if visible {
+                start.get_or_insert(x);
+            } else if let Some(start) = start.take() {
+                spans.push(Span { y, start, end: x });
+            }
+        }
+    }
+    Some(spans)
 }
 
 pub fn start() {
-    let canvas: HtmlCanvasElement = by_id("cat").unwrap().unchecked_into();
+    let cat = by_id("cat").unwrap();
+    let flame: HtmlImageElement = by_id("flame").unwrap().unchecked_into();
     let bubble = by_id("bubble").unwrap();
     let zz = by_id("zz").unwrap();
     let reaction = by_id("reaction").unwrap();
-    let st = Rc::new(RefCell::new(St { state: "sit".into(), facing: 1, frame: 0, last_frame_at: 0.0, blink_until: 0.0, bubble: None, reaction: None, reaction_until: 0.0, last_regions: String::new() }));
+    let desktop = Rc::new(RefCell::new(Desktop::default()));
 
-    // 그리기: 매 프레임
-    {
-        let st = st.clone();
-        let canvas = canvas.clone();
-        let reaction = reaction.clone();
-        let f: Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>> = Rc::new(RefCell::new(None));
-        let g = f.clone();
-        *g.borrow_mut() = Some(Closure::new(move |t: f64| {
-            {
-                let mut s = st.borrow_mut();
-                if s.reaction.is_some() && now() >= s.reaction_until {
-                    s.reaction = None;
-                    reaction.set_hidden(true);
-                }
-                if t - s.last_frame_at > frame_ms(s.reaction.unwrap_or(&s.state)) {
-                    s.frame += 1;
-                    s.last_frame_at = t;
-                    if (s.state == "sit" || s.state == "loaf") && js_sys::Math::random() < 0.08 {
-                        s.blink_until = t + 160.0;
-                    }
-                }
-                sprite::render(&canvas, s.reaction.unwrap_or(&s.state), s.frame, s.facing, t >= s.blink_until);
-            }
-            let _ = window().request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref());
-        }));
-        let _ = window().request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref());
+    if flame.complete() {
+        desktop.borrow_mut().mask = sample_mask(&flame).unwrap_or_default();
+    } else {
+        let (image, desktop) = (flame.clone(), desktop.clone());
+        on(&flame, "load", move |_| {
+            desktop.borrow_mut().mask = sample_mask(&image).unwrap_or_default();
+        });
     }
+
     {
-        let st = st.clone();
+        let (desktop, cat) = (desktop.clone(), cat.clone());
         listen("cat:reaction", move |event| {
             let (pose, line) = match event["pose"].as_str() {
                 Some("dizzy") => ("dizzy", "어지러..."),
                 Some("hurt") => ("hurt", "아야!"),
                 _ => return,
             };
-            let mut s = st.borrow_mut();
-            s.reaction = Some(pose);
-            s.reaction_until = now() + 1300.0;
-            s.frame = 0;
+            let until = now() + 1300.0;
+            desktop.borrow_mut().reaction_until = until;
+            let _ = cat.set_attribute("data-reaction", pose);
             reaction.set_text_content(Some(line));
-            toggle(&reaction, "below", event["below"].as_bool().unwrap_or(false));
+            toggle(
+                &reaction,
+                "below",
+                event["below"].as_bool().unwrap_or(false),
+            );
             toggle(&reaction, "left", event["left"].as_bool().unwrap_or(false));
             reaction.set_hidden(false);
-        });
-    }
 
-    // 앱 → 상태
-    {
-        let st = st.clone();
-        let zz = zz.clone();
-        let canvas = canvas.clone();
-        listen("cat:state", move |s| {
-            let mut x = st.borrow_mut();
-            let state = s["state"].as_str().unwrap_or("sit").to_string();
-            if state != x.state {
-                x.frame = 0;
-            }
-            x.state = state.clone();
-            x.facing = s["facing"].as_i64().unwrap_or(1) as i32;
-            toggle(&zz, "hidden", state != "sleep");
-            toggle(&canvas, "dragging", state == "drag");
+            let (desktop, cat, reaction) = (desktop.clone(), cat.clone(), reaction.clone());
+            after(1300, move || {
+                if desktop.borrow().reaction_until == until {
+                    let _ = cat.remove_attribute("data-reaction");
+                    reaction.set_hidden(true);
+                }
+            });
         });
     }
     {
-        let st = st.clone();
-        let bubble = bubble.clone();
+        let (desktop, cat) = (desktop.clone(), cat.clone());
+        listen("cat:state", move |event| {
+            let state = event["state"].as_str().unwrap_or("sit");
+            let left = event["facing"].as_i64().unwrap_or(1) < 0;
+            desktop.borrow_mut().left = left;
+            let _ = cat.set_attribute("data-state", state);
+            toggle(&cat, "facing-left", left);
+            toggle(&zz, "hidden", state != "sleep");
+        });
+    }
+    {
+        let (desktop, bubble) = (desktop.clone(), bubble.clone());
         listen("cat:bubble", move |b| {
-            q_in(&bubble, ".text").unwrap().set_text_content(Some(b["text"].as_str().unwrap_or("")));
-            q_in(&bubble, ".source").unwrap().set_text_content(Some(b["sourceLabel"].as_str().unwrap_or("")));
+            q_in(&bubble, ".text")
+                .unwrap()
+                .set_text_content(b["text"].as_str());
+            q_in(&bubble, ".source")
+                .unwrap()
+                .set_text_content(b["sourceLabel"].as_str());
             let actions = q_in(&bubble, ".actions").unwrap();
             clear(&actions);
-            for a in b["actions"].as_array().cloned().unwrap_or_default() {
-                let btn = el("button").attr("data-action", a["id"].as_str().unwrap_or("")).text(a["label"].as_str().unwrap_or(""));
-                let btn = if a["primary"].as_bool().unwrap_or(false) { btn.cls("primary") } else { btn };
-                let _ = actions.append_child(&btn.0);
+            for action in b["actions"].as_array().into_iter().flatten() {
+                let button = el("button")
+                    .attr("data-action", action["id"].as_str().unwrap_or(""))
+                    .text(action["label"].as_str().unwrap_or(""));
+                let button = if action["primary"].as_bool().unwrap_or(false) {
+                    button.cls("primary")
+                } else {
+                    button
+                };
+                let _ = actions.append_child(&button.0);
             }
             toggle(&bubble, "hidden", false);
-            st.borrow_mut().bubble = Some(b);
+            desktop.borrow_mut().bubble = Some(b);
         });
     }
     {
-        let st = st.clone();
-        let bubble = bubble.clone();
+        let (desktop, bubble) = (desktop.clone(), bubble.clone());
         listen("cat:hide-bubble", move |_| {
             toggle(&bubble, "hidden", true);
-            st.borrow_mut().bubble = None;
+            desktop.borrow_mut().bubble = None;
         });
     }
-
-    // 마우스를 받을 영역 알리기 (0.15초마다, 바뀌었을 때만)
     {
-        let st = st.clone();
-        let canvas = canvas.clone();
-        let bubble = bubble.clone();
+        let (desktop, flame, bubble) = (desktop.clone(), flame.clone(), bubble.clone());
         every(150, move || {
-            let mut list = cat_rects(&canvas, &st.borrow());
+            let mut desktop = desktop.borrow_mut();
+            let bounds = flame.get_bounding_client_rect();
+            let mut regions = desktop
+                .mask
+                .iter()
+                .map(|span| {
+                    let [x, y, w, h] = span.rect(&bounds, desktop.left);
+                    [
+                        x.floor(),
+                        y.floor(),
+                        (x + w).ceil() - x.floor(),
+                        (y + h).ceil() - y.floor(),
+                    ]
+                })
+                .collect::<Vec<_>>();
             if !has_class(&bubble, "hidden") {
-                let b = bubble.get_bounding_client_rect();
-                list.push(json!({ "x": b.left(), "y": b.top(), "w": b.width(), "h": b.height() }));
+                let bounds = bubble.get_bounding_client_rect();
+                regions.push([bounds.left(), bounds.top(), bounds.width(), bounds.height()]);
             }
-            let key: String = list.iter().map(|r| format!("{},{},{},{};", r["x"].as_f64().unwrap_or(0.0).round(), r["y"].as_f64().unwrap_or(0.0).round(), r["w"].as_f64().unwrap_or(0.0).round(), r["h"].as_f64().unwrap_or(0.0).round())).collect();
-            let mut s = st.borrow_mut();
-            if key != s.last_regions {
-                s.last_regions = key;
-                cat_event("regions", json!(list));
+            if regions != desktop.last_regions {
+                cat_event(
+                    "regions",
+                    Value::Array(
+                        regions
+                            .iter()
+                            .map(|&[x, y, w, h]| json!({ "x": x, "y": y, "w": w, "h": h }))
+                            .collect(),
+                    ),
+                );
+                desktop.last_regions = regions;
             }
         });
     }
 
-    bubble.clone().dyn_into::<web_sys::EventTarget>().map(|t| {
-        on(&t, "mouseenter", |_| cat_event("bubble-hover", json!(true)));
-        on(&t, "mouseleave", |_| cat_event("bubble-hover", json!(false)));
-        let st = st.clone();
-        on(&t, "click", move |e| {
-            let Some(target) = event_target(&e) else { return };
-            let Ok(Some(btn)) = target.closest("button[data-action]") else { return };
-            let s = st.borrow();
-            let Some(b) = &s.bubble else { return };
-            cat_event("bubble-action", json!({ "id": b["id"], "action": btn.get_attribute("data-action").unwrap_or_default() }));
+    on(&bubble, "mouseenter", |_| {
+        cat_event("bubble-hover", json!(true))
+    });
+    on(&bubble, "mouseleave", |_| {
+        cat_event("bubble-hover", json!(false))
+    });
+    {
+        let desktop = desktop.clone();
+        on(&bubble, "click", move |event| {
+            let Some(target) = event_target(&event) else {
+                return;
+            };
+            let Ok(Some(button)) = target.closest("button[data-action]") else {
+                return;
+            };
+            let desktop = desktop.borrow();
+            let Some(bubble) = &desktop.bubble else {
+                return;
+            };
+            cat_event(
+                "bubble-action",
+                json!({
+                    "id": bubble["id"],
+                    "action": button.get_attribute("data-action").unwrap_or_default(),
+                }),
+            );
         });
-    }).ok();
+    }
 
     let holding = Rc::new(Cell::new(None));
     {
-        let st = st.clone();
-        let c2 = canvas.clone();
-        let holding = holding.clone();
-        on(&canvas, "pointerdown", move |e| {
-            let pointer: &PointerEvent = e.unchecked_ref();
-            if !pointer.is_primary() || !hit_cat(&c2, &st.borrow(), pointer) {
+        let (target, holding) = (cat.clone(), holding.clone());
+        on(&cat, "pointerdown", move |event| {
+            let pointer: &PointerEvent = event.unchecked_ref();
+            if !pointer.is_primary() {
                 return;
             }
-            // 오른쪽 버튼은 눌렀을 때 바로 메뉴 (contextmenu 이벤트는 투명 창에서 오지 않을 때가 있다)
+            let desktop = desktop.borrow();
+            let bounds = flame.get_bounding_client_rect();
+            let px = f64::from(pointer.client_x());
+            let py = f64::from(pointer.client_y());
+            if !desktop.mask.iter().any(|span| {
+                let [x, y, w, h] = span.rect(&bounds, desktop.left);
+                px >= x && px < x + w && py >= y && py < y + h
+            }) {
+                return;
+            }
             if pointer.button() == 2 {
-                e.prevent_default();
+                event.prevent_default();
                 cat_event("context-menu", Value::Null);
-                return;
+            } else if pointer.button() == 0 && holding.get().is_none() {
+                event.prevent_default();
+                let _ = target.set_pointer_capture(pointer.pointer_id());
+                holding.set(Some(pointer.pointer_id()));
+                cat_event("drag-start", Value::Null);
             }
-            if pointer.button() != 0 || holding.get().is_some() {
-                return;
-            }
-            e.prevent_default();
-            let _ = c2.set_pointer_capture(pointer.pointer_id());
-            holding.set(Some(pointer.pointer_id()));
-            cat_event("drag-start", Value::Null);
         });
     }
     for ev in ["pointerup", "pointercancel", "lostpointercapture"] {
         let holding = holding.clone();
-        on(&window(), ev, move |e| {
-            let pointer: &PointerEvent = e.unchecked_ref();
+        on(&window(), ev, move |event| {
+            let pointer: &PointerEvent = event.unchecked_ref();
             if holding.get() == Some(pointer.pointer_id()) {
                 holding.set(None);
                 cat_event("drag-end", json!(ev != "pointerup"));
             }
         });
     }
-    on(&canvas, "contextmenu", |e| e.prevent_default());
+    on(&cat, "contextmenu", |event| event.prevent_default());
     cat_event("ready", Value::Null);
-}
-
-fn pixels(s: &St) -> Vec<u8> {
-    sprite::draw(s.reaction.unwrap_or(&s.state), s.frame, true)
-}
-
-/// 32x32 도트에서 그려진 칸 (좌우 반전 반영)
-fn opaque(px: &[u8], x: usize, y: usize, facing: i32) -> bool {
-    let xx = if facing < 0 { sprite::SIZE - 1 - x } else { x };
-    px[(y * sprite::SIZE + xx) * 4 + 3] > 30
-}
-
-/// 그려진 픽셀이 있는 가로줄 묶음 → 창 기준 사각형 몇 개
-fn cat_rects(canvas: &HtmlCanvasElement, s: &St) -> Vec<Value> {
-    let px = pixels(s);
-    let r = canvas.get_bounding_client_rect();
-    let cell_w = r.width() / sprite::SIZE as f64;
-    let cell_h = r.height() / sprite::SIZE as f64;
-    let mut out = vec![];
-    for y0 in (0..sprite::SIZE).step_by(3) {
-        let (mut min_x, mut max_x) = (usize::MAX, 0usize);
-        for y in y0..(y0 + 3).min(sprite::SIZE) {
-            for x in 0..sprite::SIZE {
-                if opaque(&px, x, y, s.facing) {
-                    min_x = min_x.min(x);
-                    max_x = max_x.max(x);
-                }
-            }
-        }
-        if min_x != usize::MAX {
-            out.push(json!({ "x": r.left() + (min_x as f64 - 0.5) * cell_w, "y": r.top() + y0 as f64 * cell_h, "w": (max_x - min_x + 2) as f64 * cell_w, "h": 3.0 * cell_h }));
-        }
-    }
-    out
-}
-
-fn hit_cat(canvas: &HtmlCanvasElement, s: &St, e: &MouseEvent) -> bool {
-    let r = canvas.get_bounding_client_rect();
-    let x = ((e.client_x() as f64 - r.left()) / r.width() * sprite::SIZE as f64).floor() as i64;
-    let y = ((e.client_y() as f64 - r.top()) / r.height() * sprite::SIZE as f64).floor() as i64;
-    let px = pixels(s);
-    // 가장자리 한 칸 여유
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            let (xx, yy) = (x + dx, y + dy);
-            if (0..sprite::SIZE as i64).contains(&xx) && (0..sprite::SIZE as i64).contains(&yy) && opaque(&px, xx as usize, yy as usize, s.facing) {
-                return true;
-            }
-        }
-    }
-    false
 }

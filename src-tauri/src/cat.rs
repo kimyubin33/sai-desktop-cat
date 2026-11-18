@@ -132,7 +132,7 @@ pub fn create(app: &tauri::AppHandle, a: &Arc<App>) -> tauri::Result<()> {
         c.behavior = CatBehavior::new(min_x, max_x, x);
         c.behavior.calm = a.stores.settings.read(|s| s.i("quietUntil")) > now_ms();
     }
-    let w = WebviewWindowBuilder::new(app, "cat", WebviewUrl::App("cat/index.html".into()))
+    let builder = WebviewWindowBuilder::new(app, "cat", WebviewUrl::App("cat/index.html".into()))
         .title("사이")
         .inner_size(WIN_W, WIN_H)
         .transparent(true)
@@ -144,8 +144,14 @@ pub fn create(app: &tauri::AppHandle, a: &Arc<App>) -> tauri::Result<()> {
         .visible_on_all_workspaces(true)
         .focusable(false)
         .focused(false)
-        .visible(false)
-        .build()?;
+        .visible(false);
+    #[cfg(windows)]
+    let builder = if let Some(dir) = std::env::var_os("SAI_PREVIEW_DIR") {
+        builder.data_directory(std::path::PathBuf::from(dir).join("webview"))
+    } else {
+        builder
+    };
+    let w = builder.build()?;
     place(app, &a.cat.lock().unwrap());
     let _ = w.show();
     // 창이 화면에 나온 뒤에 클릭 통과를 켠다 (Linux 에서는 그 전에 켜면 멈춘다)
