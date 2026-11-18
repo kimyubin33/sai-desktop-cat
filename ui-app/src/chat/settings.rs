@@ -19,13 +19,13 @@ pub fn update_engine(v: &Value) {
     set_text(
         "engine",
         if !b(&v["ai"], "enabled") {
-            "기본 대화 · 개인 AI 꺼짐"
+            "개인 AI 꺼짐"
         } else if b(v, "hasApiKey") {
-            "개인 Claude 연결됨"
+            "Claude 연결됨"
         } else if b(v, "hasOpenAiKey") {
-            "기본 대화 · OpenAI 연결 보관됨"
+            "OpenAI 키 보관"
         } else {
-            "기본 대화 · 개인 AI 미연결"
+            "개인 AI 미연결"
         },
     );
 }
@@ -106,7 +106,7 @@ async fn save() {
         Ok(v) => {
             DIRTY.with(|d| d.set(false));
             draw(&v);
-            set_text("settingsMessage", "변경 사항을 저장했어요.");
+            set_text("settingsMessage", "저장됨");
         }
         Err(e) => set_text("settingsMessage", &e),
     }
@@ -121,14 +121,16 @@ pub fn render_update(v: Value) {
     let error = s(&v, "error");
     set_text(
         "updateStatus",
-        if !error.is_empty() {
+        if status == "unsupported" {
+            "미리보기"
+        } else if !error.is_empty() {
             &error
         } else {
             match status.as_str() {
-                "checking" => "새 버전을 확인하고 있어요.",
-                "downloading" => "새 버전을 받고 있어요.",
-                "ready" => "새 버전을 적용할 수 있어요.",
-                _ => "필요할 때 새 버전을 확인할 수 있어요.",
+                "checking" => "확인 중…",
+                "downloading" => "다운로드 중…",
+                "ready" => "업데이트 준비됨",
+                _ => "",
             }
         },
     );
@@ -156,7 +158,7 @@ pub fn bind() {
         if SAVING.with(|busy| busy.replace(true)) {
             return;
         }
-        set_text("settingsMessage", "저장하고 있어요…");
+        set_text("settingsMessage", "저장 중…");
         for element in q_all("#settingsForm input, #settingsForm select, #settingsForm button") {
             set_disabled(&element, true);
         }

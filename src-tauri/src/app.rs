@@ -218,7 +218,18 @@ fn create_workspace(app: &AppHandle, url: String) -> tauri::Result<tauri::Webvie
         })
         .inner_size(1100.0, 780.0)
         .min_inner_size(420.0, 580.0)
+        .decorations(false)
         .disable_drag_drop_handler();
+    #[cfg(windows)]
+    let builder = builder
+        .transparent(true)
+        .background_color(tauri::window::Color(0, 0, 0, 0))
+        .effects(
+            tauri::window::EffectsBuilder::new()
+                .effect(tauri::window::Effect::Acrylic)
+                .color(tauri::window::Color(18, 22, 30, 150))
+                .build(),
+        );
     #[cfg(windows)]
     let builder = if let Some(dir) = std::env::var_os("SAI_PREVIEW_DIR") {
         builder.data_directory(std::path::PathBuf::from(dir).join("webview"))

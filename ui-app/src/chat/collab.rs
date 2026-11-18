@@ -61,8 +61,8 @@ fn reset_ai() {
     AI_GENERATION.with(|g| g.set(g.get() + 1));
     AI_FOR.with(|f| f.borrow_mut().clear());
     AI_CONSENT_REQUIRED.with(|v| v.set(false));
-    set_text("teamAiMessage", "팀 Claude 연결을 확인할 수 있어요.");
-    set_text("teamAiRefresh", "연결 확인 ↻");
+    set_text("teamAiMessage", "");
+    set_text("teamAiRefresh", "연결");
     set_disabled(&by_id("teamAiRefresh").unwrap(), selected().is_empty());
 }
 async fn ai_status(connect: bool) {
@@ -77,7 +77,7 @@ async fn ai_status(connect: bool) {
     });
     AI_FOR.with(|f| *f.borrow_mut() = folder.clone());
     set_disabled(&by_id("teamAiRefresh").unwrap(), true);
-    set_text("teamAiMessage", "팀 Claude 연결을 확인하고 있어요…");
+    set_text("teamAiMessage", "확인 중…");
     let response = call(
         if connect {
             "team-ai:connect"
@@ -98,21 +98,14 @@ async fn ai_status(connect: bool) {
         Ok(v) if v["epoch"] == epoch && v["folderId"] == folder => {
             let consent = b(&v, "requiresConsent");
             AI_CONSENT_REQUIRED.with(|r| r.set(consent));
-            set_text(
-                "teamAiRefresh",
-                if consent {
-                    "팀 AI 연결 →"
-                } else {
-                    "연결 확인 ↻"
-                },
-            );
+            set_text("teamAiRefresh", "연결");
             if consent {
-                "팀 AI를 처음 연결할 때 Google 권한 전달 범위를 확인해 주세요.".into()
+                "연결 필요".into()
             } else if !b(&v, "configured") || !b(&v, "ready") {
-                "팀 Claude를 준비하고 있어요. 개인 AI 대화는 계속 사용할 수 있어요.".into()
+                "연결 대기".into()
             } else {
                 format!(
-                    "팀 Claude 사용 설정을 확인했어요. 일일 한도 {} / {}회 요청했어요.",
+                    "{} / {}",
                     v["used"].as_u64().unwrap_or(0),
                     v["dailyRequests"].as_u64().unwrap_or(0)
                 )
@@ -139,10 +132,7 @@ pub fn account(v: &Value) {
         reset_ai();
         clear(&by_id("collabBoard").unwrap());
         clear(&by_id("collabTeam").unwrap());
-        set_text(
-            "collabMessage",
-            "파일 화면에서 Google로 로그인하고 팀을 연결해 주세요.",
-        );
+        set_text("collabMessage", "");
         controls();
     }
 }
@@ -164,7 +154,7 @@ pub fn teams(rows: &[Value]) {
         &el("option")
             .attr("value", "")
             .text(if usable.is_empty() {
-                "연결된 팀이 없어요"
+                "팀 없음"
             } else {
                 "팀 선택"
             })
@@ -196,10 +186,7 @@ fn switch(folder: String) {
     clear(&by_id("collabBoard").unwrap());
     controls();
     if selected().is_empty() {
-        set_text(
-            "collabMessage",
-            "파일 화면에서 팀을 연결하면 프로젝트와 할 일을 함께 정리할 수 있어요.",
-        );
+        set_text("collabMessage", "팀 없음");
     } else if active() {
         spawn(load(false));
     }
@@ -285,7 +272,7 @@ fn editor(entity: Value, heads: Value, conflict: bool) {
     }
     let projects = by_id("collabProject").unwrap();
     clear(&projects);
-    let _ = projects.append_child(&el("option").attr("value", "").text("프로젝트 없음").build());
+    let _ = projects.append_child(&el("option").attr("value", "").text("미지정").build());
     BOARD.with(|v| {
         if let Some(items) = v.borrow()["items"].as_array() {
             for item in items.iter().filter(|i| i["kind"] == "project") {
@@ -385,7 +372,7 @@ fn render(v: &Value) {
                             .cls("text-button")
                             .attr("type", "button")
                             .attr("data-calendar-task", "")
-                            .text("내 일정 ＋")
+                            .text("일정")
                             .click(move |_| {
                                 super::agenda::open(epoch, folder.clone(), task.clone())
                             }),
@@ -398,12 +385,7 @@ fn render(v: &Value) {
         let _ = root.append_child(&section.build());
     }
     if items.is_empty() {
-        let _ = root.append_child(
-            &el("p")
-                .cls("work-empty")
-                .text("아직 정리한 내용이 없어요. 작은 프로젝트나 할 일부터 추가해 보세요.")
-                .build(),
-        );
+        let _ = root.append_child(&el("p").cls("work-empty").text("할 일 없음").build());
     }
     controls();
 }
@@ -416,11 +398,11 @@ fn accept(v: Value) {
         &if !error.is_empty() {
             format!("{error} · 이 PC의 공유 대기 {pending}개")
         } else if pending > 0 {
-            format!("이 PC에 공유 대기 {pending}개가 있어요. 동기화를 눌러 이어 보내 주세요.")
+            format!("동기화 대기 {pending}")
         } else if !b(&v["team"], "canUpload") {
-            "최신 내용을 확인했어요. 이 팀은 보기만 할 수 있어요.".into()
+            "읽기 전용".into()
         } else {
-            "Drive의 최신 내용을 확인했어요. 저장한 변경은 팀원과 공유돼요.".into()
+            "".into()
         },
     );
     let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(
@@ -449,10 +431,7 @@ pub async fn load(sync: bool) {
     let epoch = EPOCH.with(Cell::get);
     let generation = generation();
     controls();
-    set_text(
-        "collabMessage",
-        "팀 권한과 최신 협업 내용을 확인하고 있어요…",
-    );
+    set_text("collabMessage", "불러오는 중…");
     let result = call(
         if sync { "collab:sync" } else { "collab:load" },
         json!({"epoch":epoch,"folderId":folder}),
@@ -542,7 +521,7 @@ pub fn bind() {
         }
         if connect {
             AI_CONSENT_REQUIRED.with(|r| r.set(false));
-            set_text("teamAiRefresh", "연결 확인 ↻");
+            set_text("teamAiRefresh", "연결");
         }
         spawn(ai_status(connect));
     });

@@ -62,18 +62,14 @@ fn open(p: Picker) {
     }
     set_text(
         "drivePickerTitle",
-        if p.teams {
-            "초대받은 팀 연결"
-        } else {
-            "내 Drive에서 가져오기"
-        },
+        if p.teams { "팀 연결" } else { "Google" },
     );
     set_text(
         "drivePickerNote",
         if p.teams {
-            "내 계정에 공유된 사이 팀 폴더를 연결해요."
+            "팀 선택"
         } else {
-            "선택한 파일의 사본을 팀 폴더에 추가해요. 원본은 유지되고, 사본은 팀원에게 공유돼요."
+            "사본 추가"
         },
     );
     toggle(&by_id("drivePickerTools").unwrap(), "hidden", p.teams);
@@ -230,7 +226,7 @@ async fn load(more: bool) {
     let generation = invalidate();
     LOADING.with(|v| v.set(true));
     render();
-    set_text("drivePickerMessage", "Drive 목록을 확인하고 있어요…");
+    set_text("drivePickerMessage", "불러오는 중…");
     let page = if more { p.next.as_str() } else { "" };
     let result = call(
         if p.teams {

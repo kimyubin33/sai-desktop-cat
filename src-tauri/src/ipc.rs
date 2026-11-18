@@ -56,6 +56,26 @@ fn ok() -> R {
 
 async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
     match ch {
+        "window:minimize" => {
+            win.minimize().map_err(|_| "창을 최소화하지 못했어요.")?;
+            ok()
+        }
+        "window:maximize" => {
+            if win.is_maximized().unwrap_or(false) {
+                win.unmaximize().map_err(|_| "창을 복원하지 못했어요.")?;
+            } else {
+                win.maximize().map_err(|_| "창을 최대화하지 못했어요.")?;
+            }
+            ok()
+        }
+        "window:close" => {
+            win.close().map_err(|_| "창을 닫지 못했어요.")?;
+            ok()
+        }
+        "help:open" => {
+            crate::system::open_url("https://github.com/kimyubin33/sai-desktop-cat/blob/work/google-workspace-preview-20261118/docs/user-guide.md");
+            ok()
+        }
         // 옛 팀/톡/호스트/공유 키 요청은 이 허용 목록에 포함하지 않는다.
         "workspace:status" => Ok(workspace_status(a)),
         "calendar:preview" => {

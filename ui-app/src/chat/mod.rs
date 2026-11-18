@@ -1,6 +1,7 @@
 //! Google 중심 작업 공간. 첫 패치는 개인 기능과 새 화면만 제공한다.
 mod agenda;
 mod analysis;
+mod chrome;
 mod collab;
 mod drive_picker;
 mod files;
@@ -22,7 +23,7 @@ pub fn b(v: &Value, key: &str) -> bool {
     v[key].as_bool().unwrap_or(false)
 }
 pub(super) fn confirm_team_ai_connection() -> bool {
-    confirm("팀 권한을 확인하려면 짧은 수명의 Google 접근 토큰을 사이 팀 AI 서비스에 보내야 해요. 이 토큰에는 현재 허용한 Drive 전체 접근 권한이 포함돼요.\n\n이 PC의 같은 Google 계정과 같은 서비스에 대한 동의는 저장돼요. 파일 분석은 이후 선택한 내용을 별도로 확인한 뒤 보내요.\n\n팀 AI 연결을 허용할까요?")
+    confirm("Google 접근 토큰(Drive 전체 권한)을 사이 팀 AI 서비스에 전달해 팀 권한을 확인합니다.\n\n동의는 이 기기의 계정·서비스별로 저장합니다. 파일 본문은 분석할 때 따로 확인합니다.\n\n연결할까요?")
 }
 pub fn arr(v: &Value, key: &str) -> Vec<Value> {
     v[key].as_array().cloned().unwrap_or_default()
@@ -72,6 +73,7 @@ pub fn show_tab(tab: &str) {
 }
 
 pub fn start() {
+    chrome::bind();
     if let Some(avatar) = by_id("avatar") {
         crate::sprite::render(
             &avatar.unchecked_into::<HtmlCanvasElement>(),

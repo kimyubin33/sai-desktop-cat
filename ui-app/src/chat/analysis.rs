@@ -86,7 +86,7 @@ fn controls() {
             || count == 0
             || !checked(&by_id("analysisShareAck").unwrap()),
     );
-    set_text("analysisSave", &format!("선택한 할 일 {count}개 팀에 추가"));
+    set_text("analysisSave", &format!("추가 {count}"));
 }
 pub fn open(team: Value, file: Option<String>) {
     if dialog().open() || team["epoch"].as_u64() != Some(EPOCH.with(Cell::get)) {
@@ -98,10 +98,7 @@ pub fn open(team: Value, file: Option<String>) {
     CAN_SHARE.with(|c| c.set(false));
     set_text("analysisTeam", &s(&team, "name"));
     set_text("analysisMessage", "");
-    set_text(
-        "analysisConnection",
-        "팀 Claude 연결은 내용 준비 후 확인해요.",
-    );
+    set_text("analysisConnection", "");
     for (id, hidden) in [
         ("analysisEntry", file.is_some()),
         ("analysisPreview", true),
@@ -149,11 +146,11 @@ async fn connection(connect: bool) {
             set_text(
                 "analysisConnection",
                 if consent {
-                    "팀 AI 연결의 Google 권한 전달 범위를 먼저 확인해 주세요."
+                    "연결 필요"
                 } else if b(&v, "ready") {
-                    "팀 Claude가 준비됐어요. 선택한 내용은 사이 팀 AI 서비스와 Anthropic이 처리해요."
+                    ""
                 } else {
-                    "팀 Claude 배포를 준비하고 있어요. 지금은 전송할 내용까지 확인할 수 있어요."
+                    "연결 대기"
                 },
             );
         }
@@ -175,7 +172,7 @@ async fn prepare(source: Value) {
     args["source"] = source;
     let gen = bump();
     controls();
-    set_text("analysisMessage", "자료와 현재 팀 권한을 확인하고 있어요…");
+    set_text("analysisMessage", "불러오는 중…");
     let result = call("analysis:prepare", args).await;
     if gen != GEN.with(Cell::get) {
         if let Ok(v) = result {
@@ -201,8 +198,7 @@ async fn prepare(source: Value) {
             );
             let projects = by_id("analysisProject").unwrap();
             clear(&projects);
-            let _ = projects
-                .append_child(&el("option").attr("value", "").text("프로젝트 없음").build());
+            let _ = projects.append_child(&el("option").attr("value", "").text("미지정").build());
             for p in v["projects"].as_array().into_iter().flatten() {
                 let _ = projects.append_child(
                     &el("option")
@@ -214,9 +210,9 @@ async fn prepare(source: Value) {
             set_text(
                 "analysisSendLabel",
                 if b(&v, "priorAttempt") {
-                    "이전 분석 시도가 있어요. 아래 내용을 새 요청으로 보내면 비용이 다시 발생할 수 있음을 확인했어요."
+                    "사이 · Anthropic에 재전송 (추가 비용)"
                 } else {
-                    "아래 내용을 사이 팀 AI 서비스와 Anthropic에 보내 분석하는 데 동의해요."
+                    "사이 · Anthropic에 본문 전송"
                 },
             );
             toggle(&by_id("analysisEntry").unwrap(), "hidden", true);
@@ -224,11 +220,11 @@ async fn prepare(source: Value) {
             set_text(
                 "analysisMessage",
                 if existing {
-                    "이미 이 자료에서 등록한 할 일이 있어요. 협업에서 기존 항목을 확인해 주세요. 중복 등록을 막기 위해 새 분석은 실행하지 않아요."
+                    "이미 등록한 자료"
                 } else if !CAN_SHARE.with(Cell::get) {
-                    "읽기 전용 팀이에요. 개인 확인용으로 분석할 수 있지만 할 일을 팀에 추가할 수는 없어요."
+                    "읽기 전용 · 팀 저장 불가"
                 } else {
-                    "보내기 전에 내용과 처리 서비스를 확인해 주세요. 요약과 원문은 팀에 자동으로 공유되지 않아요."
+                    ""
                 },
             );
             connection(false).await;

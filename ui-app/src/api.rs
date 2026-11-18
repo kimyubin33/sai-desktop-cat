@@ -16,7 +16,8 @@ fn tauri(path: &[&str]) -> Option<js_sys::Function> {
 }
 
 fn to_js(v: &Value) -> JsValue {
-    v.serialize(&serde_wasm_bindgen::Serializer::json_compatible()).unwrap_or(JsValue::NULL)
+    v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .unwrap_or(JsValue::NULL)
 }
 
 fn from_js(v: JsValue) -> Value {
@@ -28,20 +29,40 @@ fn from_js(v: JsValue) -> Value {
 
 fn err_text(e: JsValue) -> String {
     e.as_string()
-        .or_else(|| js_sys::Reflect::get(&e, &JsValue::from_str("message")).ok().and_then(|m| m.as_string()))
+        .or_else(|| {
+            js_sys::Reflect::get(&e, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|m| m.as_string())
+        })
         .unwrap_or_else(|| "알 수 없는 오류".into())
 }
 
 async fn invoke(cmd: &str, payload: Value) -> Result<Value, String> {
     let f = tauri(&["core", "invoke"]).ok_or("앱과 연결되지 않았어요.")?;
-    let p = f.call2(&JsValue::NULL, &JsValue::from_str(cmd), &to_js(&payload)).map_err(err_text)?;
-    let r = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(p)).await.map_err(err_text)?;
+    let p = f
+        .call2(&JsValue::NULL, &JsValue::from_str(cmd), &to_js(&payload))
+        .map_err(err_text)?;
+    let r = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(p))
+        .await
+        .map_err(err_text)?;
     Ok(from_js(r))
 }
 
 /// 대화창 → 앱
 pub async fn call(ch: &str, args: Value) -> Result<Value, String> {
     invoke("call", serde_json::json!({ "ch": ch, "args": args })).await
+}
+
+/// A pointer gesture must start immediately while the mouse button is held.
+/// The native capability grants this fixed gesture only to the workspace.
+pub fn resize_workspace() {
+    if let Some(invoke) = tauri(&["core", "invoke"]) {
+        let _ = invoke.call2(
+            &JsValue::NULL,
+            &JsValue::from_str("plugin:window|start_resize_dragging"),
+            &to_js(&serde_json::json!({"value":"SouthEast"})),
+        );
+    }
 }
 
 /// 고양이 창 → 앱 (결과는 쓰지 않는다)
@@ -61,10 +82,17 @@ pub fn listen(name: &str, f: impl Fn(Value) + 'static) {
 pub fn register_listener(name: &str, f: impl Fn(Value) + 'static) -> Option<js_sys::Promise> {
     let l = tauri(&["event", "listen"])?;
     let cb = Closure::<dyn Fn(JsValue)>::new(move |e: JsValue| {
-        let payload = js_sys::Reflect::get(&e, &JsValue::from_str("payload")).unwrap_or(JsValue::NULL);
+        let payload =
+            js_sys::Reflect::get(&e, &JsValue::from_str("payload")).unwrap_or(JsValue::NULL);
         f(from_js(payload));
     });
-    let registered = l.call2(&JsValue::NULL, &JsValue::from_str(name), cb.as_ref().unchecked_ref()).ok()?;
+    let registered = l
+        .call2(
+            &JsValue::NULL,
+            &JsValue::from_str(name),
+            cb.as_ref().unchecked_ref(),
+        )
+        .ok()?;
     cb.forget();
     Some(js_sys::Promise::from(registered))
 }

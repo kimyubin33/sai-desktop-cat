@@ -18,11 +18,9 @@ fn draw(value: &Value) {
     super::teams::account(&value["profile"]);
     let g = &value["google"];
     let signed = b(g, "signedIn");
+    toggle(&document().body().unwrap(), "is-connected", signed);
     if signed && RESUME_FAILED.with(|f| f.replace(false)) {
-        set_text(
-            "googleMessage",
-            "저장된 Google 연결을 확인했어요. 다시 로그인하지 않고 이어 쓸 수 있어요.",
-        );
+        set_text("googleMessage", "연결됨");
     }
     let upgrade = signed && !b(g, "driveFull");
     UPGRADE.with(|v| v.set(upgrade));
@@ -34,6 +32,15 @@ fn draw(value: &Value) {
     let resumable = b(g, "hasSession") && !signed;
     RESUMABLE.with(|r| r.set(resumable));
     let email = s(g, "email");
+    if let Some(button) = by_id("accountSettings") {
+        let label = if signed && !email.is_empty() {
+            format!("계정 설정: {email}")
+        } else {
+            "계정 설정".into()
+        };
+        let _ = button.set_attribute("aria-label", &label);
+        let _ = button.set_attribute("title", &label);
+    }
     set_text(
         "accountLabel",
         if signed && !email.is_empty() {
@@ -51,31 +58,31 @@ fn draw(value: &Value) {
                 &email
             }
         } else if checking {
-            "Google 계정을 확인하고 있어요."
+            "확인 중…"
         } else if b(g, "needsReauth") {
-            "Google로 다시 로그인해 연결을 확인해 주세요."
+            "다시 로그인해 주세요."
         } else if resumable {
-            "이 기기의 Google 연결을 확인할 수 있어요."
+            "연결 확인"
         } else if configured {
-            "Google 계정으로 연결할 수 있어요."
+            ""
         } else {
             "Google 로그인을 준비하고 있어요."
         },
     );
     let label = if checking {
-        "계정 확인 중…"
+        "확인 중…"
     } else if busy {
-        "브라우저에서 로그인 중…"
+        "연결 중…"
     } else if upgrade {
-        "Google 연결 한 번 갱신"
+        "Google"
     } else if signed {
-        "Google 연결됨"
+        "연결됨"
     } else if resumable {
         "연결 다시 확인"
     } else if b(g, "needsReauth") {
-        "Google로 다시 로그인"
+        "Google"
     } else if configured {
-        "Google로 시작하기"
+        "Google"
     } else {
         "Google 로그인 준비 중"
     };
@@ -94,13 +101,13 @@ fn draw(value: &Value) {
     set_text(
         "accountHint",
         if upgrade {
-            "Drive 전체 접근을 처음 한 번 허용해 주세요. 이후 파일 선택·전송·팀 연결은 저장된 로그인으로 이용해요."
-        } else if signed {
-            "Google 연결을 저장했어요. Drive 탐색과 파일 전송은 앱 안에서 바로 이용할 수 있어요."
-        } else if configured {
-            "첫 로그인에서 계정·앱 설정·Drive 전체 접근을 함께 연결해요. 캘린더 권한은 아직 요청하지 않아요."
+            "Drive 연결 갱신"
+        } else if checking || pending {
+            "연결 중…"
+        } else if b(g, "needsReauth") {
+            "다시 로그인해 주세요."
         } else {
-            "지금은 개인 AI를 사용할 수 있어요. Google 연결 정보가 포함된 앱을 준비하고 있어요."
+            ""
         },
     );
     if let Some(button) = by_id("googleLogout") {
@@ -131,11 +138,9 @@ async fn perform(channel: &'static str) {
     set_text(
         "googleMessage",
         match channel {
-            "g:login" => {
-                "브라우저에서 Google 로그인을 완료해 주세요. 기다리지 않고 취소할 수도 있어요."
-            }
-            "g:upgrade"=>"브라우저에서 한 번만 Drive 전체 접근을 허용해 주세요. 이후에는 저장된 연결을 사용해요.",
-            "g:resume" => "이 기기의 Google 계정을 확인하고 있어요.",
+            "g:login" => "브라우저에서 로그인해 주세요.",
+            "g:upgrade" => "브라우저에서 Drive 권한을 확인해 주세요.",
+            "g:resume" => "연결 확인 중…",
             _ => "이 기기에서 로그아웃하고 있어요.",
         },
     );
@@ -160,9 +165,9 @@ async fn perform(channel: &'static str) {
             set_text(
                 "googleMessage",
                 if channel == "g:logout" {
-                    "이 기기에서 로그아웃했어요. 다른 PC의 연결은 유지돼요."
+                    "로그아웃됨"
                 } else {
-                    "계정을 확인했어요. 아래에서 이름·설정 동기화 상태를 확인할 수 있어요."
+                    "연결됨"
                 },
             );
             super::settings::load().await;
@@ -179,10 +184,7 @@ async fn perform(channel: &'static str) {
                 draw(&v);
             }
             if channel == "g:resume" && verified {
-                set_text(
-                    "googleMessage",
-                    "저장된 Google 연결을 확인했어요. 다시 로그인하지 않고 이어 쓸 수 있어요.",
-                );
+                set_text("googleMessage", "연결됨");
             } else {
                 RESUME_FAILED.with(|f| f.set(channel == "g:resume"));
                 set_text("googleMessage", &e);

@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "workspace-window",
+  "description": "Local workspace title bar and resize gestures",
+  "windows": ["chat"],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-start-resize-dragging"
+  ]
+}

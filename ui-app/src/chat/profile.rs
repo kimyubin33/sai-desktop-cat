@@ -55,11 +55,11 @@ pub fn draw(v: &Value) -> bool {
             error
         }
     } else if !ready {
-        "기존 설정을 먼저 확인해 주세요. 아직 Google의 자료를 바꾸지 않았어요.".into()
+        "동기화 필요".into()
     } else if pending > 0 {
-        "이 기기에 저장했어요. Google Drive와 동기화하고 있어요.".into()
+        "동기화 중…".into()
     } else {
-        "Google Drive와 동기화했어요. 다른 PC에서도 같은 계정으로 이어 쓸 수 있어요.".into()
+        "동기화됨".into()
     };
     if !busy {
         set_text("profileMessage", &message);
@@ -85,9 +85,9 @@ async fn run(save: bool) {
     set_text(
         "profileMessage",
         if save {
-            "이 기기에 안전하게 저장하고 있어요…"
+            "저장 중…"
         } else {
-            "Google Drive와 동기화하고 있어요…"
+            "동기화 중…"
         },
     );
     let result = call(

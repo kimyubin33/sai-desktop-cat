@@ -80,9 +80,9 @@ fn controls() {
         set_text(
             "calendarConnect",
             if b(&c, "connected") {
-                "일정 권한 확인 ↻"
+                "연결"
             } else {
-                "내 Calendar 연결 →"
+                "Google"
             },
         );
         set_disabled(
@@ -102,19 +102,12 @@ fn controls() {
         set_text(
             "calendarSaveLabel",
             if edit {
-                "현재 일정과 변경할 내용을 확인했고, 업무 제목과 선택한 날짜로 수정하겠습니다."
+                "내 Calendar 일정 수정"
             } else {
-                "제목과 날짜를 확인했고, 내 기본 캘린더에 추가하겠습니다."
+                "내 Calendar에 추가"
             },
         );
-        set_text(
-            "calendarAdd",
-            if edit {
-                "확인한 내용으로 수정 →"
-            } else {
-                "내 캘린더에 추가 →"
-            },
-        );
+        set_text("calendarAdd", if edit { "수정" } else { "추가" });
         let date = val(&by_id("calendarDate").unwrap());
         let changed =
             c["calendar"]["title"] != c["entity"]["title"] || c["calendar"]["date"] != date;
@@ -173,7 +166,7 @@ pub fn open(epoch: u64, folder: String, task: String) {
     }
     reset();
     CONTEXT.with(|c| *c.borrow_mut() = json!({"epoch":epoch,"folderId":folder,"taskId":task}));
-    set_text("calendarMessage", "최신 할 일과 일정을 확인하고 있어요…");
+    set_text("calendarMessage", "불러오는 중…");
     controls();
     if dialog().show_modal().is_err() {
         reset();

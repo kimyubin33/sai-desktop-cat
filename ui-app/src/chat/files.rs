@@ -115,7 +115,9 @@ fn file_row(file: &Value) -> crate::dom::El {
             el("button")
                 .cls("text-button")
                 .attr("type", "button")
-                .text("AI로 정리")
+                .attr("data-icon", "sparkle")
+                .attr("title", "AI로 할 일 정리")
+                .text("AI")
                 .click(move |_| {
                     if let Some(team) = selected() {
                         super::analysis::open(team, Some(file_id.clone()));
@@ -128,7 +130,10 @@ fn file_row(file: &Value) -> crate::dom::El {
             el("button")
                 .cls("subtle")
                 .attr("type", "button")
-                .text("받기 ↓")
+                .attr("data-icon", "download")
+                .attr("aria-label", "파일 받기")
+                .attr("title", "파일 받기")
+                .text("")
                 .click(move |_| action("files:download", json!({"fileId":download_id}))),
         );
     }
@@ -136,7 +141,10 @@ fn file_row(file: &Value) -> crate::dom::El {
         el("button")
             .cls("text-button")
             .attr("type", "button")
-            .text("Drive에서 열기 ↗")
+            .attr("data-icon", "external")
+            .attr("aria-label", "Google Drive에서 열기")
+            .attr("title", "Google Drive에서 열기")
+            .text("")
             .click(move |_| action("files:open", json!({"fileId":id}))),
     );
     el("article")
@@ -186,8 +194,8 @@ fn queue(v: &Value, can_retry: bool) {
                 }
             )));
         let actions=el("div").cls("file-row-actions")
-                .kid(el("button").cls("subtle").attr("type","button").flag("disabled",!can_retry).text(if b(&item,"uncertain"){"결과 확인"}else if drive {"다시 가져오기"}else{"다시 올리기"}).click(move |_|action(retry_channel,json!({"operation":operation}))))
-                .kid(el("button").cls("text-button").attr("type","button").text(if drive {"대기 기록 지우기"}else{"대기 사본 지우기"}).click(move |_|{
+                .kid(el("button").cls("subtle").attr("type","button").flag("disabled",!can_retry).text(if b(&item,"uncertain"){"결과 확인"}else if drive {"재시도"}else{"재시도"}).click(move |_|action(retry_channel,json!({"operation":operation}))))
+                .kid(el("button").cls("text-button").attr("type","button").text(if drive {"대기 삭제"}else{"대기 삭제"}).click(move |_|{
                     if confirm(&format!("‘{name}’의 이 기기 전송 대기를 지울까요? 원본과 이미 저장된 Drive 사본은 유지돼요.")){action(discard_channel,json!({"operation":discard}));}
                 }));
         let row = el("article")
@@ -219,7 +227,7 @@ async fn load(more: bool) {
         SEEN.with(|s| s.borrow_mut().clear());
     }
     busy_controls(true);
-    set_text("fileMessage", "현재 팀 권한과 파일 목록을 확인하고 있어요…");
+    set_text("fileMessage", "불러오는 중…");
     set_disabled(&by_id("filesBack").unwrap(), false);
     let response = call(
         "files:list",
@@ -256,9 +264,9 @@ async fn load(more: bool) {
                 if !error.is_empty() {
                     &error
                 } else if SEEN.with(|s| s.borrow().is_empty()) {
-                    "팀 파일이 아직 없어요. 내 Drive에서 가져오거나 PC 파일을 올려 주세요."
+                    "파일 없음"
                 } else {
-                    "팀 폴더에 저장된 파일이에요. 팀원과 함께 사용할 수 있어요."
+                    ""
                 },
             );
         }

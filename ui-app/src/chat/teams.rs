@@ -25,10 +25,7 @@ pub fn account(v: &Value) {
         toggle(&by_id("teamResume").unwrap(), "hidden", true);
     }
     if !b(v, "signedIn") {
-        set_text(
-            "teamMessage",
-            "Google 로그인 후 팀 폴더를 연결할 수 있어요.",
-        );
+        set_text("teamMessage", "");
         for id in ["teamEnable", "teamNew", "teamPick", "teamRefresh"] {
             set_disabled(&by_id(id).unwrap(), true);
             toggle(&by_id(id).unwrap(), "hidden", true);
@@ -86,11 +83,11 @@ fn draw(v: &Value) {
         let subtitle = if !verified {
             s(team, "error")
         } else if b(team, "canInvite") {
-            "내가 만든 팀 · 소유자".into()
+            "소유자".into()
         } else if b(team, "canUpload") {
-            "함께 쓰는 팀 · 편집 가능".into()
+            "편집".into()
         } else {
-            "함께 쓰는 팀 · 보기 가능".into()
+            "보기".into()
         };
         let open_id = fid.clone();
         let file_team = team.clone();
@@ -107,7 +104,10 @@ fn draw(v: &Value) {
                         .cls("subtle")
                         .attr("type", "button")
                         .flag("disabled", busy)
-                        .text("파일 보기 →")
+                        .attr("data-icon", "arrow")
+                        .attr("aria-label", "팀 파일 열기")
+                        .attr("title", "팀 파일 열기")
+                        .text("파일")
                         .click(move |_| {
                             super::files::show(file_team.clone());
                         }),
@@ -115,13 +115,20 @@ fn draw(v: &Value) {
         );
         let details = el("details")
             .cls("team-options")
-            .kid(el("summary").text("팀 관리 ＋"))
+            .kid(
+                el("summary")
+                    .attr("aria-label", "팀 관리")
+                    .attr("title", "팀 관리")
+                    .text("···"),
+            )
             .kid(
                 el("button")
                     .cls("text-button")
                     .attr("type", "button")
                     .flag("disabled", !verified || busy)
-                    .text("Drive 폴더 열기 ↗")
+                    .attr("data-icon", "external")
+                    .attr("title", "Google Drive 폴더 열기")
+                    .text("Google")
                     .click(move |_| {
                         action("teams:open", json!({"folderId":open_id,"epoch":epoch}))
                     }),
@@ -132,31 +139,23 @@ fn draw(v: &Value) {
                 .cls("team-invite-form")
                 .attr("data-folder", &fid)
                 .kid(
-                    el("label")
-                        .cls("field-label")
-                        .text("팀원의 Google 이메일")
-                        .kid(
-                            el("input")
-                                .attr("name", "email")
-                                .attr("type", "email")
-                                .attr("maxlength", "254")
-                                .attr("autocomplete", "off")
-                                .attr("value", drafts.get(&fid).map(String::as_str).unwrap_or(""))
-                                .flag("required", true)
-                                .flag("disabled", busy),
-                        ),
-                )
-                .kid(
-                    el("p")
-                        .cls("micro")
-                        .text("이 계정에 팀 폴더 편집 권한을 추가하고 Google 알림 메일을 보내요."),
+                    el("label").cls("field-label").text("이메일").kid(
+                        el("input")
+                            .attr("name", "email")
+                            .attr("type", "email")
+                            .attr("maxlength", "254")
+                            .attr("autocomplete", "off")
+                            .attr("value", drafts.get(&fid).map(String::as_str).unwrap_or(""))
+                            .flag("required", true)
+                            .flag("disabled", busy),
+                    ),
                 )
                 .kid(
                     el("button")
                         .cls("subtle")
                         .attr("type", "submit")
                         .flag("disabled", busy)
-                        .text("초대 보내기"),
+                        .text("초대"),
                 );
             on(form.node(), "submit", move |e| {
                 e.prevent_default();
@@ -181,11 +180,9 @@ fn draw(v: &Value) {
                 .cls("text-button")
                 .attr("type", "button")
                 .flag("disabled", busy)
-                .text("내 목록에서 빼기")
+                .text("목록에서 빼기")
                 .click(move |_| {
-                    if confirm(
-                        "내 팀 목록에서 뺄까요? Drive 폴더·파일과 Google 공유 권한은 유지돼요.",
-                    ) {
+                    if confirm("목록에서 뺄까요? Drive 원본은 유지돼요.") {
                         action("teams:remove", json!({"folderId":remove_id,"epoch":epoch}));
                     }
                 }),
@@ -196,19 +193,19 @@ fn draw(v: &Value) {
         set_text(
             "teamMessage",
             if !signed {
-                "Google 로그인 후 팀 폴더를 연결할 수 있어요."
+                ""
             } else if !ready {
-                "먼저 계정의 기존 설정을 동기화해 주세요."
+                "동기화 필요"
             } else if !connected {
-                "Google 연결을 한 번 갱신하면 앱 안에서 파일과 초대받은 팀을 고를 수 있어요."
+                "Google 연결 갱신 필요"
             } else if rows.is_empty() {
-                "새 팀을 만들거나 초대받은 폴더를 선택해 주세요."
+                "팀 없음"
             } else if rows.iter().any(|row| !b(row, "accessVerified")) {
                 "연결을 확인하지 못한 팀 폴더가 있어요. 공유 상태와 인터넷 연결을 확인해 주세요."
             } else if v["pending"].as_u64().unwrap_or(0) > 0 {
-                "계정 변경을 이 기기에 보관했어요. 다른 PC에 반영하려면 동기화를 마쳐야 해요."
+                "동기화 대기"
             } else {
-                "현재 Drive 권한을 확인했어요. 팀의 파일 보기에서 자료를 올리고 받을 수 있어요."
+                ""
             },
         );
     }
@@ -265,9 +262,9 @@ fn action(channel: &'static str, mut args: Value) {
         "teamMessage",
         match channel {
             "teams:enable" => "브라우저에서 앱과 같은 Google 계정으로 Drive 연결을 허용해 주세요.",
-            "teams:connect" => "선택한 팀의 현재 공유 권한을 확인하고 있어요…",
-            "teams:invite" => "Google 공유 권한과 초대 결과를 확인하고 있어요…",
-            _ => "팀 폴더를 확인하고 있어요…",
+            "teams:connect" => "연결 중…",
+            "teams:invite" => "초대 중…",
+            _ => "확인 중…",
         },
     );
     spawn(async move {
@@ -301,9 +298,9 @@ fn action(channel: &'static str, mut args: Value) {
                     set_text(
                         "teamMessage",
                         if b(&v["result"], "alreadyShared") {
-                            "이미 편집 권한이 있는 팀원이에요. 초대받은 팀 연결에서 폴더를 선택하면 돼요."
+                            "이미 초대된 계정"
                         } else {
-                            "편집 권한을 확인했어요. 팀원은 Google 알림 메일을 확인한 뒤 초대받은 팀 연결을 눌러 주세요."
+                            "초대됨"
                         },
                     );
                 }
