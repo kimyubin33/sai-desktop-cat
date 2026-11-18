@@ -24,6 +24,7 @@ pub mod schedule;
 pub mod ai;
 pub mod chat;
 pub mod local_ai;
+pub mod mediation;
 
 pub use serde_json::{json, Value};
 

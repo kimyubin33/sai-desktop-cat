@@ -526,6 +526,7 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             Ok(public_settings(a))
         }
         "ai:test-openai" => Ok(a.ai.test_openai().await),
+        ch if ch.starts_with("mediation:") => crate::mediation::handle(a, ch, &x).await,
         _ => Err("이 기능은 새 Google 작업 공간으로 전환 중이에요.".into()),
     }
 }

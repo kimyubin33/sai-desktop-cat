@@ -1492,3 +1492,54 @@ input[type="checkbox"] {
 .calendar-dialog{width:min(560px,calc(100vw - 40px));max-height:calc(100vh - 40px)}.calendar-dialog h3{font-size:18px;font-weight:500;line-height:1.6;margin:24px 0 14px}.calendar-dialog .field-label{display:flex;flex-direction:column;gap:8px;margin:22px 0;font-size:12px}.calendar-dialog input[type=date]{padding:12px;border:1px solid #ffffff25;border-radius:10px;background:#101512;color:#e4e9e4;font:inherit;color-scheme:dark}.calendar-dialog footer small{line-height:1.8}
 
 .calendar-current{margin:20px 0;padding:16px 18px;border:1px solid #ffffff20;border-radius:12px;background:#ffffff04}.calendar-current strong{display:block;font-size:14px;line-height:1.7;white-space:pre-wrap}.calendar-current .micro{white-space:pre-wrap}.calendar-delete{margin:24px 0 16px;padding-top:16px;border-top:1px solid #ffffff15}.calendar-delete summary{font-size:12px;color:#bdaaa2;cursor:pointer}.calendar-delete button{color:#c5a89c}
+
+/* 팀원에게 전하기 */
+.mediate-dialog {
+  max-height:min(92vh, 860px);
+  overflow:auto;
+}
+.mediate-dialog section {
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.mediate-row {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+.mediate-reply {
+  white-space:pre-line;
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+}
+.mediate-preview {
+  border-top:1px solid var(--line);
+  padding-top:10px;
+}
+.mediate-book {
+  border-top:1px solid var(--line);
+  margin-top:12px;
+  padding-top:10px;
+}
+.mediate-item {
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.mediate-item p {
+  margin:0;
+  white-space:pre-line;
+}
+.mediate-item strong {
+  font-size:12px;
+  color:var(--muted);
+  font-weight:500;
+}
+@media (max-width:560px) {
+  .mediate-row { grid-template-columns:1fr; }
+}

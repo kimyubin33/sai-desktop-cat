@@ -14,6 +14,8 @@ pub const WIN_W: f64 = 280.0;
 pub const WIN_H: f64 = 280.0;
 const TICK_MS: u64 = 33;
 const BUBBLE_MS: i64 = 15_000;
+/// A teammate's message needs time to read and answer.
+const MEDIATED_BUBBLE_MS: i64 = 45_000;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Rect {
@@ -319,7 +321,7 @@ pub fn show_bubble(app: &tauri::AppHandle, a: &Arc<App>, b: Value) -> bool {
     if c.drag.is_some() || !c.visible {
         return false;
     }
-    c.bubble_until = now_ms() + BUBBLE_MS;
+    c.bubble_until = now_ms() + if b["kind"] == "mediated" { MEDIATED_BUBBLE_MS } else { BUBBLE_MS };
     c.bubble_hovered = false;
     c.behavior.start_talking();
     send_state(app, &mut c, true);

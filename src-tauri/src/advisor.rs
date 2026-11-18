@@ -21,6 +21,11 @@ const RETURN_GAP_MS: i64 = 30 * 60 * 1000;
 /// How long the character may think before canned advice is used instead.
 const THINK_LIMIT: Duration = Duration::from_secs(90);
 const RECENT_LINES: usize = 8;
+/// Check Drive for messages from teammates every 10 minutes (polls are 5 s apart), first after 30 s.
+const MEDIATION_SYNC_POLLS: u64 = 120;
+const MEDIATION_FIRST_POLL: u64 = 6;
+/// Look for a message to hand over every 30 s.
+const MEDIATION_SHOW_POLLS: u64 = 6;
 
 #[derive(Default)]
 struct St {
@@ -35,6 +40,8 @@ struct St {
     away_since: Option<i64>,
     last_return: i64,
     polls: u64,
+    /// A Drive check for teammates' messages is running.
+    syncing: bool,
 }
 
 pub struct Advisor {
@@ -84,14 +91,29 @@ impl Advisor {
     fn poll(&self, a: &Arc<App>) {
         let now = now_ms();
         self.watch_presence(a, now);
-        let reap = {
+        let (reap, sync, hand_over) = {
             let mut st = self.st.lock().unwrap();
             st.polls += 1;
-            st.polls % 12 == 0
+            let sync = !st.syncing && (st.polls == MEDIATION_FIRST_POLL || st.polls % MEDIATION_SYNC_POLLS == 0);
+            if sync {
+                st.syncing = true;
+            }
+            (st.polls % 12 == 0, sync, st.polls % MEDIATION_SHOW_POLLS == 0 && !st.thinking)
         };
         if reap {
             let a2 = a.clone();
             tauri::async_runtime::spawn(async move { a2.local_ai.reap_idle().await });
+        }
+        if sync {
+            let a2 = a.clone();
+            tauri::async_runtime::spawn(async move {
+                // Not signed in, no Drive access or offline: try again at the next interval.
+                let _ = crate::mediation::sync(&a2).await;
+                a2.advisor.st.lock().unwrap().syncing = false;
+            });
+        }
+        if hand_over && silence_reason(&a.stores.settings.get(), now).is_none() && !a.cat.lock().unwrap().is_busy() {
+            self.hand_over(a);
         }
         let (due, later) = {
             let mut st = self.st.lock().unwrap();
@@ -313,6 +335,38 @@ impl Advisor {
         cat::show_bubble(&a.handle, a, payload)
     }
 
+    /// A teammate's message, or a teammate's answer to mine, said with its source.
+    /// Marked as handed over only once the bubble is actually on screen.
+    fn hand_over(&self, a: &Arc<App>) {
+        use sai_core::mediation as book;
+        let b = crate::mediation::read(a);
+        if let Some(r) = book::next_request(&b) {
+            let id = r.s("id");
+            let entry = json!({
+                "id": format!("mediated:{id}"), "kind": "mediated", "mediated": id,
+                "text": book::request_bubble(&r, &crate::mediation::cat_name(a)),
+                "sourceLabel": format!("— {} · 사이가 전하는 말", r.s("teamName")),
+                "actions": [act("react:ok", "알겠어", true), act("react:talk", "이야기해 보고 싶어", false),
+                    act("react:unsure", "잘 모르겠어", false), act("later", "나중에", false)],
+            });
+            if self.show(a, entry) {
+                crate::mediation::update(a, |b| book::mark(b, "inbox", &id, "delivered", json!(true)));
+                let _ = crate::mediation::save(a);
+            }
+        } else if let Some(r) = book::next_reaction(&b) {
+            let id = r.s("id");
+            let entry = json!({
+                "id": format!("mediated-reply:{id}"), "kind": "mediated",
+                "text": book::reaction_bubble(&r), "sourceLabel": format!("— {}", r.s("teamName")),
+                "actions": [act("close", "확인", true)],
+            });
+            if self.show(a, entry) {
+                crate::mediation::update(a, |b| book::mark(b, "sent", &id, "noticed", json!(true)));
+                let _ = crate::mediation::save(a);
+            }
+        }
+    }
+
     pub fn handle_action(&self, a: &Arc<App>, id: &str, action: &str) {
         let Some(entry) = self.st.lock().unwrap().shown.remove(id) else {
             return;
@@ -329,6 +383,19 @@ impl Advisor {
             }
             // 다시 묻지 않는다
             "update-later" => self.st.lock().unwrap().pending_update = None,
+            reaction if reaction.starts_with("react:") => {
+                let (mid, reaction) = (entry.s("mediated"), reaction["react:".len()..].to_owned());
+                let a2 = a.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::mediation::react(&a2, &mid, &reaction).await {
+                        a2.advisor.show(
+                            &a2,
+                            json!({"id":"mediated-error","kind":"notice","text":format!("답을 전하지 못했어. {e} 대화 창의 받은 말에서 다시 답할 수 있어."),
+                                "sourceLabel":"— 사이","actions":[act("close","확인",true)]}),
+                        );
+                    }
+                });
+            }
             _ => {}
         }
     }

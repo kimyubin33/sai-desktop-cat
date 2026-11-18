@@ -61,7 +61,7 @@ fn folder(value: Value, fid: &str) -> Result<Value> {
     }))
 }
 /// Remote display text (names, e-mail addresses) is untrusted: bounded and free of control characters.
-fn text(value: &Value) -> String {
+pub(super) fn text(value: &Value) -> String {
     value
         .as_str()
         .filter(|s| s.chars().count() <= 254 && !s.chars().any(char::is_control))
@@ -572,7 +572,7 @@ async fn owner(auth: &GoogleAuth, profiles: &Profiles, lease: &Lease, fid: &str)
     }
     Ok(())
 }
-fn valid_email(email: &str) -> bool {
+pub(super) fn valid_email(email: &str) -> bool {
     let parts: Vec<_> = email.split('@').collect();
     email.len() <= 254
         && email.is_ascii()
@@ -586,7 +586,7 @@ fn valid_email(email: &str) -> bool {
         && !parts[1].starts_with('.')
         && !parts[1].ends_with('.')
 }
-async fn permissions(auth: &GoogleAuth, lease: &Lease, fid: &str) -> Result<Vec<Value>> {
+pub(super) async fn permissions(auth: &GoogleAuth, lease: &Lease, fid: &str) -> Result<Vec<Value>> {
     let mut page = String::new();
     let mut pages = BTreeSet::new();
     let mut rows = vec![];
