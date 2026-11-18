@@ -5,6 +5,7 @@ mod collab;
 pub mod drive;
 mod files;
 mod login;
+mod mediation;
 pub mod oauth;
 mod profile;
 mod review;
@@ -458,17 +459,23 @@ impl Google {
         role: &str,
     ) -> Result<Value> {
         let auth = self.auth()?;
-        self.0
+        let result = self
+            .0
             .teams
             .invite(&auth, &self.0.profiles, epoch, folder, email, role)
-            .await
+            .await?;
+        self.refresh_roster(epoch, folder).await;
+        Ok(result)
     }
     pub async fn team_members(&self, epoch: u64, folder: &str) -> Result<Value> {
         let auth = self.auth()?;
-        self.0
+        let result = self
+            .0
             .teams
             .members(&auth, &self.0.profiles, epoch, folder)
-            .await
+            .await?;
+        self.refresh_roster(epoch, folder).await;
+        Ok(result)
     }
     pub async fn update_team_member(
         &self,
@@ -481,7 +488,36 @@ impl Google {
         self.0
             .teams
             .update_member(&auth, &self.0.profiles, epoch, folder, member, role)
-            .await
+            .await?;
+        self.refresh_roster(epoch, folder).await;
+        Ok(())
+    }
+    /// The owner's app keeps the team roster file current so members can check who may send them a message.
+    /// Membership has already changed by now; a roster write failure is retried the next time it runs.
+    async fn refresh_roster(&self, epoch: u64, folder: &str) {
+        if let Ok(auth) = self.auth() {
+            let _ = mediation::refresh_roster(&auth, &self.0.profiles, &self.0.teams, epoch, folder).await;
+        }
+    }
+    pub async fn mediation_targets(&self, epoch: u64) -> Result<Value> {
+        let auth = self.auth()?;
+        mediation::targets(&auth, &self.0.profiles, &self.0.teams, epoch).await
+    }
+    pub async fn mediation_recipient(&self, epoch: u64, folder: &str, to: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        mediation::recipient(&auth, &self.0.profiles, &self.0.teams, epoch, folder, to).await
+    }
+    pub async fn send_mediated(&self, epoch: u64, folder: &str, to: &str, text: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        mediation::send(&auth, &self.0.profiles, &self.0.teams, epoch, folder, to, text).await
+    }
+    pub async fn react_mediated(&self, epoch: u64, folder: &str, to: &str, re: &str, reaction: &str) -> Result<()> {
+        let auth = self.auth()?;
+        mediation::react(&auth, &self.0.profiles, &self.0.teams, epoch, folder, to, re, reaction).await
+    }
+    pub async fn fetch_mediated(&self, epoch: u64, seen: &[String]) -> Result<Value> {
+        let auth = self.auth()?;
+        mediation::fetch(&auth, &self.0.profiles, &self.0.teams, epoch, seen).await
     }
     pub async fn set_team_policy(
         &self,

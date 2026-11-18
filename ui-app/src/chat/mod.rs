@@ -7,6 +7,7 @@ mod drive_picker;
 mod files;
 mod legacy;
 mod local_ai;
+mod mediation;
 mod profile;
 mod settings;
 mod talk;
@@ -93,6 +94,7 @@ pub fn start() {
     talk::bind();
     settings::bind();
     local_ai::bind();
+    mediation::bind();
     legacy::bind();
     workspace::bind();
     profile::bind();

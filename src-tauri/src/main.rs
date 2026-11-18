@@ -8,6 +8,7 @@ mod cat;
 mod file_transfer;
 mod ipc;
 mod legacy;
+mod mediation;
 mod menu;
 mod preview;
 mod system;

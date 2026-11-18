@@ -19,6 +19,10 @@ thread_local! {static STATE:RefCell<State>=RefCell::new(State::default());}
 fn state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     STATE.with(|v| f(&mut v.borrow_mut()))
 }
+/// The open counseling conversation, if any. Messages to teammates are drafted from it.
+pub fn session_id() -> String {
+    state(|v| v.id.clone())
+}
 fn messages() -> HtmlElement {
     by_id("messages").unwrap()
 }

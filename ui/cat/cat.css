@@ -115,6 +115,7 @@ body {
 .bubble .text {
   margin: 0 14px 4px 0;
   word-break: keep-all;
+  white-space: pre-line;
 }
 
 .bubble .source {
