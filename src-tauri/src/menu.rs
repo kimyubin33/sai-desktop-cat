@@ -70,7 +70,7 @@ pub fn on_event(app: &AppHandle, a: &Arc<App>, e: MenuEvent) {
         "chat" => open_chat(app, a, "chat"),
         "speak" => {
             cat::hide_bubble(app, a);
-            a.advisor.speak_now(a);
+            a.advisor.speak(a, sai_core::local_ai::character::Trigger::Asked);
         }
         "quiet" => {
             let q = a.stores.settings.read(|s| s.i("quietUntil")) > now_ms();

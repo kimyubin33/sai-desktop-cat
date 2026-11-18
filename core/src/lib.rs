@@ -23,6 +23,7 @@ pub mod google;
 pub mod schedule;
 pub mod ai;
 pub mod chat;
+pub mod local_ai;
 
 pub use serde_json::{json, Value};
 

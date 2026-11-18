@@ -6,6 +6,7 @@ mod collab;
 mod drive_picker;
 mod files;
 mod legacy;
+mod local_ai;
 mod profile;
 mod settings;
 mod talk;
@@ -91,6 +92,7 @@ pub fn start() {
     listen("update:state", settings::render_update);
     talk::bind();
     settings::bind();
+    local_ai::bind();
     legacy::bind();
     workspace::bind();
     profile::bind();

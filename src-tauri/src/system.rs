@@ -20,6 +20,23 @@ pub fn ensure_autostart() {
     }
 }
 
+/// 마지막 키보드·마우스 입력 뒤 지난 시간(ms). 확인할 수 없으면 None.
+pub fn idle_ms() -> Option<u64> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::SystemInformation::GetTickCount;
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+        let mut info = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+        if unsafe { GetLastInputInfo(&mut info) } == 0 {
+            return None;
+        }
+        // Both counters wrap at the same point, so wrapping subtraction stays correct.
+        Some(unsafe { GetTickCount() }.wrapping_sub(info.dwTime) as u64)
+    }
+    #[cfg(not(windows))]
+    None
+}
+
 pub fn open_url(url: &str) {
     let _ = open::that_detached(url);
 }
