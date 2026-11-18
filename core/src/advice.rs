@@ -11,7 +11,7 @@ use std::collections::HashMap;
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: String,
-    pub kind: &'static str, // daily | reflection | quote | teamwork
+    pub kind: &'static str, // daily | reflection | care | quote | teamwork
     pub topic: Option<&'static str>,
     pub text: String,
     pub source_label: &'static str,
@@ -41,6 +41,26 @@ const REFLECTION: &[(&str, &str)] = &[
     ("same-page", "각자 생각하는 완료 기준을 한 줄씩 맞춰 볼까?"),
 ];
 
+/// 상담 성격의 말. 감정을 알아주고 스스로 돌아보게 하되, 진단하거나 훈계하지 않는다.
+/// 문장 하나하나가 조심스러워야 해서 캐릭터 AI가 바꿔 쓰지 않고 그대로 보여 준다.
+const CARE: &[(&str, &str)] = &[
+    ("linger", "요즘 마음에 오래 남아 있는 일이 있어? 말로 꺼내 보면 조금 가벼워지기도 해."),
+    ("name-it", "지금 기분에 이름을 하나 붙여 본다면 뭘까? 이름이 생기면 다루기가 쉬워져."),
+    ("upset-ok", "속상한 마음이 드는 건 이상한 게 아니야. 그만큼 마음을 쓰고 있다는 뜻이야."),
+    ("hurt-hope", "누군가에게 서운했다면, 그건 그 사람에게 기대한 게 있었기 때문일지도 몰라."),
+    ("count-one", "힘든 하루였다면 잘한 일 하나만 세어 보자. 오늘을 버틴 것도 들어가."),
+    ("pause-reply", "화가 날 땐 바로 답하지 않아도 돼. 숨을 세 번 쉬고 말해도 늦지 않아."),
+    ("friend-voice", "친구가 같은 일로 힘들어하면 뭐라고 해 줄 것 같아? 그 말을 너한테도 해 줘."),
+    ("not-alone", "모든 걸 혼자 풀지 않아도 돼. 도움을 청하는 것도 힘이야."),
+    ("hard-words", "팀원에게 꺼내기 어려운 말이 있으면 나한테 먼저 털어놔. 같이 다듬어 보자."),
+    ("control", "걱정이 많을 땐 내가 바꿀 수 있는 것과 없는 것을 나눠 적어 봐."),
+    ("mistake", "실수했다고 부족한 사람이 되는 건 아니야. 다음에 다르게 해 볼 한 가지면 충분해."),
+    ("sleep", "요즘 잠은 잘 자? 마음이 지치면 몸부터 쉬게 해 주는 게 먼저야."),
+    ("fact-story", "누군가의 말이 마음에 걸렸다면, 들은 말과 내가 붙인 해석을 따로 적어 봐."),
+    ("good-moment", "오늘 조금이라도 괜찮았던 순간이 있었어? 아주 작아도 좋아."),
+    ("lean-on", "가라앉는 날이 오래 이어지면 혼자 버티지 말고 믿을 만한 사람에게 이야기해 봐."),
+];
+
 const CLASSIC: &[(&str, &str, &str)] = &[
     ("classic-thousand-li", "천 리 길도 발밑의 한 걸음에서 시작된다.", "『도덕경』 64장 (千里之行 始於足下)"),
     ("classic-three-people", "세 사람이 길을 가면 그중에 반드시 나의 스승이 있다.", "『논어』 술이편 (三人行 必有我師焉)"),
@@ -60,6 +80,9 @@ pub static LIBRARY: Lazy<Vec<Entry>> = Lazy::new(|| {
     }
     for (id, text) in REFLECTION {
         v.push(Entry { id: format!("reflect-{id}"), kind: "reflection", topic: None, text: text.to_string(), source_label: SELF_LABEL });
+    }
+    for (id, text) in CARE {
+        v.push(Entry { id: format!("care-{id}"), kind: "care", topic: None, text: text.to_string(), source_label: SELF_LABEL });
     }
     for (id, text, label) in CLASSIC {
         v.push(Entry { id: id.to_string(), kind: "quote", topic: None, text: text.to_string(), source_label: label });
@@ -144,6 +167,10 @@ fn weight_of(e: &Entry, boosts: &HashMap<String, bool>, hour: u32) -> f64 {
     if e.kind == "teamwork" {
         w = 0.9;
     }
+    // 마음을 돌아보는 말은 하루를 정리하는 저녁에 조금 더 자주 건넨다.
+    if e.kind == "care" {
+        w = if hour >= 18 { 1.4 } else { 1.0 };
+    }
     if e.id == "daily-wrap-up" {
         w = if hour >= 17 { 1.5 } else { 0.1 };
     }
@@ -182,6 +209,11 @@ pub fn pick_advice(recent: &[String], boosts: &HashMap<String, bool>, now: i64) 
     pool.last().map(|e| (*e).clone()).unwrap()
 }
 
+/// 캐릭터 AI가 바꿔 쓰지 않고 그대로 보여 줄 말 (상담 성격의 말, 출전이 있는 인용)
+pub fn verbatim_kind(kind: &str) -> bool {
+    matches!(kind, "care" | "quote")
+}
+
 pub fn remember_shown(recent: &[String], id: &str) -> Vec<String> {
     let mut next: Vec<String> = recent.iter().filter(|x| *x != id).cloned().collect();
     next.push(id.into());
@@ -203,6 +235,22 @@ mod tests {
         assert_eq!(dnd_span_minutes(&json!({ "start": "23:00", "end": "08:00" })), 540);
         assert!(in_dnd(&json!({ "start": "23:00", "end": "08:00" }), 60));
         assert!(!in_dnd(&json!({ "start": "23:00", "end": "08:00" }), 12 * 60));
+    }
+
+    #[test]
+    fn care_lines_are_short_safe_and_said_as_written() {
+        let care: Vec<&Entry> = LIBRARY.iter().filter(|e| e.kind == "care").collect();
+        assert!(care.len() >= 12);
+        let mut ids = std::collections::HashSet::new();
+        for e in &care {
+            assert!(ids.insert(&e.id), "duplicate id {}", e.id);
+            assert!(e.text.chars().count() <= 60, "{}", e.text);
+            assert!(!crate::language::analyze_language(&e.text).profanity, "{}", e.text);
+            assert!(verbatim_kind(e.kind));
+        }
+        assert!(!verbatim_kind("daily") && !verbatim_kind("teamwork") && verbatim_kind("quote"));
+        // Evening leans toward reflecting on the day.
+        assert!(weight_of(care[0], &HashMap::new(), 20) > weight_of(care[0], &HashMap::new(), 10));
     }
 
     #[test]

@@ -8,6 +8,7 @@ use sai_core::{
     ai::Ai,
     chat::Chat,
     google::Google,
+    local_ai::LocalAi,
     store::{Store, Stores},
     team::Hub,
     time::now_ms,
@@ -38,6 +39,8 @@ pub struct App {
     pub stores: Stores,
     pub google: Google,
     pub ai: Arc<Ai>,
+    /// 이 PC에서 도는 캐릭터 AI (llama.cpp). 받기 전에는 아무것도 실행하지 않는다.
+    pub local_ai: Arc<LocalAi>,
     pub chat: Chat,
     pub cat: Mutex<CatState>,
     pub advisor: Advisor,
@@ -73,6 +76,10 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         Arc::new(now_ms),
     );
     let workspace = app.clone();
+    let local_root = preview
+        .clone()
+        .unwrap_or(app.path().app_local_data_dir()?)
+        .join("local-ai");
     let google = Google::new(
         stores.settings.clone(),
         stores.google_connection.clone(),
@@ -86,6 +93,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         Arc::new(move || return_to_workspace(&workspace)),
     );
     let ai = Arc::new(Ai::new(stores.settings.clone()));
+    let local_ai = Arc::new(LocalAi::new(local_root, stores.settings.clone()));
     let chat = Chat::new(
         stores.private_conv.clone(),
         stores.settings.clone(),
@@ -96,6 +104,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         stores,
         google,
         ai,
+        local_ai,
         chat,
         cat: Mutex::new(CatState::new()),
         advisor: Advisor::new(),

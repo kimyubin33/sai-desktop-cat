@@ -225,6 +225,44 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
         | "files:discard-import"
         | "files:open"
         | "files:cancel" => crate::file_transfer::command(a, win, ch, x).await,
+        "local-ai:status" => Ok(a.local_ai.status()),
+        "local-ai:install" => {
+            // Runs in the background; the settings card follows `local-ai:progress` events.
+            let a2 = a.clone();
+            tauri::async_runtime::spawn(async move {
+                let handle = a2.handle.clone();
+                let notify = move |status: Value| {
+                    let _ = handle.emit_to("chat", "local-ai:progress", status);
+                };
+                if a2.local_ai.install(&notify).await.is_ok() {
+                    let _ = a2.local_ai.set_enabled(true);
+                }
+                let _ = a2
+                    .handle
+                    .emit_to("chat", "local-ai:progress", a2.local_ai.status());
+            });
+            Ok(a.local_ai.status())
+        }
+        "local-ai:cancel" => {
+            a.local_ai.cancel_install();
+            ok()
+        }
+        "local-ai:enable" => {
+            a.local_ai.set_enabled(x["on"].as_bool().unwrap_or(false))?;
+            if !a.local_ai.enabled() {
+                a.local_ai.stop().await;
+            }
+            Ok(a.local_ai.status())
+        }
+        "local-ai:remove" => {
+            a.local_ai.remove().await?;
+            Ok(a.local_ai.status())
+        }
+        "local-ai:try" => {
+            a.advisor
+                .speak(a, sai_core::local_ai::character::Trigger::Asked);
+            ok()
+        }
         "teams:status" => a.google.team_status().await,
         "teams:browse" => {
             a.google
