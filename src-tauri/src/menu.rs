@@ -67,7 +67,7 @@ pub fn refresh_tray(app: &AppHandle, a: &Arc<App>) {
 pub fn on_event(app: &AppHandle, a: &Arc<App>, e: MenuEvent) {
     let id = e.id().as_ref().to_string();
     match id.as_str() {
-        "chat" => open_chat(app, a, "chat", json!({})),
+        "chat" => open_chat(app, a, "chat"),
         "speak" => {
             cat::hide_bubble(app, a);
             a.advisor.speak_now(a);
@@ -76,9 +76,9 @@ pub fn on_event(app: &AppHandle, a: &Arc<App>, e: MenuEvent) {
             let q = a.stores.settings.read(|s| s.i("quietUntil")) > now_ms();
             quiet_for(app, a, if q { 0 } else { 60 });
         }
-        "files" => open_chat(app, a, "drive", json!({})),
-        "collab" => open_chat(app, a, "collab", json!({})),
-        "settings" => open_chat(app, a, "settings", json!({})),
+        "files" => open_chat(app, a, "drive"),
+        "collab" => open_chat(app, a, "collab"),
+        "settings" => open_chat(app, a, "settings"),
         "update" => {
             if a.updater.is_ready() {
                 a.updater.install(a);

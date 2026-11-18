@@ -1,7 +1,7 @@
 //! 화면 요소를 만드는 작은 도우미. 예전 화면 코드의 el(tag, attrs, ...children) 와 같은 방식이다.
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, Event, HtmlElement, HtmlInputElement, HtmlSelectElement, HtmlTextAreaElement, Node, Window};
+use web_sys::{Document, Element, Event, HtmlElement, HtmlInputElement, HtmlSelectElement, HtmlTextAreaElement, Window};
 
 pub fn window() -> Window {
     web_sys::window().unwrap()
@@ -50,29 +50,8 @@ impl El {
     pub fn click(self, f: impl FnMut(Event) + 'static) -> Self {
         self.on("click", f)
     }
-    pub fn child(self, c: impl Into<Node>) -> Self {
-        let _ = self.0.append_child(&c.into());
-        self
-    }
     pub fn kid(self, c: El) -> Self {
         let _ = self.0.append_child(&c.0);
-        self
-    }
-    pub fn maybe(self, c: Option<El>) -> Self {
-        match c {
-            Some(c) => self.kid(c),
-            None => self,
-        }
-    }
-    pub fn kids(self, list: impl IntoIterator<Item = El>) -> Self {
-        for c in list {
-            let _ = self.0.append_child(&c.0);
-        }
-        self
-    }
-    /// 글자 조각 붙이기
-    pub fn txt(self, s: &str) -> Self {
-        let _ = self.0.append_child(&document().create_text_node(s));
         self
     }
     pub fn node(&self) -> &HtmlElement {
@@ -80,12 +59,6 @@ impl El {
     }
     pub fn build(self) -> HtmlElement {
         self.0
-    }
-}
-
-impl From<El> for Node {
-    fn from(e: El) -> Node {
-        e.0.into()
     }
 }
 
@@ -193,23 +166,8 @@ pub fn field(form: &Element, name: &str) -> Element {
     form.query_selector(&format!("[name=\"{name}\"]")).ok().flatten().unwrap_or_else(|| document().create_element("input").unwrap())
 }
 
-pub fn scroll_into_view(e: &Element, smooth: bool) {
-    let o = web_sys::ScrollIntoViewOptions::new();
-    if smooth {
-        o.set_behavior(web_sys::ScrollBehavior::Smooth);
-    }
-    o.set_block(web_sys::ScrollLogicalPosition::Nearest);
-    e.scroll_into_view_with_scroll_into_view_options(&o);
-}
-
 pub fn spawn(f: impl std::future::Future<Output = ()> + 'static) {
     wasm_bindgen_futures::spawn_local(f);
-}
-
-/// ms 뒤에 한 번
-pub fn after(ms: i32, f: impl FnOnce() + 'static) {
-    let c = Closure::once_into_js(f);
-    let _ = window().set_timeout_with_callback_and_timeout_and_arguments_0(c.unchecked_ref(), ms);
 }
 
 /// ms 마다. 돌려주는 값으로 멈출 수 있다
@@ -220,21 +178,6 @@ pub fn every(ms: i32, f: impl FnMut() + 'static) -> i32 {
     id
 }
 
-pub fn stop(id: i32) {
-    window().clear_interval_with_handle(id);
-}
-
-pub async fn sleep(ms: i32) {
-    let p = js_sys::Promise::new(&mut |res, _| {
-        let _ = window().set_timeout_with_callback_and_timeout_and_arguments_0(&res, ms);
-    });
-    let _ = wasm_bindgen_futures::JsFuture::from(p).await;
-}
-
-pub fn now() -> f64 {
-    js_sys::Date::now()
-}
-
 /// 주소의 ?tab=… 값
 pub fn query_param(k: &str) -> Option<String> {
     let s = window().location().search().ok()?;
@@ -243,8 +186,4 @@ pub fn query_param(k: &str) -> Option<String> {
 
 pub fn event_target(e: &Event) -> Option<Element> {
     e.target().and_then(|t| t.dyn_into::<Element>().ok())
-}
-
-pub fn prevent(e: &Event) {
-    e.prevent_default();
 }

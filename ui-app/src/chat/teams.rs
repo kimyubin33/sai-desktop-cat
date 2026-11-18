@@ -1,4 +1,4 @@
-use super::{b, profile, s};
+use super::{arr, b, profile, s};
 use crate::{api::call, dom::*};
 use serde_json::{json, Value};
 use std::cell::Cell;
@@ -73,10 +73,10 @@ fn draw(v: &Value) {
         })
         .collect();
     clear(&list);
-    let rows = v["teams"].as_array().cloned().unwrap_or_default();
-    super::collab::teams(&rows);
-    super::files::teams_changed(&rows);
-    for team in &rows {
+    let rows = arr(v, "teams");
+    super::collab::teams(rows);
+    super::files::teams_changed(rows);
+    for team in rows {
         let fid = s(team, "folderId");
         let epoch = EPOCH.with(Cell::get);
         let verified = b(team, "accessVerified");

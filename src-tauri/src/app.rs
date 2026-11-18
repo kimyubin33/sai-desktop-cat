@@ -128,7 +128,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
                 ..
             } = e
             {
-                open_chat(tray.app_handle(), &a_click, "drive", json!({}));
+                open_chat(tray.app_handle(), &a_click, "drive");
             }
         })
         .build(app)?;
@@ -182,31 +182,20 @@ fn return_to_workspace(app: &AppHandle) {
             let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
         }
     } else if let Some(a) = app.try_state::<Arc<App>>() {
-        open_chat(app, a.inner(), "drive", json!({}));
+        open_chat(app, a.inner(), "drive");
     }
 }
 
-pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {
+pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str) {
     cat::hide_bubble(app, a);
     if let Some(w) = app.get_webview_window("chat") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
         let _ = app.emit_to("chat", "chat:show-tab", tab);
-        if let Some(t) = extra.os("explain") {
-            let _ = app.emit_to("chat", "chat:start-explain", t);
-        }
-        if let Some(t) = extra.os("task") {
-            let _ = app.emit_to("chat", "chat:focus-task", t);
-        }
         return;
     }
-    let mut q = format!("chat/index.html?tab={tab}");
-    for k in ["explain", "task"] {
-        if let Some(v) = extra.os(k) {
-            q.push_str(&format!("&{k}={}", sai_core::util::take_chars(&v, 100)));
-        }
-    }
+    let url = format!("chat/index.html?tab={tab}");
     // 창 만들기는 메뉴·트레이 이벤트 처리 안에서 바로 하면 Windows 에서 멈춘다 (WebView2 교착, tauri#4121).
     // 그래서 따로 떨어진 작업으로 넘겨 만든다.
     let app = app.clone();
@@ -214,7 +203,7 @@ pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {
         if app.get_webview_window("chat").is_some() {
             return;
         }
-        match create_workspace(&app, q) {
+        match create_workspace(&app, url) {
             Ok(window) => {
                 let _ = window.show();
                 let _ = window.set_focus();

@@ -1,5 +1,5 @@
 //! 고양이 행동 상태 기계
-//! 상태: sit(앉기) / walk(걷기) / loaf(식빵 자세로 쉬기) / sleep(잠자기) / talk(말하는 중) / drag(들려 있음)
+//! 상태: sit(앉기) / walk(걷기) / loaf(식빵 자세로 쉬기) / talk(말하는 중) / drag(들려 있음)
 use rand::Rng;
 
 pub const WALK_SPEED: f64 = 55.0; // px/초
@@ -9,7 +9,6 @@ pub struct CatBehavior {
     pub max_x: f64,
     pub x: f64,
     pub state: &'static str,
-    pub facing: i32, // 1: 오른쪽, -1: 왼쪽
     timer: f64,
     target_x: f64,
     /// 조용한 모드일 때는 덜 돌아다닌다
@@ -22,7 +21,7 @@ fn between(a: f64, b: f64) -> f64 {
 
 impl CatBehavior {
     pub fn new(min_x: f64, max_x: f64, x: f64) -> Self {
-        CatBehavior { min_x, max_x, x, state: "sit", facing: 1, timer: 3000.0, target_x: x, calm: false }
+        CatBehavior { min_x, max_x, x, state: "sit", timer: 3000.0, target_x: x, calm: false }
     }
 
     pub fn set_bounds(&mut self, min_x: f64, max_x: f64) {
@@ -32,41 +31,30 @@ impl CatBehavior {
     }
 
     /// 다음 상태를 고른다. 오래 움직였으면 쉬고, 쉬었으면 움직인다.
-    fn pick_next(&mut self) {
-        let r: f64 = rand::thread_rng().gen();
+    fn pick_next(&mut self, roll: f64) {
         let next = match self.state {
             "walk" => {
-                if r < 0.6 {
+                if roll < 0.7 {
                     "sit"
-                } else if r < 0.9 {
+                } else {
                     "loaf"
-                } else {
-                    "sleep"
-                }
-            }
-            "sleep" => {
-                if r < 0.7 {
-                    "sit"
-                } else {
-                    "walk"
                 }
             }
             "loaf" => {
-                if r < 0.5 {
-                    "sleep"
-                } else if r < 0.8 {
+                if roll < 0.8 {
                     "sit"
                 } else {
                     "walk"
                 }
             }
             _ => {
-                if r < if self.calm { 0.3 } else { 0.55 } {
+                let walk_chance = if self.calm { 0.3 } else { 0.55 };
+                if roll < walk_chance {
                     "walk"
-                } else if r < 0.85 {
+                } else if roll < 0.85 {
                     "loaf"
                 } else {
-                    "sleep"
+                    "sit"
                 }
             }
         };
@@ -88,12 +76,10 @@ impl CatBehavior {
                     dir = -1.0;
                 }
                 self.target_x = (self.x + dir * dist).clamp(self.min_x, self.max_x);
-                self.facing = if self.target_x >= self.x { 1 } else { -1 };
                 self.timer = f64::INFINITY;
             }
             "sit" => self.timer = between(2500.0, 6000.0),
             "loaf" => self.timer = between(5000.0, 10000.0),
-            "sleep" => self.timer = between(12000.0, 30000.0),
             _ => self.timer = f64::INFINITY, // talk, drag 는 바깥에서 끝낸다
         }
     }
@@ -130,7 +116,7 @@ impl CatBehavior {
             let remain = self.target_x - self.x;
             if remain.abs() <= step {
                 self.x = self.target_x;
-                self.pick_next();
+                self.pick_next(rand::thread_rng().gen());
             } else {
                 self.x += remain.signum() * step;
             }
@@ -138,7 +124,7 @@ impl CatBehavior {
         }
         self.timer -= dt;
         if self.timer <= 0.0 {
-            self.pick_next();
+            self.pick_next(rand::thread_rng().gen());
         }
         false
     }
@@ -147,6 +133,28 @@ impl CatBehavior {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_transitions_keep_sitting_walking_and_resting_in_both_modes() {
+        let mut b = CatBehavior::new(0.0, 500.0, 250.0);
+        for calm in [false, true] {
+            b.calm = calm;
+            let from_sit = if calm { "loaf" } else { "walk" };
+            for (state, roll, expected) in [
+                ("sit", 0.2, "walk"),
+                ("sit", 0.4, from_sit),
+                ("sit", 0.95, "sit"),
+                ("walk", 0.4, "sit"),
+                ("walk", 0.95, "loaf"),
+                ("loaf", 0.2, "sit"),
+                ("loaf", 0.95, "walk"),
+            ] {
+                b.enter(state);
+                b.pick_next(roll);
+                assert_eq!(b.state, expected);
+            }
+        }
+    }
 
     #[test]
     fn walks_within_bounds() {

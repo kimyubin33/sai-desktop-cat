@@ -5,9 +5,7 @@ use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wasm_bindgen::JsCast;
-use web_sys::{
-    CanvasRenderingContext2d, DomRect, HtmlCanvasElement, HtmlImageElement, PointerEvent,
-};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement, PointerEvent};
 
 const MASK_SIZE: u32 = 32;
 const HIT_ALPHA: u8 = 24;
@@ -16,7 +14,6 @@ const HIT_ALPHA: u8 = 24;
 struct Desktop {
     mask: Vec<Span>,
     bubble: Option<Value>,
-    reaction_until: f64,
     last_regions: Vec<[f64; 4]>,
 }
 
@@ -27,16 +24,25 @@ struct Span {
 }
 
 impl Span {
-    fn rect(&self, bounds: &DomRect) -> [f64; 4] {
-        let step_x = bounds.width() / f64::from(MASK_SIZE);
-        let step_y = bounds.height() / f64::from(MASK_SIZE);
+    fn rect(&self, [left, top, step_x, step_y]: [f64; 4]) -> [f64; 4] {
         [
-            bounds.left() + f64::from(self.start) * step_x,
-            bounds.top() + f64::from(self.y) * step_y,
+            left + f64::from(self.start) * step_x,
+            top + f64::from(self.y) * step_y,
             f64::from(self.end - self.start) * step_x,
             step_y,
         ]
     }
+}
+
+fn mask_grid(image: &HtmlImageElement) -> [f64; 4] {
+    let bounds = image.get_bounding_client_rect();
+    let size = f64::from(MASK_SIZE);
+    [
+        bounds.left(),
+        bounds.top(),
+        bounds.width() / size,
+        bounds.height() / size,
+    ]
 }
 
 /// Read the character image once so clicks pass through its transparent edges.
@@ -70,8 +76,6 @@ pub fn start() {
     let cat = by_id("cat").unwrap();
     let mark: HtmlImageElement = by_id("companionMark").unwrap().unchecked_into();
     let bubble = by_id("bubble").unwrap();
-    let zz = by_id("zz").unwrap();
-    let reaction = by_id("reaction").unwrap();
     let desktop = Rc::new(RefCell::new(Desktop::default()));
 
     if mark.complete() {
@@ -84,40 +88,10 @@ pub fn start() {
     }
 
     {
-        let (desktop, cat) = (desktop.clone(), cat.clone());
-        listen("cat:reaction", move |event| {
-            let (pose, line) = match event["pose"].as_str() {
-                Some("dizzy") => ("dizzy", "어지러..."),
-                Some("hurt") => ("hurt", "아야!"),
-                _ => return,
-            };
-            let until = now() + 1300.0;
-            desktop.borrow_mut().reaction_until = until;
-            let _ = cat.set_attribute("data-reaction", pose);
-            reaction.set_text_content(Some(line));
-            toggle(
-                &reaction,
-                "below",
-                event["below"].as_bool().unwrap_or(false),
-            );
-            toggle(&reaction, "left", event["left"].as_bool().unwrap_or(false));
-            reaction.set_hidden(false);
-
-            let (desktop, cat, reaction) = (desktop.clone(), cat.clone(), reaction.clone());
-            after(1300, move || {
-                if desktop.borrow().reaction_until == until {
-                    let _ = cat.remove_attribute("data-reaction");
-                    reaction.set_hidden(true);
-                }
-            });
-        });
-    }
-    {
         let cat = cat.clone();
         listen("cat:state", move |event| {
             let state = event["state"].as_str().unwrap_or("sit");
             let _ = cat.set_attribute("data-state", state);
-            toggle(&zz, "hidden", state != "sleep");
         });
     }
     {
@@ -155,22 +129,16 @@ pub fn start() {
     }
     {
         let (desktop, mark, bubble) = (desktop.clone(), mark.clone(), bubble.clone());
+        let mut regions = Vec::new();
         every(150, move || {
             let mut desktop = desktop.borrow_mut();
-            let bounds = mark.get_bounding_client_rect();
-            let mut regions = desktop
-                .mask
-                .iter()
-                .map(|span| {
-                    let [x, y, w, h] = span.rect(&bounds);
-                    [
-                        x.floor(),
-                        y.floor(),
-                        (x + w).ceil() - x.floor(),
-                        (y + h).ceil() - y.floor(),
-                    ]
-                })
-                .collect::<Vec<_>>();
+            let grid = mask_grid(&mark);
+            regions.clear();
+            regions.extend(desktop.mask.iter().map(|span| {
+                let [x, y, w, h] = span.rect(grid);
+                let (left, top) = (x.floor(), y.floor());
+                [left, top, (x + w).ceil() - left, (y + h).ceil() - top]
+            }));
             if !has_class(&bubble, "hidden") {
                 let bounds = bubble.get_bounding_client_rect();
                 regions.push([bounds.left(), bounds.top(), bounds.width(), bounds.height()]);
@@ -185,7 +153,7 @@ pub fn start() {
                             .collect(),
                     ),
                 );
-                desktop.last_regions = regions;
+                std::mem::swap(&mut desktop.last_regions, &mut regions);
             }
         });
     }
@@ -228,11 +196,11 @@ pub fn start() {
                 return;
             }
             let desktop = desktop.borrow();
-            let bounds = mark.get_bounding_client_rect();
+            let grid = mask_grid(&mark);
             let px = f64::from(pointer.client_x());
             let py = f64::from(pointer.client_y());
             if !desktop.mask.iter().any(|span| {
-                let [x, y, w, h] = span.rect(&bounds);
+                let [x, y, w, h] = span.rect(grid);
                 px >= x && px < x + w && py >= y && py < y + h
             }) {
                 return;

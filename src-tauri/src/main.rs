@@ -26,7 +26,7 @@ fn main() {
                 // 이미 켜져 있으면 새로 켜지 않고 대화창을 연다
                 .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
                     if let Some(a) = app.try_state::<Arc<app::App>>() {
-                        app::open_chat(app, a.inner(), "drive", serde_json::json!({}));
+                        app::open_chat(app, a.inner(), "drive");
                     }
                 }))
         }

@@ -69,7 +69,7 @@ async fn send_text(text: String) {
                     w.remove();
                 }
                 for r in arr(&v, "replies") {
-                    add("cat", &s(&r, "text"));
+                    add("cat", &s(r, "text"));
                 }
             }
             Err(e) => {
@@ -100,7 +100,7 @@ async fn send_text(text: String) {
         Ok(v) => {
             typing.remove();
             for reply in arr(&v, "replies") {
-                add("cat", &s(&reply, "text"));
+                add("cat", &s(reply, "text"));
             }
         }
         Err(e) => {
@@ -139,13 +139,14 @@ fn date(v: &Value) -> String {
 async fn history() {
     let root = by_id("sessions").unwrap();
     clear(&root);
-    let list = match call("chat:list", Value::Null).await {
-        Ok(v) => v.as_array().cloned().unwrap_or_default(),
+    let response = match call("chat:list", Value::Null).await {
+        Ok(v) => v,
         Err(e) => {
             let _ = root.append_child(&el("p").cls("history-empty").text(&e).0);
             return;
         }
     };
+    let list = response.as_array().map(Vec::as_slice).unwrap_or_default();
     if list.is_empty() {
         let _ = root.append_child(
             &el("p")
@@ -155,15 +156,15 @@ async fn history() {
         );
     }
     for item in list {
-        let id = s(&item, "id");
+        let id = s(item, "id");
         let e = el("button")
             .cls("history-item")
             .kid(el("strong").text(&format!(
                 "{} · {}",
                 date(&item["startedAt"]),
-                s(&item, "modeLabel")
+                s(item, "modeLabel")
             )))
-            .kid(el("span").text(&s(&item, "preview")))
+            .kid(el("span").text(&s(item, "preview")))
             .click(move |_| {
                 let id = id.clone();
                 spawn(async move {
@@ -173,7 +174,7 @@ async fn history() {
                     match call("chat:get", json!(id)).await {
                         Ok(v) => {
                             for turn in arr(&v, "turns") {
-                                let role = if s(&turn, "role") == "user" {
+                                let role = if s(turn, "role") == "user" {
                                     "user"
                                 } else {
                                     "cat"
@@ -181,7 +182,7 @@ async fn history() {
                                 let _ = view.append_child(
                                     &el("div")
                                         .cls(&format!("msg {role}"))
-                                        .text(&s(&turn, "text"))
+                                        .text(&s(turn, "text"))
                                         .0,
                                 );
                             }

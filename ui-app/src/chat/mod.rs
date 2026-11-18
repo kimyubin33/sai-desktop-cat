@@ -23,8 +23,8 @@ pub fn b(v: &Value, key: &str) -> bool {
 pub(super) fn confirm_team_ai_connection() -> bool {
     confirm("Google 접근 토큰(Drive 전체 권한)을 사이 팀 AI 서비스에 전달해 팀 권한을 확인합니다.\n\n동의는 이 기기의 계정·서비스별로 저장합니다. 파일 본문은 분석할 때 따로 확인합니다.\n\n연결할까요?")
 }
-pub fn arr(v: &Value, key: &str) -> Vec<Value> {
-    v[key].as_array().cloned().unwrap_or_default()
+pub fn arr<'a>(v: &'a Value, key: &str) -> &'a [Value] {
+    v[key].as_array().map(Vec::as_slice).unwrap_or_default()
 }
 
 pub fn show_tab(tab: &str) {

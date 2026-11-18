@@ -80,7 +80,7 @@ impl Advisor {
             if silence_reason(&a.stores.settings.get(), now).is_none()
                 && !a.cat.lock().unwrap().is_busy()
             {
-                self.show(a, entry, None);
+                self.show(a, entry);
             }
         }
         if due {
@@ -111,7 +111,6 @@ impl Advisor {
         self.show(
             a,
             json!({ "id": "greet", "kind": "system", "text": format!("안녕! 내 이름은 {name}. 가끔 말을 걸게. 나를 클릭하면 편하게 이야기할 수 있어.") }),
-            None,
         );
     }
 
@@ -124,7 +123,7 @@ impl Advisor {
         a.stores
             .advice_history
             .update(|h| h["recent"] = json!(next));
-        self.show(a, entry_value(&e), None);
+        self.show(a, entry_value(&e));
     }
 
     pub fn notify_update(&self, a: &Arc<App>, version: &str) {
@@ -147,7 +146,6 @@ impl Advisor {
             a,
             json!({ "id": "update", "kind": "update", "text": format!("새 버전 {v} 준비됐어. 지금 다시 시작해서 적용할까?"), "sourceLabel": "— 사이 업데이트",
                     "actions": [act("update-later", "나중에", false), act("update-install", "지금 적용", true)] }),
-            None,
         );
         true
     }
@@ -155,20 +153,10 @@ impl Advisor {
     /// 업데이트 확인 결과 같은 짧은 안내
     pub fn info(&self, a: &Arc<App>, text: &str) {
         cat::hide_bubble(&a.handle, a);
-        self.show(a, json!({ "id": "info", "kind": "info", "text": text, "sourceLabel": "— 사이", "actions": [act("close", "확인", false)] }), None);
+        self.show(a, json!({ "id": "info", "kind": "info", "text": text, "sourceLabel": "— 사이", "actions": [act("close", "확인", false)] }));
     }
 
-    fn actions_for(&self, _a: &Arc<App>, e: &Value) -> Value {
-        if e["actions"].is_array() {
-            return e["actions"].clone();
-        }
-        json!([
-            act("later", "나중에", false),
-            act("chat", "AI와 이야기", true)
-        ])
-    }
-
-    fn show(&self, a: &Arc<App>, entry: Value, text: Option<&str>) -> bool {
+    fn show(&self, a: &Arc<App>, entry: Value) -> bool {
         let id = {
             let mut st = self.st.lock().unwrap();
             st.seq += 1;
@@ -176,9 +164,17 @@ impl Advisor {
             st.shown.insert(id.clone(), entry.clone());
             id
         };
+        let actions = if entry["actions"].is_array() {
+            entry["actions"].clone()
+        } else {
+            json!([
+                act("later", "나중에", false),
+                act("chat", "AI와 이야기", true)
+            ])
+        };
         let payload = json!({
-            "id": id, "text": text.map(String::from).unwrap_or_else(|| entry.s("text")), "sourceLabel": entry.s("sourceLabel"),
-            "topic": entry["topic"], "kind": entry.s("kind"), "actions": self.actions_for(a, &entry),
+            "id": id, "text": entry.s("text"), "sourceLabel": entry.s("sourceLabel"),
+            "topic": entry["topic"], "kind": entry.s("kind"), "actions": actions,
         });
         cat::show_bubble(&a.handle, a, payload)
     }
@@ -192,7 +188,7 @@ impl Advisor {
         }
         match action {
             "later" => self.st.lock().unwrap().later = Some((now_ms() + LATER_MS, entry)),
-            "chat" => open_chat(&a.handle, a, "chat", json!({})),
+            "chat" => open_chat(&a.handle, a, "chat"),
             "update-install" => {
                 self.st.lock().unwrap().pending_update = None;
                 a.updater.install(a);

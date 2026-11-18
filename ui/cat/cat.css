@@ -40,15 +40,10 @@ body {
   --lift: 4px;
 }
 
-#cat[data-state="loaf"],
-#cat[data-state="sleep"] {
+#cat[data-state="loaf"] {
   --period: 5.4s;
   --lift: 2px;
   --height: 0.88;
-}
-
-#cat[data-state="sleep"] #companionMark {
-  opacity: 0.40;
 }
 
 #cat[data-state="talk"] {
@@ -59,16 +54,10 @@ body {
 
 #cat[data-state="drag"] {
   cursor: grabbing;
-  --period: 1s;
-  --height: 1.06;
 }
 
-#cat[data-reaction="dizzy"] #companionMark {
-  animation: wobble 280ms ease-in-out 4;
-}
-
-#cat[data-reaction="hurt"] #companionMark {
-  animation: recoil 420ms ease-out;
+#cat[data-state="drag"] #companionMark {
+  animation: none;
 }
 
 @keyframes drift {
@@ -80,51 +69,11 @@ body {
   }
 }
 
-@keyframes wobble {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(3px); }
-  75% { transform: translateX(-3px); }
-}
-
-@keyframes recoil {
-  30% { transform: scale(1.06, 0.87); }
-  65% { transform: scale(0.98, 1.04); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  #cat #companionMark,
-  .zz {
+  #cat #companionMark {
     animation: none;
     transition: none;
   }
-}
-
-.reaction {
-  position: absolute;
-  z-index: 1;
-  left: 50%;
-  bottom: 96px;
-  transform: translateX(-50%);
-  padding: 4px 9px;
-  border: 2px solid #3b2f2f;
-  border-radius: 9px;
-  background: #fffaf2;
-  color: #3b2f2f;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.reaction.below {
-  left: calc(50% + 42px);
-  bottom: 28px;
-  transform: none;
-}
-
-.reaction.below.left {
-  left: auto;
-  right: calc(50% + 42px);
 }
 
 .bubble {
@@ -210,33 +159,4 @@ body {
   font-size: 16px;
   padding: 0 4px;
   color: #8a7468;
-}
-
-.zz {
-  position: absolute;
-  bottom: 70px;
-  left: calc(50% + 24px);
-  font-weight: bold;
-  color: #6b7fa8;
-  font-size: 14px;
-  animation: float 2.4s ease-in-out infinite;
-  pointer-events: none;
-}
-
-.zz.hidden {
-  display: none;
-}
-
-@keyframes float {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0) scale(0.8);
-  }
-  30% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(10px, -26px) scale(1.2);
-  }
 }

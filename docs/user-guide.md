@@ -4,7 +4,7 @@
 
 ## 시작하기
 
-1. Windows PC에 맞는 설치 파일을 받아 실행한 뒤 **Google →**을 누릅니다. ARM64 PC는 `Sai-Setup-1.0.1-arm64.exe`, x64 PC는 `Sai-Setup-1.0.1.exe`를 사용합니다. [사이 v1.0.1 다운로드](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.1)
+1. Windows PC에 맞는 설치 파일을 받아 실행한 뒤 **Google →**을 누릅니다. ARM64 PC는 `Sai-Setup-1.0.2-arm64.exe`, x64 PC는 `Sai-Setup-1.0.2.exe`를 사용합니다. [사이 v1.0.2 다운로드](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.2)
 2. 사용할 Google 계정으로 로그인하고 권한을 확인합니다.
 3. 브라우저에서 **사이로 돌아가기**를 누릅니다. 창이 보이지 않으면 작업 표시줄의 사이를 누릅니다.
 4. 기존 팀을 열거나 **팀 +**로 만들고, 초대받았다면 **참여**에서 연결합니다.
@@ -84,7 +84,7 @@ Calendar의 기본 공유 설정에 따라 일정이 다른 사람에게 보일 
 
 ## 자동 업데이트
 
-v1.0.0을 쓰고 있다면 v1.0.1을 한 번 직접 설치합니다. 이후 설치판은 실행 직후와 실행 중 3시간마다 새 v1 릴리스를 확인하고, 설치 파일을 내려받아 SHA-256 체크섬을 확인합니다. [사이 v1.0.1 다운로드](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.1)
+v1.0.0을 쓰고 있다면 최신 버전을 한 번 직접 설치합니다. v1.0.1 이상 설치판은 실행 직후와 실행 중 3시간마다 새 v1 릴리스를 확인하고, 설치 파일을 내려받아 SHA-256 체크섬을 확인합니다. [사이 v1.0.2 다운로드](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.2)
 
 **설정 → 업데이트 확인**으로 바로 확인할 수 있습니다. 준비가 끝나면 **적용하기**를 누르거나 작업 표시줄 알림 영역의 사이 메뉴에서 **종료**를 눌러 설치합니다.
 

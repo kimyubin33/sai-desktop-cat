@@ -1,4 +1,4 @@
-use super::{b, profile, s};
+use super::{arr, b, profile, s};
 use crate::{
     api::{call, listen},
     dom::*,
@@ -160,17 +160,17 @@ fn file_row(file: &Value) -> crate::dom::El {
 fn queue(v: &Value, can_retry: bool) {
     let root = by_id("uploadQueue").unwrap();
     clear(&root);
-    let rows = v.as_array().cloned().unwrap_or_default();
+    let rows = v.as_array().map(Vec::as_slice).unwrap_or_default();
     toggle(
         &by_id("uploadQueueSection").unwrap(),
         "hidden",
         rows.is_empty(),
     );
     for item in rows {
-        let operation = s(&item, "operation");
+        let operation = s(item, "operation");
         let discard = operation.clone();
-        let name = s(&item, "name");
-        let drive = s(&item, "origin") == "drive";
+        let name = s(item, "name");
+        let drive = s(item, "origin") == "drive";
         let retry_channel = if drive {
             "files:retry-import"
         } else {
@@ -193,11 +193,27 @@ fn queue(v: &Value, can_retry: bool) {
                     "이 PC에 보관한 사본"
                 }
             )));
-        let actions=el("div").cls("file-row-actions")
-                .kid(el("button").cls("subtle").attr("type","button").flag("disabled",!can_retry).text(if b(&item,"uncertain"){"결과 확인"}else if drive {"재시도"}else{"재시도"}).click(move |_|action(retry_channel,json!({"operation":operation}))))
-                .kid(el("button").cls("text-button").attr("type","button").text(if drive {"대기 삭제"}else{"대기 삭제"}).click(move |_|{
-                    if confirm(&format!("‘{name}’의 이 기기 전송 대기를 지울까요? 원본과 이미 저장된 Drive 사본은 유지돼요.")){action(discard_channel,json!({"operation":discard}));}
-                }));
+        let actions = el("div")
+            .cls("file-row-actions")
+            .kid(
+                el("button")
+                    .cls("subtle")
+                    .attr("type", "button")
+                    .flag("disabled", !can_retry)
+                    .text(if b(item, "uncertain") { "결과 확인" } else { "재시도" })
+                    .click(move |_| action(retry_channel, json!({"operation":operation}))),
+            )
+            .kid(
+                el("button")
+                    .cls("text-button")
+                    .attr("type", "button")
+                    .text("대기 삭제")
+                    .click(move |_| {
+                        if confirm(&format!("‘{name}’의 이 기기 전송 대기를 지울까요? 원본과 이미 저장된 Drive 사본은 유지돼요.")) {
+                            action(discard_channel, json!({"operation":discard}));
+                        }
+                    }),
+            );
         let row = el("article")
             .cls("file-row pending-file")
             .kid(info)
@@ -250,9 +266,8 @@ async fn load(more: bool) {
             set_disabled(&by_id("fileAnalyze").unwrap(), !error.is_empty());
             queue(&v["pending"], can_upload);
             let list = by_id("fileList").unwrap();
-            let rows = v["files"].as_array().cloned().unwrap_or_default();
-            for row in &rows {
-                if SEEN.with(|seen| seen.borrow_mut().insert(s(&row, "id"))) {
+            for row in arr(&v, "files") {
+                if SEEN.with(|seen| seen.borrow_mut().insert(s(row, "id"))) {
                     let _ = list.append_child(&file_row(row).build());
                 }
             }

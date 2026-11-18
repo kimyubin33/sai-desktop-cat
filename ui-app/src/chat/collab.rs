@@ -1,5 +1,5 @@
 //! Small shared board; server verifies account, Drive access, and edit heads.
-use super::{b, s};
+use super::{arr, b, s};
 use crate::{api::call, dom::*};
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
@@ -304,7 +304,7 @@ fn editor(entity: Value, heads: Value, conflict: bool) {
     let _ = by_id("collabTitle").unwrap().focus();
 }
 fn render(v: &Value) {
-    let items = v["items"].as_array().cloned().unwrap_or_default();
+    let items = arr(v, "items");
     let root = by_id("collabBoard").unwrap();
     clear(&root);
     for kind in ["project", "task"] {

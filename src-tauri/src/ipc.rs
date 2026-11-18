@@ -437,7 +437,6 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
             on_settings_changed(a);
             Ok(public_settings(a))
         }
-        "settings:reset-dampened" => ok(),
         "ai:set-key" => {
             readable(&a.stores.settings)?;
             a.ai.set_key(x.as_str().unwrap_or(""));

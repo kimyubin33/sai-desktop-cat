@@ -1,8 +1,6 @@
 //! 바탕화면 고양이 창: 작은 투명 창 자체가 화면 아래쪽(작업 표시줄 위)을 따라 움직인다.
 //! 투명한 부분은 클릭이 아래 창으로 통과하고, 고양이 그림과 말풍선 위에서만 마우스를 받는다.
 //! (마우스가 그 위에 있는지는 앱이 커서 위치를 읽어 직접 판단한다)
-mod gesture;
-use gesture::{Bounds, Flight, Trail};
 use crate::app::App;
 use sai_core::behavior::CatBehavior;
 use sai_core::time::now_ms;
@@ -30,7 +28,6 @@ struct Drag {
     win: (f64, f64),
     at: i64,
     moved: bool,
-    trail: Trail,
 }
 
 pub struct CatState {
@@ -40,11 +37,10 @@ pub struct CatState {
     scale: f64,
     floor_y: f64,
     drag: Option<Drag>,
-    fall: Option<Flight>,
     pub bubble: Option<Value>,
     bubble_until: i64,
     bubble_hovered: bool,
-    last_sent: String,
+    last_sent: &'static str,
     interactive: bool,
     regions: Vec<Rect>,
     pub visible: bool,
@@ -59,11 +55,10 @@ impl CatState {
             scale: 1.0,
             floor_y: 0.0,
             drag: None,
-            fall: None,
             bubble: None,
             bubble_until: 0,
             bubble_hovered: false,
-            last_sent: String::new(),
+            last_sent: "",
             interactive: false,
             regions: vec![],
             visible: true,
@@ -73,19 +68,6 @@ impl CatState {
 
     fn win_size(&self) -> (f64, f64) {
         (WIN_W * self.scale, WIN_H * self.scale)
-    }
-
-    fn flight_bounds(&self) -> Bounds {
-        // 투명 창은 280px이지만 그림은 아래 중앙의 96px 캔버스 안에 있다.
-        // 벽에 닿는 위치는 창 가장자리가 아닌 들린 고양이의 실루엣을 기준으로 잡는다.
-        let inset_x = ((WIN_W - 96.0) * 0.5 + 12.0) * self.scale;
-        let left = self.area.0 - inset_x;
-        Bounds {
-            left,
-            right: (self.area.0 + self.area.2 - WIN_W * self.scale + inset_x).max(left),
-            top: (self.area.1 - (WIN_H - 96.0 + 6.0) * self.scale).min(self.floor_y),
-            floor: self.floor_y,
-        }
     }
 
     /// 고양이 창이 다닐 수 있는 가로 범위와 바닥 높이
@@ -98,7 +80,7 @@ impl CatState {
     }
 
     pub fn is_busy(&self) -> bool {
-        self.drag.is_some() || self.fall.is_some() || self.bubble.is_some()
+        self.drag.is_some() || self.bubble.is_some()
     }
 }
 
@@ -150,7 +132,7 @@ pub fn create(app: &tauri::AppHandle, a: &Arc<App>) -> tauri::Result<()> {
         builder
     };
     let w = builder.build()?;
-    place(app, &a.cat.lock().unwrap());
+    place(&w, &a.cat.lock().unwrap());
     let _ = w.show();
     // 창이 화면에 나온 뒤에 클릭 통과를 켠다 (Linux 에서는 그 전에 켜면 멈춘다)
     let _ = w.set_ignore_cursor_events(true);
@@ -160,28 +142,26 @@ pub fn create(app: &tauri::AppHandle, a: &Arc<App>) -> tauri::Result<()> {
     let a2 = a.clone();
     tauri::async_runtime::spawn(async move {
         let mut iv = tokio::time::interval(Duration::from_millis(TICK_MS));
+        iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             iv.tick().await;
-            tick(&app2, &a2);
+            tick(&app2, &a2, &w);
         }
     });
     Ok(())
 }
 
-fn place(app: &tauri::AppHandle, c: &CatState) {
-    place_at(app, c.behavior.x, c.floor_y);
+fn place(w: &WebviewWindow, c: &CatState) {
+    place_at(w, c.behavior.x, c.floor_y);
 }
 
-fn place_at(app: &tauri::AppHandle, x: f64, y: f64) {
-    if let Some(w) = win(app) {
-        let _ = w.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
-    }
+fn place_at(w: &WebviewWindow, x: f64, y: f64) {
+    let _ = w.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 
-fn tick(app: &tauri::AppHandle, a: &Arc<App>) {
+fn tick(app: &tauri::AppHandle, a: &Arc<App>, w: &WebviewWindow) {
     let now = now_ms();
     let mut timeout_bubble: Option<String> = None;
-    let mut save_pos = false;
     {
         let mut c = a.cat.lock().unwrap();
         let dt = (now - c.last_tick).clamp(0, 100) as f64;
@@ -191,45 +171,24 @@ fn tick(app: &tauri::AppHandle, a: &Arc<App>) {
         }
         let cursor = app.cursor_position().ok().map(|p| (p.x, p.y));
 
-        if c.drag.is_some() {
+        let scale = c.scale;
+        if let Some(drag) = &mut c.drag {
             if let Some((cx, cy)) = cursor {
-                let scale = c.scale;
-                let (dx, dy, wx, wy, moved, shook) = {
-                    let d = c.drag.as_mut().unwrap();
-                    let shook = d.trail.sample(now, (cx, cy), scale);
-                    (cx - d.cursor.0, cy - d.cursor.1, d.win.0, d.win.1, d.moved, shook)
-                };
-                if !moved && (dx * dx + dy * dy).sqrt() > 5.0 * c.scale {
-                    c.drag.as_mut().unwrap().moved = true;
-                    c.fall = None;
+                let (dx, dy) = (cx - drag.cursor.0, cy - drag.cursor.1);
+                let position = (drag.win.0 + dx, drag.win.1 + dy);
+                let started = !drag.moved && dx.hypot(dy) > 5.0 * scale;
+                drag.moved |= started;
+                let moved = drag.moved;
+                if started {
                     hide_bubble_locked(app, &mut c);
                     c.behavior.start_drag();
                 }
-                if shook {
-                    send_reaction(app, &c, "dizzy", wx + dx, wy + dy);
+                if moved {
+                    place_at(w, position.0, position.1);
                 }
-                if c.drag.as_ref().unwrap().moved {
-                    place_at(app, wx + dx, wy + dy);
-                }
-            }
-        } else if c.fall.is_some() {
-            let scale = c.scale;
-            let bounds = c.flight_bounds();
-            let f = c.fall.as_mut().unwrap();
-            let (hurt, landed) = f.step(dt, scale, bounds);
-            let (fx, fy) = (f.x, f.y);
-            place_at(app, fx, fy);
-            if hurt {
-                send_reaction(app, &c, "hurt", fx, fy);
-            }
-            if landed {
-                c.behavior.end_drag(fx);
-                c.fall = None;
-                place(app, &c);
-                save_pos = true;
             }
         } else if c.behavior.tick(dt) {
-            place(app, &c);
+            place(w, &c);
         }
 
         // 말풍선은 15초 뒤 저절로 닫힌다 (마우스를 올려 두면 기다린다)
@@ -243,9 +202,9 @@ fn tick(app: &tauri::AppHandle, a: &Arc<App>) {
         }
 
         // 마우스가 고양이·말풍선 위에 있을 때만 클릭을 받는다
-        if let (Some((cx, cy)), Some(w)) = (cursor, win(app)) {
+        if let Some((cx, cy)) = cursor {
             if let Ok(pos) = w.outer_position() {
-                let (rx, ry) = ((cx - pos.x as f64) / c.scale, (cy - pos.y as f64) / c.scale);
+                let (rx, ry) = ((cx - pos.x as f64) / scale, (cy - pos.y as f64) / scale);
                 let over = c.regions.iter().any(|r| rx >= r.x && rx <= r.x + r.w && ry >= r.y && ry <= r.y + r.h);
                 let want = over || c.drag.is_some();
                 if want != c.interactive {
@@ -256,27 +215,18 @@ fn tick(app: &tauri::AppHandle, a: &Arc<App>) {
         }
         send_state(app, &mut c, false);
     }
-    if save_pos {
-        save_position(a);
-    }
     if let Some(id) = timeout_bubble {
         a.advisor.handle_action(a, &id, "timeout");
     }
 }
 
-fn send_reaction(app: &tauri::AppHandle, c: &CatState, pose: &str, x: f64, y: f64) {
-    let below = y + (WIN_H - 128.0) * c.scale < c.area.1;
-    let left = x + WIN_W * c.scale * 0.5 > c.area.0 + c.area.2 * 0.5;
-    let _ = app.emit_to("cat", "cat:reaction", json!({ "pose": pose, "below": below, "left": left }));
-}
-
 fn send_state(app: &tauri::AppHandle, c: &mut CatState, force: bool) {
-    let key = format!("{}{}", c.behavior.state, c.behavior.facing);
-    if !force && key == c.last_sent {
+    let state = c.behavior.state;
+    if !force && state == c.last_sent {
         return;
     }
-    c.last_sent = key;
-    let _ = app.emit_to("cat", "cat:state", json!({ "state": c.behavior.state, "facing": c.behavior.facing, "x": c.behavior.x.round() }));
+    c.last_sent = state;
+    let _ = app.emit_to("cat", "cat:state", json!({ "state": state }));
 }
 
 fn save_position(a: &Arc<App>) {
@@ -302,28 +252,30 @@ pub fn drag_start(app: &tauri::AppHandle, a: &Arc<App>) {
     let Ok(pos) = w.outer_position() else { return };
     let Ok(cur) = app.cursor_position() else { return };
     let mut c = a.cat.lock().unwrap();
-    let at = now_ms();
-    let cursor = (cur.x, cur.y);
-    c.drag = Some(Drag { cursor, win: (pos.x as f64, pos.y as f64), at, moved: false, trail: Trail::new(at, cursor) });
+    c.drag = Some(Drag {
+        cursor: (cur.x, cur.y),
+        win: (pos.x as f64, pos.y as f64),
+        at: now_ms(),
+        moved: false,
+    });
 }
 
 pub fn drag_end(app: &tauri::AppHandle, a: &Arc<App>, cancelled: bool) {
-    let clicked;
-    {
+    let window = win(app);
+    let (clicked, moved) = {
         let mut c = a.cat.lock().unwrap();
         let Some(mut d) = c.drag.take() else { return };
-        let now = now_ms();
         let cursor = app.cursor_position().ok();
-        let mut released_at = d.win;
-        if let Some(cur) = cursor.as_ref() {
+        let released_x = if let Some(cur) = cursor.as_ref() {
             let (dx, dy) = (cur.x - d.cursor.0, cur.y - d.cursor.1);
             d.moved |= dx.hypot(dy) > 5.0 * c.scale;
-            released_at = (d.win.0 + dx, d.win.1 + dy);
-            d.trail.sample(now, (cur.x, cur.y), c.scale);
-        } else if let Some(Ok(pos)) = win(app).map(|w| w.outer_position()) {
-            released_at = (pos.x as f64, pos.y as f64);
-        }
-        clicked = !cancelled && !d.moved && now - d.at < 600;
+            d.win.0 + dx
+        } else {
+            window.as_ref()
+                .and_then(|w| w.outer_position().ok())
+                .map_or(d.win.0, |pos| pos.x as f64)
+        };
+        let clicked = !cancelled && !d.moved && now_ms() - d.at < 600;
         if d.moved {
             // 커서가 있는 모니터로 옮겨간다
             if let Some(cur) = cursor {
@@ -332,19 +284,17 @@ pub fn drag_end(app: &tauri::AppHandle, a: &Arc<App>, cancelled: bool) {
                 }
             }
             hide_bubble_locked(app, &mut c);
-            c.behavior.start_drag();
-            let bounds = c.flight_bounds();
-            let v = if cancelled { (0.0, 0.0) } else { d.trail.throw_velocity(c.scale) };
-            let x = if v == (0.0, 0.0) {
-                released_at.0.clamp(c.behavior.min_x, c.behavior.max_x)
-            } else {
-                released_at.0.clamp(bounds.left, bounds.right)
-            };
-            c.fall = Some(Flight::new((x, released_at.1.clamp(bounds.top, bounds.floor)), v));
+            c.behavior.end_drag(released_x);
+            if let Some(w) = &window {
+                place(w, &c);
+            }
         }
-    }
-    if clicked {
-        crate::app::open_chat(app, a, "chat", json!({}));
+        (clicked, d.moved)
+    };
+    if moved {
+        save_position(a);
+    } else if clicked {
+        crate::app::open_chat(app, a, "chat");
     }
 }
 
@@ -366,15 +316,15 @@ pub fn bubble_action(app: &tauri::AppHandle, a: &Arc<App>, id: &str, action: &st
 // ---------- 말풍선 ----------
 pub fn show_bubble(app: &tauri::AppHandle, a: &Arc<App>, b: Value) -> bool {
     let mut c = a.cat.lock().unwrap();
-    if c.drag.is_some() || c.fall.is_some() || !c.visible {
+    if c.drag.is_some() || !c.visible {
         return false;
     }
-    c.bubble = Some(b.clone());
     c.bubble_until = now_ms() + BUBBLE_MS;
     c.bubble_hovered = false;
     c.behavior.start_talking();
     send_state(app, &mut c, true);
-    let _ = app.emit_to("cat", "cat:bubble", b);
+    let _ = app.emit_to("cat", "cat:bubble", &b);
+    c.bubble = Some(b);
     true
 }
 
@@ -413,7 +363,7 @@ pub fn set_visible(app: &tauri::AppHandle, a: &Arc<App>, on: bool) {
 pub fn resend_state(app: &tauri::AppHandle, a: &Arc<App>) {
     let mut c = a.cat.lock().unwrap();
     send_state(app, &mut c, true);
-    if let Some(b) = c.bubble.clone() {
+    if let Some(b) = &c.bubble {
         let _ = app.emit_to("cat", "cat:bubble", b);
     }
 }

@@ -126,17 +126,45 @@ pub fn validate(records: &[Record], folder: &str) -> Result<()> {
     }
     Ok(())
 }
-pub fn heads<'a>(records: &'a [Record], entity: &str) -> Vec<&'a Record> {
-    let parents: BTreeSet<_> = records.iter().flat_map(|r| r.parents.iter()).collect();
+fn parent_ids(records: &[Record]) -> BTreeSet<&str> {
     records
         .iter()
-        .filter(|r| r.entity.id == entity && !parents.contains(&r.op_id))
+        .flat_map(|r| r.parents.iter().map(String::as_str))
         .collect()
 }
+
+pub fn heads<'a>(records: &'a [Record], entity: &str) -> Vec<&'a Record> {
+    let parents = parent_ids(records);
+    records
+        .iter()
+        .filter(|r| r.entity.id == entity && !parents.contains(r.op_id.as_str()))
+        .collect()
+}
+
 pub fn view(records: &[Record]) -> Value {
-    let ids: BTreeSet<_> = records.iter().map(|r| r.entity.id.as_str()).collect();
-    json!(ids.into_iter().map(|id|{
-        let mut variants=heads(records,id);variants.sort_by(|a,b|a.op_id.cmp(&b.op_id));
-        json!({"id":id,"kind":variants[0].entity.kind,"heads":variants.iter().map(|r|&r.op_id).collect::<Vec<_>>(),"conflict":variants.len()>1,"variants":variants.iter().map(|r|json!({"operation":r.op_id,"entity":r.entity})).collect::<Vec<_>>()})
-    }).collect::<Vec<_>>())
+    let parents = parent_ids(records);
+    let mut entities: BTreeMap<&str, Vec<&Record>> = BTreeMap::new();
+    for record in records {
+        if !parents.contains(record.op_id.as_str()) {
+            entities.entry(&record.entity.id).or_default().push(record);
+        }
+    }
+    Value::Array(
+        entities
+            .into_iter()
+            .map(|(id, mut variants)| {
+                variants.sort_by(|a, b| a.op_id.cmp(&b.op_id));
+                json!({
+                    "id": id,
+                    "kind": variants[0].entity.kind,
+                    "heads": variants.iter().map(|r| &r.op_id).collect::<Vec<_>>(),
+                    "conflict": variants.len() > 1,
+                    "variants": variants
+                        .iter()
+                        .map(|r| json!({"operation": r.op_id, "entity": r.entity}))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
 }
