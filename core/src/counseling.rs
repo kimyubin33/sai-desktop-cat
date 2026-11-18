@@ -51,18 +51,18 @@ pub fn intent(mode: &str, step: &str) -> Option<&'static str> {
 
 fn fallback_text(mode: &str, step: &str, reflect: &str) -> String {
     match (mode, step) {
-        ("complaint", "open") => "어떤 일이 있었는지 편하게 말해 주세요. 거친 말이 나와도 괜찮아요. 여기서 한 말은 그대로 다른 사람에게 가지 않아요.".into(),
-        ("complaint", "event") => format!("{reflect}. 어떤 약속이나 기대가 있었고, 실제로는 어떻게 달라졌는지 알려 줄 수 있을까요?"),
-        ("complaint", "agreement") => "그 약속은 서로 함께 확인한 상태였나요? 상대에게 다른 사정이 있었는지는 들어 봤나요?".into(),
-        ("complaint", "impact") => "그 일 때문에 실제로 어떤 영향이 있었나요? 일정이 밀렸거나, 혼자 더 맡게 되었다거나요.".into(),
-        ("complaint", "need") => "앞으로 상대가 어떻게 해 주면 괜찮을 것 같아요? \"이것만 해 줬어도\" 싶은 게 있다면요.".into(),
-        ("complaint", "done") => "이야기해 줘서 고마워요. 들은 내용을 정리해 봤어요. 아직 확인되지 않은 부분은 추측으로 남겨 두었어요.".into(),
-        ("explain", "open") => "어떤 상황이었는지 편하게 이야기해 주세요. 변명이라고 생각하지 않아요. 사정을 아는 게 조율의 시작이니까요.".into(),
-        ("explain", "reason") => format!("{reflect}. 그때 어떤 사정이 있었나요?"),
-        ("explain", "next") => "다음에 비슷한 일이 생기면 어떻게 하면 좋을 것 같아요? 팀과 맞추고 싶은 방식이 있다면요.".into(),
-        ("explain", "done") => "이야기해 줘서 고마워요. 내용을 정리해 두었어요.".into(),
-        ("free", "open") => "오늘은 어땠어요? 무슨 이야기든 괜찮아요.".into(),
-        ("free", _) => format!("{reflect}. 조금 더 이야기해 줄래요?"),
+        ("complaint", "open") => "어떤 일이 있었는지 편하게 말해 줘. 거친 말이 나와도 괜찮아. 여기서 한 말은 그대로 다른 사람에게 가지 않아.".into(),
+        ("complaint", "event") => format!("{reflect}. 어떤 약속이나 기대가 있었고 실제로는 어떻게 달라졌는지 알려 줄래?"),
+        ("complaint", "agreement") => "그 약속을 서로 확인해 둔 상태였어? 상대에게 다른 사정이 있었는지도 들어 봤어?".into(),
+        ("complaint", "impact") => "일정이 밀리거나 혼자 일을 더 맡는 등 그 일 때문에 어떤 영향이 있었어?".into(),
+        ("complaint", "need") => "앞으로 상대가 어떻게 해 주면 괜찮을 것 같아? \"이것만 해 줬어도\" 싶은 게 있으면 말해 줘.".into(),
+        ("complaint", "done") => "이야기해 줘서 고마워. 들은 내용을 정리했어. 아직 확인되지 않은 부분은 추측으로 남겨 뒀어.".into(),
+        ("explain", "open") => "어떤 상황이었는지 편하게 이야기해 줘. 사정을 아는 게 조율의 시작이야.".into(),
+        ("explain", "reason") => format!("{reflect}. 그때 어떤 사정이 있었어?"),
+        ("explain", "next") => "다음에 비슷한 일이 생기면 어떻게 하면 좋을 것 같아? 팀과 맞추고 싶은 방식이 있다면 알려 줘.".into(),
+        ("explain", "done") => "이야기해 줘서 고마워. 내용을 정리해 뒀어.".into(),
+        ("free", "open") => "오늘 어땠어? 편하게 이야기해 줘.".into(),
+        ("free", _) => format!("{reflect}. 조금 더 이야기해 줄래?"),
         _ => String::new(),
     }
 }
@@ -153,7 +153,7 @@ pub fn create_session(mode: &str, topic_id: Option<&str>, now: i64) -> (Session,
         s.topics = vec![r.clone()];
     }
     let text = match &related {
-        Some(r) => format!("\"{}\"에 관한 조언에 당신 사정도 있었군요. 어떤 상황이었는지 편하게 이야기해 주세요. 변명이라고 생각하지 않아요.", topic(r).unwrap().label),
+        Some(r) => format!("\"{}\"에 관해 네 사정도 있었구나. 어떤 상황이었는지 편하게 이야기해 줘.", topic(r).unwrap().label),
         None => fallback_text(mode, "open", ""),
     };
     s.turns.push(Turn { role: "cat".into(), text: text.clone(), at: now, ..Default::default() });
@@ -225,7 +225,7 @@ pub fn handle_user(s: &mut Session, text: &str, now: i64, skip: bool) -> Handled
     }
 
     if s.step == "done" {
-        let t2 = "정리 카드에서 내용을 고칠 수 있어요. 다른 이야기를 하고 싶으면 \"새 대화\"를 눌러 주세요.";
+        let t2 = "정리 카드에서 내용을 고칠 수 있어. 다른 이야기를 하고 싶으면 \"새 대화\"를 눌러 줘.";
         s.turns.push(Turn { role: "cat".into(), text: t2.into(), at: now, ..Default::default() });
         let mut r = Reply::cat(t2);
         r.fixed = true;
@@ -286,7 +286,7 @@ pub fn build_summary(s: &Session) -> Value {
             "emotions": s.emotions,
             "topics": topics,
             "sensitive": !s.sensitive.is_empty(),
-            "note": "내 사정 기록은 이 기기에만 남아요. 아래 버튼으로 이 주제의 조언을 잠시 멈추거나, 팀 약속으로 함께 맞춰 보자고 제안할 수 있어요. 어느 쪽도 내 이야기 원문은 보내지 않아요."
+            "note": "사정 기록은 이 기기에만 남아. 아래 버튼으로 이 주제의 조언을 잠시 멈추거나 팀 약속을 제안할 수 있어. 어느 쪽도 네 이야기 원문은 보내지 않아."
         });
     }
     let agreement = s.answers.get("agreement").and_then(|v| v.as_str());
@@ -308,7 +308,7 @@ pub fn build_summary(s: &Session) -> Value {
     json!({
         "mode": "complaint",
         "reportedEvent": event,
-        "sharedRecord": "아직 연결된 공동 일정·업무 기록이 없어 확인하지 않았어요.",
+        "sharedRecord": "아직 연결된 공동 일정·업무 기록이 없어 확인하지 않았어.",
         "agreement": a("agreement"),
         "agreementNote": match confirmed {
             Some(true) => "함께 확인했다고 말함 (기록으로는 확인 전)",

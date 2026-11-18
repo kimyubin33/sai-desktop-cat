@@ -1,4 +1,4 @@
-//! 트레이 아이콘과 고양이 오른쪽 클릭 메뉴 (같은 메뉴).
+//! 작업 표시줄의 트레이 메뉴.
 //! 쉬는 방법은 모두 정해진 시간이 지나면 저절로 끝난다 — 영구히 끄는 메뉴는 없다.
 use crate::app::{on_settings_changed, open_chat, App};
 use crate::cat;
@@ -86,7 +86,6 @@ pub fn on_event(app: &AppHandle, a: &Arc<App>, e: MenuEvent) {
                 let a2 = a.clone();
                 tauri::async_runtime::spawn(async move {
                     a2.updater.check(&a2, true).await;
-                    refresh_tray(&a2.handle, &a2);
                 });
             }
         }

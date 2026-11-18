@@ -1,8 +1,8 @@
 # 사이 — 데스크톱 협업 도우미
 
-사이는 **Google로 로그인해 팀 파일·업무·일정을 AI와 함께 정리하는 간단한 데스크톱 앱**입니다. 바탕화면의 반투명 검은 유리 불꽃을 눌러 개인 AI를 열 수 있습니다. 같은 Google 계정으로 다른 PC에서도 내 팀·이름·설정을 이어 쓰고, 파일과 협업 정보는 Google Drive로 공유하는 방향입니다.
+사이는 **Google로 로그인해 팀 파일·업무·일정을 AI와 함께 정리하는 간단한 데스크톱 앱**입니다. 바탕화면의 반투명 검은 유리 불꽃을 누르면 개인 AI를 열 수 있습니다. 앱 로고는 AI와 사람을 잇는 무한대 모양입니다. 같은 Google 계정으로 다른 PC에서도 내 팀·이름·설정을 이어 쓰고, 파일과 협업 정보는 Google Drive로 공유하는 방향입니다.
 
-**[사이 v1.0.0 다운로드](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.0)**에서 Windows 설치 파일을 받으세요. Google 로그인은 등록된 테스트 계정에서 확인했습니다. 기존 PC 톡 버전에서 전환하려면 릴리스 페이지에서 직접 설치하세요.
+Windows 설치판은 v1.0.1부터 새 v1 릴리스를 자동으로 확인하고 설치 파일을 내려받습니다. v1.0.0이나 기존 PC 톡에서 전환하는 경우 v1.0.1 설치 파일을 받아 한 번 직접 설치하세요. Google 로그인은 등록된 테스트 계정에서 확인했습니다. [사이 v1.0.1 다운로드](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.1)
 
 **[사용 설명서](docs/user-guide.md)** — Google 로그인, 팀·파일·AI·내 일정의 사용법과 권한·자료 보관 범위를 정리했습니다. 앱 오른쪽 위 **?**에서도 열 수 있습니다.
 
@@ -79,7 +79,7 @@ PR과 `main` 소스 변경은 [Google 작업 공간 검사](.github/workflows/ch
 
 검증판은 **사이 미리보기**라는 별도 앱으로 설치합니다. 앱 ID·실행 파일·자료 저장 공간·시작 메뉴가 기존 사이와 다르고, 시작 프로그램과 정식 자동 업데이트는 사용하지 않습니다. 로컬·CI 모두 `npm run build:preview`를 사용하며, 결과는 `target/preview-dist/win-x64` 또는 `win-arm64`에 모읍니다. ARM Windows에서 x64 도구로 빌드할 때는 `npm run build:preview -- --target x86_64-pc-windows-msvc --ui-host-target x86_64-pc-windows-msvc`를 사용합니다. 일반 `npm run build`는 기존 제품 설정으로 빌드하므로 전환 중 검증 배포에 사용하지 않습니다.
 
-[v0.9.14](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v0.9.14)는 기존 PC 톡 설치판의 자동 업데이트 채널입니다. [v1.0.0](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v1.0.0)은 직접 설치할 수 있습니다.
+기존 PC 톡 설치판은 v0.9.14 자동 업데이트 채널을 사용합니다. [기존 PC 톡 릴리스](https://github.com/kimyubin33/sai-desktop-cat/releases/tag/v0.9.14)
 
 ## 이전 버전의 기능
 

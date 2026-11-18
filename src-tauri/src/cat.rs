@@ -47,7 +47,6 @@ pub struct CatState {
     last_sent: String,
     interactive: bool,
     regions: Vec<Rect>,
-    pub menu_open: bool,
     pub visible: bool,
     last_tick: i64,
 }
@@ -67,7 +66,6 @@ impl CatState {
             last_sent: String::new(),
             interactive: false,
             regions: vec![],
-            menu_open: false,
             visible: true,
             last_tick: now_ms(),
         }
@@ -249,7 +247,7 @@ fn tick(app: &tauri::AppHandle, a: &Arc<App>) {
             if let Ok(pos) = w.outer_position() {
                 let (rx, ry) = ((cx - pos.x as f64) / c.scale, (cy - pos.y as f64) / c.scale);
                 let over = c.regions.iter().any(|r| rx >= r.x && rx <= r.x + r.w && ry >= r.y && ry <= r.y + r.h);
-                let want = over || c.drag.is_some() || c.menu_open;
+                let want = over || c.drag.is_some();
                 if want != c.interactive {
                     c.interactive = want;
                     let _ = w.set_ignore_cursor_events(!want);
@@ -363,37 +361,6 @@ pub fn bubble_action(app: &tauri::AppHandle, a: &Arc<App>, id: &str, action: &st
         hide_bubble_locked(app, &mut c);
     }
     a.advisor.handle_action(a, id, action);
-}
-
-/// 오른쪽 클릭 메뉴. 고양이 창은 포커스를 받지 않게 만들어져 있어서,
-/// 메뉴를 띄우는 동안만 포커스를 받을 수 있게 했다가 닫히면 되돌린다.
-pub fn context_menu(app: &tauri::AppHandle, a: &Arc<App>) {
-    let Some(w) = win(app) else { return };
-    {
-        let mut c = a.cat.lock().unwrap();
-        if c.menu_open {
-            return;
-        }
-        c.menu_open = true;
-    }
-    let _ = w.set_ignore_cursor_events(false);
-    let _ = w.set_focusable(true);
-    let _ = w.set_focus();
-    if let Ok(menu) = crate::menu::build(app, a) {
-        let _ = w.popup_menu(&menu);
-    }
-    // popup_menu 는 메뉴가 닫힐 때까지 기다리거나(Windows) 바로 돌아온다. 잠시 뒤 원래대로
-    let app2 = app.clone();
-    let a2 = a.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        if let Some(w) = win(&app2) {
-            let _ = w.set_focusable(false);
-        }
-        let mut c = a2.cat.lock().unwrap();
-        c.menu_open = false;
-        c.interactive = true; // 다음 틱에서 다시 판정
-    });
 }
 
 // ---------- 말풍선 ----------

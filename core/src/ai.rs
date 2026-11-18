@@ -24,9 +24,10 @@ fn api_url() -> String {
     std::env::var("SAI_ANTHROPIC_URL").unwrap_or_else(|_| API_URL.to_string())
 }
 
-const PERSONA: &str = "당신은 팀원 각자의 바탕화면에 사는 고양이 \"{name}\"입니다. 지금은 한 사용자와 단둘이 비공개로 이야기하고 있습니다.
+const PERSONA: &str = "당신은 바탕화면 도우미 \"{name}\"입니다. 지금은 한 사용자와 단둘이 비공개로 이야기하고 있습니다.
 지켜야 할 원칙:
-- 항상 부드러운 존댓말로 말하고, 질문은 한 번에 하나만 합니다. 보통은 짧게 말하되 필요하면 충분히 설명해도 됩니다.
+- 사용자에게 직접 건네는 말은 다정한 한국어 반말(해체)로 통일합니다. 이전 대화가 존댓말이어도 따라 쓰지 않습니다. 예: \"어땠어?\", \"천천히 말해 줘.\"
+- 질문은 한 번에 하나만 합니다. 보통은 짧게 말하되 필요하면 충분히 설명해도 됩니다.
 - 사용자가 겪은 불편과 감정은 인정하되, 사용자 편만 들거나 상대를 비난하지 않습니다.
 - 확인되지 않은 추측을 사실처럼 말하지 않고, 상대의 잘못을 확정하지 않습니다.
 - 사람에 대한 평가(무능하다, 게으르다 등)는 관찰 가능한 행동과 필요한 변화로 바꿔 말합니다.
@@ -34,9 +35,9 @@ const PERSONA: &str = "당신은 팀원 각자의 바탕화면에 사는 고양�
 - 심리 치료 효과를 약속하지 않고, 진단하지 않습니다.
 - 이모지, 마크다운, 목록 기호를 쓰지 않습니다.";
 
-const FREE_PERSONA: &str = "당신은 사용자의 바탕화면에 사는 고양이 \"{name}\"입니다. Anthropic의 Claude를 바탕으로 동작하며, 사용자와 자유롭게 대화합니다.
+const FREE_PERSONA: &str = "당신은 바탕화면 도우미 \"{name}\"입니다. Anthropic의 Claude를 바탕으로 동작하며, 사용자와 자유롭게 대화합니다.
 - 일반 대화, 질문, 공부, 글쓰기, 고민 상담 등 무엇이든 성실하게 돕습니다. 필요한 만큼 충분히 길게 답해도 됩니다.
-- 부드러운 존댓말을 쓰고, 고양이다운 따뜻함은 살짝만 드러냅니다.
+- 사용자에게 직접 건네는 말은 처음부터 끝까지 다정한 한국어 반말(해체)로 합니다. 이전 대화가 존댓말이어도 따라 쓰지 않습니다. 예: \"뭘 도와줄까?\", \"이렇게 해 보면 돼.\" 인용문이나 사용자가 부탁한 문안에는 그 목적에 맞는 말투를 씁니다.
 - 팀원에 대한 이야기가 나오면 사용자 편만 들거나 상대를 단정해 비난하지 않고, 관찰 가능한 행동과 필요한 변화로 바꿔 생각하도록 돕습니다.
 - 심리 치료 효과를 약속하거나 진단하지 않습니다. 위급해 보이면 전문 도움을 권합니다.
 - 화면이 마크다운을 그리지 않으므로 **, #, 표 같은 기호 대신 줄바꿈과 \"1.\" 같은 번호로 정리합니다.";
@@ -67,7 +68,7 @@ async fn post(api_key: &str, body: &Value, timeout: Duration) -> Result<reqwest:
         .json(body)
         .send()
         .await
-        .map_err(|e| if e.is_timeout() { "AI가 제때 응답하지 않았어요.".to_string() } else { format!("AI에 연결하지 못했어요: {e}") })?;
+        .map_err(|e| if e.is_timeout() { "AI가 제때 응답하지 않았어.".to_string() } else { format!("AI에 연결하지 못했어: {e}") })?;
     if !res.status().is_success() {
         let (status, d) = json_body(res).await;
         return err(format!("API {status}: {}", short(&d)));
@@ -80,7 +81,7 @@ pub async fn call_text(api_key: &str, model: &str, system: &str, user: &str, max
     let body = json!({ "model": model, "max_tokens": max_tokens, "system": system, "messages": [{ "role": "user", "content": user }] });
     let (_, d) = json_body(post(api_key, &body, Duration::from_secs(60)).await?).await;
     if d.s("stop_reason") == "max_tokens" {
-        return err("답이 너무 길어 중간에 끊겼어요.");
+        return err("답이 너무 길어 중간에 끊겼어.");
     }
     Ok(d.arr("content").iter().filter(|b| b.s("type") == "text").map(|b| b.s("text")).collect::<String>().trim().to_string())
 }
@@ -111,12 +112,12 @@ pub async fn stream(api_key: &str, model: &str, system: &str, messages: &[Value]
             let chunk = match next {
                 Err(_) => {
                     if full.is_empty() {
-                        return err("AI가 60초 동안 응답하지 않았어요.");
+                        return err("AI가 60초 동안 응답하지 않았어.");
                     }
                     return Ok(full.trim().to_string());
                 }
                 Ok(None) => break,
-                Ok(Some(Err(e))) => return err(format!("AI 응답을 받다가 끊겼어요: {e}")),
+                Ok(Some(Err(e))) => return err(format!("AI 응답을 받다가 끊겼어: {e}")),
                 Ok(Some(Ok(c))) => c,
             };
             buf.extend_from_slice(&chunk);
@@ -152,7 +153,7 @@ pub async fn stream(api_key: &str, model: &str, system: &str, messages: &[Value]
 fn transcript(s: &Session, limit: usize) -> String {
     let turns: Vec<_> = s.turns.iter().filter(|t| !t.safety).collect();
     let start = turns.len().saturating_sub(limit);
-    turns[start..].iter().map(|t| format!("{}: {}", if t.role == "user" { "사용자" } else { "고양이" }, t.text)).collect::<Vec<_>>().join("\n")
+    turns[start..].iter().map(|t| format!("{}: {}", if t.role == "user" { "사용자" } else { "바탕화면 도우미" }, t.text)).collect::<Vec<_>>().join("\n")
 }
 
 impl Ai {
@@ -256,7 +257,7 @@ impl Ai {
         if !c.enabled {
             return None;
         }
-        let user = format!("지금까지의 대화:\n{}\n\n이번에 고양이가 할 일: {intent}\n참고 문장(이 뜻을 유지하되 대화에 맞게 자연스럽게): {fallback}\n\n고양이의 다음 말만 출력하세요.", transcript(s, 12));
+        let user = format!("지금까지의 대화:\n{}\n\n이번에 도우미가 할 일: {intent}\n참고 문장(이 뜻을 유지하되 대화에 맞게 자연스럽게): {fallback}\n\n도우미의 다음 말만 출력하세요.", transcript(s, 12));
         match call_text(c.api_key.as_deref()?, &c.model, &PERSONA.replace("{name}", &c.name), &user, 1500).await {
             Ok(t) if !t.is_empty() => {
                 self.set_err(None);

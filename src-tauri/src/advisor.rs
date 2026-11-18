@@ -1,4 +1,4 @@
-//! 말풍선 조언을 고양이 창과 연결한다: 평소 조언, 팀 약속 제안, 업무 진행 확인, 업데이트 안내.
+//! 사이의 말풍선에 인사, 조언, 업데이트 안내를 표시한다.
 use crate::app::{open_chat, App};
 use crate::cat;
 use sai_core::advice::{next_delay_ms, pick_advice, remember_shown, silence_reason, Entry};
@@ -110,7 +110,7 @@ impl Advisor {
         let name = a.stores.settings.read(|s| s.s("catName"));
         self.show(
             a,
-            json!({ "id": "greet", "kind": "system", "text": format!("안녕하세요, 저는 {name}예요. 가끔 말을 걸게요. 저를 클릭하면 편하게 이야기할 수 있고, 끌어서 옮길 수도 있어요.") }),
+            json!({ "id": "greet", "kind": "system", "text": format!("안녕! 내 이름은 {name}. 가끔 말을 걸게. 나를 클릭하면 편하게 이야기할 수 있어.") }),
             None,
         );
     }
@@ -145,7 +145,7 @@ impl Advisor {
         };
         self.show(
             a,
-            json!({ "id": "update", "kind": "update", "text": format!("새 버전 {v}이 준비됐어요. 지금 다시 시작해서 적용할까요?"), "sourceLabel": "— 사이 업데이트",
+            json!({ "id": "update", "kind": "update", "text": format!("새 버전 {v} 준비됐어. 지금 다시 시작해서 적용할까?"), "sourceLabel": "— 사이 업데이트",
                     "actions": [act("update-later", "나중에", false), act("update-install", "지금 적용", true)] }),
             None,
         );

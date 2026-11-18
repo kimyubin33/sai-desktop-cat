@@ -27,6 +27,7 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
 pub type OpenUrl = Arc<dyn Fn(&str) + Send + Sync>;
+pub type ReturnToApp = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone)]
 pub struct Google(Arc<Inner>);
@@ -277,6 +278,7 @@ impl Google {
         builtin: Option<Value>,
         open_url: OpenUrl,
         profile_dir: std::path::PathBuf,
+        return_to_app: ReturnToApp,
     ) -> Google {
         // 앱에 들어 있던 연결 정보를 이 컴퓨터의 설정에도 남겨 둔다.
         // 나중에 연결 정보가 빠진 버전으로 업데이트되더라도 Google 연결이 끊기지 않게 하기 위해서다.
@@ -296,7 +298,7 @@ impl Google {
             builtin,
             auth: Mutex::new(None),
             open_url,
-            login: login::Login::default(),
+            login: login::Login::with_return_to_app(return_to_app),
             profiles: profile::Profiles::new(profile_dir),
             teams: teams::Teams::default(),
             files: files::Files::new(files_dir),

@@ -15,7 +15,6 @@ const HIT_ALPHA: u8 = 24;
 #[derive(Default)]
 struct Desktop {
     mask: Vec<Span>,
-    left: bool,
     bubble: Option<Value>,
     reaction_until: f64,
     last_regions: Vec<[f64; 4]>,
@@ -28,16 +27,11 @@ struct Span {
 }
 
 impl Span {
-    fn rect(&self, bounds: &DomRect, left: bool) -> [f64; 4] {
+    fn rect(&self, bounds: &DomRect) -> [f64; 4] {
         let step_x = bounds.width() / f64::from(MASK_SIZE);
         let step_y = bounds.height() / f64::from(MASK_SIZE);
-        let start = if left {
-            MASK_SIZE - self.end
-        } else {
-            self.start
-        };
         [
-            bounds.left() + f64::from(start) * step_x,
+            bounds.left() + f64::from(self.start) * step_x,
             bounds.top() + f64::from(self.y) * step_y,
             f64::from(self.end - self.start) * step_x,
             step_y,
@@ -45,7 +39,7 @@ impl Span {
     }
 }
 
-/// Read the bundled image once, using row spans to leave gaps between flame tips clickable through.
+/// Read the character image once so clicks pass through its transparent edges.
 fn sample_mask(image: &HtmlImageElement) -> Option<Vec<Span>> {
     let canvas: HtmlCanvasElement = document().create_element("canvas").ok()?.dyn_into().ok()?;
     canvas.set_width(MASK_SIZE);
@@ -74,17 +68,17 @@ fn sample_mask(image: &HtmlImageElement) -> Option<Vec<Span>> {
 
 pub fn start() {
     let cat = by_id("cat").unwrap();
-    let flame: HtmlImageElement = by_id("flame").unwrap().unchecked_into();
+    let mark: HtmlImageElement = by_id("companionMark").unwrap().unchecked_into();
     let bubble = by_id("bubble").unwrap();
     let zz = by_id("zz").unwrap();
     let reaction = by_id("reaction").unwrap();
     let desktop = Rc::new(RefCell::new(Desktop::default()));
 
-    if flame.complete() {
-        desktop.borrow_mut().mask = sample_mask(&flame).unwrap_or_default();
+    if mark.complete() {
+        desktop.borrow_mut().mask = sample_mask(&mark).unwrap_or_default();
     } else {
-        let (image, desktop) = (flame.clone(), desktop.clone());
-        on(&flame, "load", move |_| {
+        let (image, desktop) = (mark.clone(), desktop.clone());
+        on(&mark, "load", move |_| {
             desktop.borrow_mut().mask = sample_mask(&image).unwrap_or_default();
         });
     }
@@ -119,13 +113,10 @@ pub fn start() {
         });
     }
     {
-        let (desktop, cat) = (desktop.clone(), cat.clone());
+        let cat = cat.clone();
         listen("cat:state", move |event| {
             let state = event["state"].as_str().unwrap_or("sit");
-            let left = event["facing"].as_i64().unwrap_or(1) < 0;
-            desktop.borrow_mut().left = left;
             let _ = cat.set_attribute("data-state", state);
-            toggle(&cat, "facing-left", left);
             toggle(&zz, "hidden", state != "sleep");
         });
     }
@@ -163,15 +154,15 @@ pub fn start() {
         });
     }
     {
-        let (desktop, flame, bubble) = (desktop.clone(), flame.clone(), bubble.clone());
+        let (desktop, mark, bubble) = (desktop.clone(), mark.clone(), bubble.clone());
         every(150, move || {
             let mut desktop = desktop.borrow_mut();
-            let bounds = flame.get_bounding_client_rect();
+            let bounds = mark.get_bounding_client_rect();
             let mut regions = desktop
                 .mask
                 .iter()
                 .map(|span| {
-                    let [x, y, w, h] = span.rect(&bounds, desktop.left);
+                    let [x, y, w, h] = span.rect(&bounds);
                     [
                         x.floor(),
                         y.floor(),
@@ -233,28 +224,23 @@ pub fn start() {
         let (target, holding) = (cat.clone(), holding.clone());
         on(&cat, "pointerdown", move |event| {
             let pointer: &PointerEvent = event.unchecked_ref();
-            if !pointer.is_primary() {
+            if !pointer.is_primary() || pointer.button() != 0 || holding.get().is_some() {
                 return;
             }
             let desktop = desktop.borrow();
-            let bounds = flame.get_bounding_client_rect();
+            let bounds = mark.get_bounding_client_rect();
             let px = f64::from(pointer.client_x());
             let py = f64::from(pointer.client_y());
             if !desktop.mask.iter().any(|span| {
-                let [x, y, w, h] = span.rect(&bounds, desktop.left);
+                let [x, y, w, h] = span.rect(&bounds);
                 px >= x && px < x + w && py >= y && py < y + h
             }) {
                 return;
             }
-            if pointer.button() == 2 {
-                event.prevent_default();
-                cat_event("context-menu", Value::Null);
-            } else if pointer.button() == 0 && holding.get().is_none() {
-                event.prevent_default();
-                let _ = target.set_pointer_capture(pointer.pointer_id());
-                holding.set(Some(pointer.pointer_id()));
-                cat_event("drag-start", Value::Null);
-            }
+            event.prevent_default();
+            let _ = target.set_pointer_capture(pointer.pointer_id());
+            holding.set(Some(pointer.pointer_id()));
+            cat_event("drag-start", Value::Null);
         });
     }
     for ev in ["pointerup", "pointercancel", "lostpointercapture"] {
@@ -267,6 +253,6 @@ pub fn start() {
             }
         });
     }
-    on(&cat, "contextmenu", |event| event.prevent_default());
+    on(&document(), "contextmenu", |event| event.prevent_default());
     cat_event("ready", Value::Null);
 }

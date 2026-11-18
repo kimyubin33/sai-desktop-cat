@@ -130,6 +130,7 @@ pub fn render_update(v: Value) {
                 "checking" => "확인 중…",
                 "downloading" => "다운로드 중…",
                 "ready" => "업데이트 준비됨",
+                "latest" => "최신 버전",
                 _ => "",
             }
         },

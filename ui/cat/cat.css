@@ -20,23 +20,19 @@ body {
   touch-action: none;
 }
 
-#flame {
+#companionMark {
   display: block;
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: 0.64;
+  opacity: 0.53;
   transform-origin: 50% 87%;
   animation: drift var(--period, 3.6s) ease-in-out infinite;
   transition: opacity 200ms ease;
 }
 
-#cat.facing-left #flame {
-  scale: -1 1;
-}
-
-#cat:hover #flame {
-  opacity: 0.82;
+#cat:hover #companionMark {
+  opacity: 0.72;
 }
 
 #cat[data-state="walk"] {
@@ -51,8 +47,8 @@ body {
   --height: 0.88;
 }
 
-#cat[data-state="sleep"] #flame {
-  opacity: 0.48;
+#cat[data-state="sleep"] #companionMark {
+  opacity: 0.40;
 }
 
 #cat[data-state="talk"] {
@@ -67,11 +63,11 @@ body {
   --height: 1.06;
 }
 
-#cat[data-reaction="dizzy"] #flame {
+#cat[data-reaction="dizzy"] #companionMark {
   animation: wobble 280ms ease-in-out 4;
 }
 
-#cat[data-reaction="hurt"] #flame {
+#cat[data-reaction="hurt"] #companionMark {
   animation: recoil 420ms ease-out;
 }
 
@@ -96,7 +92,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #cat #flame,
+  #cat #companionMark,
   .zz {
     animation: none;
     transition: none;

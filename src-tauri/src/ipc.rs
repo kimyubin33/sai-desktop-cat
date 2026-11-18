@@ -41,7 +41,6 @@ pub async fn cat_event(
         "regions" => cat::regions(&a, &args),
         "drag-start" => cat::drag_start(app, &a),
         "drag-end" => cat::drag_end(app, &a, args.as_bool().unwrap_or(false)),
-        "context-menu" => cat::context_menu(app, &a),
         "bubble-hover" => cat::bubble_hover(&a, args.as_bool().unwrap_or(false)),
         "bubble-action" => cat::bubble_action(app, &a, &args.s("id"), &args.s("action")),
         "ready" => cat::resend_state(app, &a),

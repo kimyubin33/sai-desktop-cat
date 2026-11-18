@@ -72,6 +72,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
         None,
         Arc::new(now_ms),
     );
+    let workspace = app.clone();
     let google = Google::new(
         stores.settings.clone(),
         stores.google_connection.clone(),
@@ -82,6 +83,7 @@ pub fn setup(app: &AppHandle) -> Result<Arc<App>, Box<dyn std::error::Error>> {
             .clone()
             .unwrap_or(app.path().app_local_data_dir()?)
             .join("google-profile-v1"),
+        Arc::new(move || return_to_workspace(&workspace)),
     );
     let ai = Arc::new(Ai::new(stores.settings.clone()));
     let chat = Chat::new(
@@ -169,6 +171,19 @@ pub fn on_settings_changed(a: &Arc<App>) {
     cat::set_calm(a, a.stores.settings.read(|s| s.i("quietUntil")) > now_ms());
     a.advisor.schedule(a, None);
     menu::refresh_tray(&a.handle, a);
+}
+
+fn return_to_workspace(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("chat") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        if !window.is_focused().unwrap_or(false) {
+            let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+        }
+    } else if let Some(a) = app.try_state::<Arc<App>>() {
+        open_chat(app, a.inner(), "drive", json!({}));
+    }
 }
 
 pub fn open_chat(app: &AppHandle, a: &Arc<App>, tab: &str, extra: Value) {

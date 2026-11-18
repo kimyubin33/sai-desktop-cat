@@ -26,6 +26,7 @@ impl Pc {
             Some(json!({"clientId":"test-client","clientSecret":"test-secret"})),
             Arc::new(|_| panic!("a restored session must not open a browser")),
             root.join("google"),
+            Arc::new(|| panic!("a restored session must not request foreground")),
         );
         let auth = Arc::new(auth(settings.clone(), server));
         *google.0.auth.lock().unwrap() = Some(auth.clone());

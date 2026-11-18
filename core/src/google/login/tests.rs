@@ -61,7 +61,8 @@ async fn calendar_loopback_consent_binds_nonce_and_reuses_the_grant_without_reop
         .unwrap();
     let mut page = String::new();
     socket.read_to_string(&mut page).await.unwrap();
-    assert!(page.starts_with("HTTP/1.1 200"));
+    let page = follow_completion(&host, &page).await;
+    assert!(page.contains("Google Calendar 연결 완료"));
     task.await.unwrap().unwrap();
     assert_eq!(auth.epoch(), epoch);
     assert!(auth.calendar_connected());
@@ -291,7 +292,8 @@ async fn desktop_picker_completes_loopback_without_replacing_the_google_login() 
         .unwrap();
     let mut page = String::new();
     socket.read_to_string(&mut page).await.unwrap();
-    assert!(page.starts_with("HTTP/1.1 200"));
+    let page = follow_completion(&host, &page).await;
+    assert!(page.contains("자료 선택 완료"));
     assert!(!page.contains("PICKER_ONLY"));
     let result = task.await.unwrap().unwrap();
     assert_eq!(result, json!({"folderId":"selected-folder","epoch":epoch}));
@@ -300,10 +302,36 @@ async fn desktop_picker_completes_loopback_without_replacing_the_google_login() 
     assert!(!login.busy());
 }
 use crate::store::Store;
-use tokio::sync::mpsc;
+use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 fn request(path: &str, host: &str) -> String {
     format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n")
+}
+
+fn redirected_to(response: &str) -> &str {
+    assert!(response.starts_with("HTTP/1.1 303"));
+    response
+        .lines()
+        .find_map(|line| line.strip_prefix("Location: "))
+        .unwrap()
+}
+
+async fn local_response(host: &str, request: &str) -> String {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut socket = TcpStream::connect(host).await.unwrap();
+        socket.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        socket.read_to_string(&mut response).await.unwrap();
+        response
+    })
+    .await
+    .unwrap()
+}
+
+async fn follow_completion(host: &str, response: &str) -> String {
+    let page = local_response(host, &request(redirected_to(response), host)).await;
+    assert!(page.starts_with("HTTP/1.1 200"));
+    page
 }
 #[test]
 fn callback_rejects_wrong_state_host_duplicates_method_and_foreign_issuer() {
@@ -400,7 +428,10 @@ async fn a_complete_mock_login_checks_both_google_responses_before_storing_the_a
     .await;
     let store = Store::memory(json!({}));
     let auth = Arc::new(auth(store.clone(), &server.url));
-    let login = Arc::new(Login::default());
+    let (reveal, mut reveals) = mpsc::unbounded_channel();
+    let login = Arc::new(Login::with_return_to_app(Arc::new(move || {
+        let _ = reveal.send(());
+    })));
     let (tx, mut rx) = mpsc::unbounded_channel();
     let opener: OpenUrl = Arc::new(move |url| {
         let _ = tx.send(url.to_owned());
@@ -422,10 +453,47 @@ async fn a_complete_mock_login_checks_both_google_responses_before_storing_the_a
         .unwrap();
     let mut body = String::new();
     socket.read_to_string(&mut body).await.unwrap();
-    assert!(body.starts_with("HTTP/1.1 200"));
-    assert!(!body.contains("one@example.com"));
-    assert!(!body.contains("ACCESS_TEST_ONLY"));
+    let completion = redirected_to(&body);
+    assert!(completion.starts_with("/complete/"));
+    assert!(!completion.contains("?"));
+    assert!(!completion.contains(&query["state"]));
+    assert!(!body.contains("approved"));
     assert_eq!(task.await.unwrap().unwrap()["email"], "one@example.com");
+    assert!(!login.busy());
+
+    let page = follow_completion(&host, &body).await;
+    assert!(page.contains("Google 연결 완료"));
+    assert!(page.contains("사이로 돌아가기"));
+    assert!(page.contains("method=\"post\""));
+    assert!(!page.contains("one@example.com"));
+    assert!(!page.contains("ACCESS_TEST_ONLY"));
+    tokio::time::timeout(Duration::from_secs(5), reveals.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let post = |host: &str, origin: &str| {
+        format!("POST {completion} HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nContent-Length: 0\r\n\r\n")
+    };
+    for invalid in [
+        post(&host, "https://example.invalid"),
+        post("example.invalid", &format!("http://{host}")),
+        post(&host, "null"),
+        request(&format!("/?state={}&code=approved", query["state"]), &host),
+    ] {
+        let response = local_response(&host, &invalid).await;
+        assert!(response.starts_with("HTTP/1.1 400"));
+    }
+    assert!(reveals.try_recv().is_err());
+
+    let response = local_response(&host, &post(&host, &format!("http://{host}"))).await;
+    assert_eq!(redirected_to(&response), format!("{completion}/returned"));
+    tokio::time::timeout(Duration::from_secs(5), reveals.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let returned = follow_completion(&host, &response).await;
+    assert!(returned.contains("사이 다시 열기"));
     assert!(!login.busy());
 }
 

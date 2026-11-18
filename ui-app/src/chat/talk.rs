@@ -53,8 +53,8 @@ fn reset() {
     let welcome = el("div")
         .cls("ai-welcome")
         .id("aiWelcome")
-        .kid(el("h2").text("어떤 생각을 나눌까요?"))
-        .kid(el("p").text("새로운 생각을 편하게 남겨 주세요."))
+        .kid(el("h2").text("뭘 도와줄까?"))
+        .kid(el("p").text("편하게 이야기해 줘."))
         .build();
     let _ = messages().append_child(&welcome);
     let _ = by_id("input").unwrap().focus();
@@ -81,7 +81,7 @@ async fn send_text(text: String) {
         }
     }
     add("user", &text);
-    let typing = add("cat", "답을 정리하고 있어요…");
+    let typing = add("cat", "답을 정리하고 있어…");
     toggle(&typing, "typing", true);
     let (id, stream_id) = state(|v| {
         v.seq += 1;
@@ -150,7 +150,7 @@ async fn history() {
         let _ = root.append_child(
             &el("p")
                 .cls("history-empty")
-                .text("이 기기에 저장된 대화가 없어요.")
+                .text("저장된 대화 없음")
                 .0,
         );
     }

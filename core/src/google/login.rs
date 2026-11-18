@@ -1,7 +1,7 @@
 //! 일시적인 루프백 로그인. 임의 요청은 무시하고 해당 로그인 시도만 취소한다.
 use super::{
     oauth::{self, GoogleAuth},
-    OpenUrl,
+    OpenUrl, ReturnToApp,
 };
 use crate::{err, Result};
 use serde_json::{json, Value};
@@ -11,14 +11,20 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
     sync::{watch, Mutex as AsyncMutex, MutexGuard},
+    task::AbortHandle,
 };
+
+mod return_page;
 
 #[derive(Default)]
 pub(super) struct Login {
     gate: AsyncMutex<()>,
     cancel: Mutex<Option<watch::Sender<bool>>>,
+    completion: Mutex<Option<AbortHandle>>,
+    return_to_app: Option<ReturnToApp>,
 }
 enum Callback {
     Ignore,
@@ -60,29 +66,50 @@ fn selected_files(request: &str, host: &str, multiple: bool) -> Result<Vec<Strin
     Ok(picked)
 }
 
+struct LocalRequest<'a> {
+    method: &'a str,
+    path: &'a str,
+    headers: &'a str,
+}
+impl<'a> LocalRequest<'a> {
+    fn parse(request: &'a str, host: &str) -> Option<Self> {
+        let (line, headers) = request.split_once("\r\n")?;
+        let (headers, _) = headers.split_once("\r\n\r\n")?;
+        let mut parts = line.split_whitespace();
+        let (method, path, version) = (parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some()
+            || !["HTTP/1.0", "HTTP/1.1"].contains(&version)
+            || !path.starts_with('/')
+        {
+            return None;
+        }
+        let parsed = Self {
+            method,
+            path,
+            headers,
+        };
+        (parsed.header("host") == Some(host)).then_some(parsed)
+    }
+    fn header(&self, name: &str) -> Option<&'a str> {
+        let mut values = self
+            .headers
+            .split("\r\n")
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.trim());
+        let v = values.next()?;
+        values.next().is_none().then_some(v)
+    }
+}
+
 fn callback(request: &str, state: &str, host: &str) -> Callback {
-    let mut lines = request.split("\r\n");
-    let line = lines
-        .next()
-        .unwrap_or_default()
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    if line.len() != 3
-        || line[0] != "GET"
-        || !["HTTP/1.0", "HTTP/1.1"].contains(&line[2])
-        || !line[1].starts_with('/')
-    {
+    let Some(request) = LocalRequest::parse(request, host) else {
+        return Callback::Ignore;
+    };
+    if request.method != "GET" {
         return Callback::Ignore;
     }
-    let hosts: Vec<_> = lines
-        .filter_map(|line| line.split_once(':'))
-        .filter(|(name, _)| name.eq_ignore_ascii_case("host"))
-        .map(|(_, value)| value.trim())
-        .collect();
-    if hosts != [host] {
-        return Callback::Ignore;
-    }
-    let Ok(url) = url::Url::parse(&format!("http://{host}{}", line[1])) else {
+    let Ok(url) = url::Url::parse(&format!("http://{host}{}", request.path)) else {
         return Callback::Ignore;
     };
     if url.path() != "/" || url.fragment().is_some() {
@@ -114,16 +141,7 @@ fn callback(request: &str, state: &str, host: &str) -> Callback {
         None => Callback::Ignore,
     }
 }
-fn response(ok: bool, message: &str) -> String {
-    let title = if ok {
-        "Google 계정을 확인했어요."
-    } else {
-        "앱으로 돌아가 주세요."
-    };
-    let body = format!("<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>사이</title><body style=\"background:#171817;color:#eee;padding:12vh 8vw;font:16px/1.8 sans-serif\"><p>사이</p><h1 style=\"font-size:28px;font-weight:400\">{title}</h1><p>{message}</p><p style=\"color:#aaa\">이 창은 닫아도 돼요.</p></body></html>");
-    format!("HTTP/1.1 {}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",if ok {"200 OK"} else {"400 Bad Request"},body.len())
-}
-async fn read_headers(socket: &mut tokio::net::TcpStream) -> Option<String> {
+async fn read_headers(socket: &mut TcpStream) -> Option<String> {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut bytes = Vec::new();
         let mut chunk = [0u8; 1024];
@@ -133,7 +151,8 @@ async fn read_headers(socket: &mut tokio::net::TcpStream) -> Option<String> {
                 return None;
             }
             bytes.extend_from_slice(&chunk[..n]);
-            if bytes.windows(4).any(|p| p == b"\r\n\r\n") {
+            if let Some(end) = bytes.windows(4).position(|p| p == b"\r\n\r\n") {
+                bytes.truncate(end + 4);
                 return String::from_utf8(bytes).ok();
             }
         }
@@ -143,10 +162,24 @@ async fn read_headers(socket: &mut tokio::net::TcpStream) -> Option<String> {
     .flatten()
 }
 impl Login {
+    pub fn with_return_to_app(return_to_app: ReturnToApp) -> Self {
+        Self {
+            return_to_app: Some(return_to_app),
+            ..Self::default()
+        }
+    }
+
+    fn close_completion(&self) {
+        if let Some(task) = self.completion.lock().unwrap().take() {
+            task.abort();
+        }
+    }
+
     pub fn cancel(&self) {
         if let Some(sender) = &*self.cancel.lock().unwrap() {
             let _ = sender.send(true);
         }
+        self.close_completion();
     }
     pub fn busy(&self) -> bool {
         self.gate.try_lock().is_err()
@@ -192,13 +225,14 @@ impl Login {
         if purpose.picker() && !auth.has_file_scope() {
             return err("먼저 Drive 연결을 허용해 주세요.");
         }
+        self.close_completion();
         let (cancel, mut cancelled) = watch::channel(false);
         *self.cancel.lock().unwrap() = Some(cancel);
         let attempt = async {
             let (verifier, challenge) = oauth::pkce();
             let state = oauth::random_token();
             let nonce = oauth::random_token();
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            let listener = TcpListener::bind("127.0.0.1:0")
                 .await
                 .map_err(|_| "Google 로그인 창을 준비하지 못했어요.")?;
             let host = format!(
@@ -228,29 +262,17 @@ impl Login {
                     Some(request) => callback(request, &state, &host),
                     None => Callback::Ignore,
                 };
-                match decision {
+                let result = match decision {
                     Callback::Ignore => {
-                        let _ = socket
-                            .write_all(
-                                response(false, "사이 앱에서 연 로그인 창을 사용해 주세요.")
-                                    .as_bytes(),
-                            )
+                        return_page::write_response(&mut socket, return_page::Response::BadRequest)
                             .await;
+                        continue;
                     }
                     Callback::Denied => {
-                        let _ = socket
-                            .write_all(
-                                response(
-                                    false,
-                                    "Google 로그인을 취소했거나 필요한 권한을 허용하지 않았어요.",
-                                )
-                                .as_bytes(),
-                            )
-                            .await;
-                        return err("Google 로그인을 취소했거나 필요한 권한을 허용하지 않았어요.");
+                        err("Google 로그인을 취소했거나 필요한 권한을 허용하지 않았어요.")
                     }
                     Callback::Code(code) => {
-                        let result = if purpose.picker() {
+                        if purpose.picker() {
                             match selected_files(request.as_deref().unwrap_or(""), &host, purpose == oauth::Purpose::SelectedFiles) {
                                 Ok(ids) => auth.finish_picker(expected.as_ref().unwrap(), &code, &verifier, &redirect).await.map(|_| if purpose == oauth::Purpose::Folder { json!({"folderId":ids[0],"epoch":expected.as_ref().unwrap().epoch()}) } else { json!({"fileIds":ids,"epoch":expected.as_ref().unwrap().epoch()}) }),
                                 Err(e) => Err(e),
@@ -276,23 +298,22 @@ impl Login {
                             )
                             .await
                             .map(|i| json!({"email":i.email}))
-                        };
-                        let page = if result.is_ok() {
-                            response(true, "사이 앱에서 이어서 사용해 주세요.")
-                        } else {
-                            response(false, "사이 앱에서 안내를 확인한 뒤 다시 시도해 주세요.")
-                        };
-                        // 저장 완료 뒤 브라우저 응답 지연을 로그인 취소로 오인하지 않는다.
-                        tokio::spawn(async move {
-                            let _ = tokio::time::timeout(
-                                Duration::from_secs(2),
-                                socket.write_all(page.as_bytes()),
-                            )
-                            .await;
-                        });
-                        return result;
+                        }
                     }
-                }
+                };
+                let ok = result.is_ok();
+                let return_to_app = self.return_to_app.clone();
+                // The completion page stays available without keeping the login gate locked.
+                let task = tokio::spawn(return_page::serve(
+                    listener,
+                    socket,
+                    host,
+                    purpose,
+                    ok,
+                    return_to_app,
+                ));
+                *self.completion.lock().unwrap() = Some(task.abort_handle());
+                return result;
             }
         };
         let result = tokio::select! {

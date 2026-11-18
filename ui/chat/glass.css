@@ -12,7 +12,17 @@ body::after {content:"";position:fixed;inset:0;pointer-events:none;background:ra
 .app-shell {position:relative;z-index:1;grid-template-columns:88px minmax(0,1fr);border:1px solid #ffffff36;border-radius:20px;background:linear-gradient(130deg,#14192380,#10131c9c);box-shadow:inset 0 1px 1px #ffffff2b,inset 0 -1px 0 #ffffff0d;isolation:isolate}
 .sidebar {padding:25px 11px 18px;background:linear-gradient(165deg,#ffffff08,#11151b18);border-right-color:#ffffff12;backdrop-filter:blur(22px) saturate(125%)}
 .brand {padding:0;align-items:center;margin-bottom:42px}
-.brand-mark {font-size:26px;font-weight:650;letter-spacing:-3px;color:var(--text)}
+.brand-mark {
+  display:block;
+  width:48px;
+  height:48px;
+  box-sizing:border-box;
+  padding:5px;
+  border:1px solid #ffffff75;
+  border-radius:15px;
+  background:linear-gradient(145deg,#f6f7fb,#aab4c6);
+  box-shadow:inset 0 1px 2px #ffffffb0,0 6px 17px #060a1240;
+}
 .tabs {gap:12px}
 .tabs button {height:67px;min-height:67px;flex-direction:column;justify-content:center;padding:9px 4px;gap:5px;font-size:10px;border-radius:23px;color:var(--muted);background:transparent;border-color:transparent;box-shadow:none;backdrop-filter:none}
 .tabs button svg {width:21px;height:21px}
@@ -60,7 +70,7 @@ button[data-icon]::after {content:"";display:block;width:17px;height:17px;flex-s
 .page-content {padding:30px 34px 32px;max-width:1180px}
 .page-heading,.compact {padding:8px 0 28px}
 .page-heading h1,.compact h1 {font-size:26px;letter-spacing:-1px;font-weight:450}
-.file-hero {display:grid;min-height:calc(100dvh - 150px);max-height:640px;grid-template-columns:1fr 1fr;padding:18px 0 32px;gap:28px}
+.file-hero {display:grid;min-height:calc(100dvh - 150px);max-height:640px;grid-template-columns:minmax(0,1fr);padding:18px 0 32px}
 .hero-copy h1 {font-size:38px;letter-spacing:-1.8px;margin-top:12px;line-height:1.3}
 .hero-copy>.primary {min-width:144px;margin-top:24px;font-size:14px;gap:22px;padding:13px 24px}
 .hero-copy>.micro:empty {display:none}
@@ -68,12 +78,6 @@ button[data-icon]::after {content:"";display:block;width:17px;height:17px;flex-s
 body:not(.is-connected) #teamSpace {display:none}
 #windowResize {position:fixed;right:3px;bottom:3px;width:19px;height:19px;cursor:nwse-resize;z-index:20;user-select:none}
 #windowResize::after {content:"";position:absolute;right:5px;bottom:5px;width:9px;height:9px;border-right:1px solid #ffffff35;border-bottom:1px solid #ffffff35;border-radius:0 0 2px 0}
-.glass-sculpture {position:relative;min-height:225px;display:grid;place-items:center;perspective:700px}
-.glass-drop {width:235px;height:145px;border-radius:44% 56% 53% 47% / 54% 47% 53% 46%;border:1px solid #ffffff68;transform:rotate(-13deg) rotateY(-12deg);background:radial-gradient(ellipse at 22% 15%,#ffffff48,transparent 40%),radial-gradient(ellipse at 84% 82%,#bddcff27,transparent 42%),linear-gradient(130deg,#f5faff14,#ffffff01 50%,#e2efff12);box-shadow:inset 3px 3px 3px #ffffff63,inset -3px -3px 4px #d1e4ff30,0 22px 48px #00000020;backdrop-filter:blur(4px);transition:transform .8s var(--ease)}
-.glass-drop::before {content:"";position:absolute;inset:8px 9px;border:1px solid #ffffff13;border-radius:inherit;background:linear-gradient(155deg,#ffffff10,transparent 50%)}
-.glass-orbit {position:absolute;width:166px;height:166px;border:1px solid #ffffff33;border-radius:50%;transform:translate(70px,20px);background:linear-gradient(145deg,#ffffff0b,#b6d8ff08);box-shadow:inset 1px 2px 2px #ffffff26;backdrop-filter:blur(2px);z-index:-1}
-.glass-sculpture:hover .glass-drop {transform:translateY(-6px) rotate(-8deg) rotateY(-4deg)}
-.drop-spark {position:absolute;width:5px;height:5px;border-radius:50%;background:#f1f9ff;top:49px;left:22%;box-shadow:0 0 20px #d6eaff60}
 .files-heading {margin-bottom:15px}
 .files-heading h2 {font-size:17px;font-weight:500;color:var(--text)}
 .team-actions {gap:9px;margin:15px 0;flex-wrap:wrap}
@@ -129,7 +133,14 @@ select option {background:#202630;color:var(--text)}
 .messages {padding:25px 34px;color:var(--text)}
 .ai-welcome {padding:32px 0}
 .ai-welcome h2 {font-size:20px;font-weight:400;margin-top:18px;color:var(--text)}
-.ai-emblem {color:#d3e5ff;filter:drop-shadow(0 0 15px #b8d8ff23)}
+.ai-emblem {
+  width:76px;
+  height:51px;
+  object-fit:cover;
+  border-radius:16px;
+  background:#e7ebf3;
+  box-shadow:inset 0 1px 1px #fff,0 5px 22px #a2bbdf20;
+}
 .suggestions {margin-top:25px;gap:10px}
 .suggestions button {font-size:11px;color:var(--muted)}
 .composer-wrap {padding:15px 34px 20px}
@@ -156,7 +167,7 @@ select option {background:#202630;color:var(--text)}
 .calendar-delete summary,.calendar-delete button {color:#f2c0c5}
 .eyebrow {font-size:9px;letter-spacing:.16em;color:var(--faint)}
 @media(min-width:1250px) {.app-shell{grid-template-columns:96px minmax(0,1fr)}.sidebar{padding-left:15px;padding-right:15px}.page-content{padding-left:48px;padding-right:48px}}
-@media(max-width:900px) {.app-shell{grid-template-columns:78px minmax(0,1fr)}.sidebar{padding:23px 8px 15px}.brand{margin-bottom:35px}.brand-mark{font-size:24px}.tabs button{height:63px;min-height:63px}.page-content{padding:23px 24px}.topbar{padding-left:24px;padding-right:18px}.file-hero{gap:12px}.glass-drop{width:185px;height:125px}.glass-orbit{width:136px;height:136px;transform:translate(43px,15px)}.hero-copy h1{font-size:30px}}
-@media(max-width:600px) {.app-shell{grid-template-columns:66px minmax(0,1fr);border-radius:15px}.sidebar{padding:22px 5px 14px}.brand-mark{font-size:21px}.brand{margin-bottom:28px}.tabs{gap:10px}.tabs button{height:58px;min-height:58px;border-radius:19px;font-size:9px;gap:5px}.tabs button svg{width:20px;height:20px}.topbar{height:57px;min-height:57px;padding:0 12px 0 18px}.topbar-actions{gap:6px!important}.window-controls{gap:5px;padding-left:7px}.topbar .icon-button{width:28px;height:28px;min-width:28px;min-height:28px}.page-content{padding:22px 18px}.page-heading{padding-top:6px;padding-bottom:20px}.page-heading h1{font-size:23px}.file-hero{grid-template-columns:1fr;min-height:210px;padding-top:15px}.hero-copy h1{font-size:29px}.glass-sculpture{display:none}.hero-copy>.primary{min-width:130px}.team-card,.settings-card{padding:18px;border-radius:20px}.team-card-heading{gap:12px}.team-card-heading button{padding:9px 12px}.work-toolbar>select{max-width:none;width:100%}.work-toolbar .inline{width:100%;justify-content:flex-end;flex-wrap:wrap}.team-ai-connection{padding:17px;flex-wrap:wrap}.team-ai-connection>div{width:100%}.ai-top{padding:24px 18px 14px}.ai-status{padding:0 18px 12px}.messages{padding:20px 18px}.composer-wrap{padding:12px 16px 15px}.suggestions{flex-direction:column}.drive-picker{padding:20px;width:calc(100vw - 20px)}.drive-picker footer{align-items:center;flex-direction:row;flex-wrap:wrap}.companion img{width:40px;height:40px}}
-@media(prefers-reduced-motion:reduce) {*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}button:hover:not(:disabled),button:active:not(:disabled){transform:none}.glass-sculpture:hover .glass-drop{transform:rotate(-13deg) rotateY(-12deg)}}
+@media(max-width:900px) {.app-shell{grid-template-columns:78px minmax(0,1fr)}.sidebar{padding:23px 8px 15px}.brand{margin-bottom:35px}.tabs button{height:63px;min-height:63px}.page-content{padding:23px 24px}.topbar{padding-left:24px;padding-right:18px}.hero-copy h1{font-size:30px}}
+@media(max-width:600px) {.app-shell{grid-template-columns:66px minmax(0,1fr);border-radius:15px}.sidebar{padding:22px 5px 14px}.brand-mark{width:42px;height:42px;border-radius:13px}.brand{margin-bottom:28px}.tabs{gap:10px}.tabs button{height:58px;min-height:58px;border-radius:19px;font-size:9px;gap:5px}.tabs button svg{width:20px;height:20px}.topbar{height:57px;min-height:57px;padding:0 12px 0 18px}.topbar-actions{gap:6px!important}.window-controls{gap:5px;padding-left:7px}.topbar .icon-button{width:28px;height:28px;min-width:28px;min-height:28px}.page-content{padding:22px 18px}.page-heading{padding-top:6px;padding-bottom:20px}.page-heading h1{font-size:23px}.file-hero{min-height:210px;padding-top:15px}.hero-copy h1{font-size:29px}.hero-copy>.primary{min-width:130px}.team-card,.settings-card{padding:18px;border-radius:20px}.team-card-heading{gap:12px}.team-card-heading button{padding:9px 12px}.work-toolbar>select{max-width:none;width:100%}.work-toolbar .inline{width:100%;justify-content:flex-end;flex-wrap:wrap}.team-ai-connection{padding:17px;flex-wrap:wrap}.team-ai-connection>div{width:100%}.ai-top{padding:24px 18px 14px}.ai-status{padding:0 18px 12px}.messages{padding:20px 18px}.composer-wrap{padding:12px 16px 15px}.suggestions{flex-direction:column}.drive-picker{padding:20px;width:calc(100vw - 20px)}.drive-picker footer{align-items:center;flex-direction:row;flex-wrap:wrap}.companion img{width:40px;height:40px}}
+@media(prefers-reduced-motion:reduce) {*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}button:hover:not(:disabled),button:active:not(:disabled){transform:none}}
 @media(prefers-contrast:more) {.app-shell{background:#101723f5}.team-card,.settings-card,.drive-picker,.work-item{background:#17202ff2;border-color:#ffffff70}.settings-note,.micro{color:#e1e7f0}}

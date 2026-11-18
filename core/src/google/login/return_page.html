@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{TITLE}} · 사이</title>
+  <style>
+    :root {
+      color: #f0f3f8;
+      font: 16px/1.65 system-ui, "Malgun Gothic", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      background:
+        radial-gradient(ellipse at 75% 18%, #334050 0%, transparent 45%),
+        radial-gradient(ellipse at 12% 90%, #2c2a36 0%, transparent 50%),
+        #15191f;
+    }
+    main {
+      width: min(100%, 520px);
+      padding: clamp(28px, 8vw, 52px);
+      border: 1px solid #ffffff33;
+      border-radius: 30px;
+      background: linear-gradient(145deg, #ffffff18, #ffffff05 62%, #cadfff13);
+      box-shadow: inset 0 1px 0 #ffffff42, 0 24px 90px #0006;
+      text-align: center;
+    }
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 88px;
+      height: 68px;
+      margin: 0 auto 24px;
+      border: 1px solid #ffffff30;
+      border-radius: 24px;
+      background: linear-gradient(140deg, #c9d7e6bc, #73879bbb);
+      box-shadow: inset 0 1px 0 #fffc, 0 8px 22px #0003;
+    }
+    .mark svg { width: 65px; height: 65px; }
+    h1 { margin: 0; font-size: clamp(24px, 5.6vw, 34px); line-height: 1.3; }
+    p { margin: 12px 0 0; color: #d0d9e5; }
+    form { margin-top: 28px; }
+    button {
+      min-height: 46px;
+      padding: 10px 24px;
+      border: 1px solid #d7eaff74;
+      border-radius: 999px;
+      background: linear-gradient(150deg, #54708e, #354c66);
+      box-shadow: inset 0 1px 0 #ffffff58, 0 6px 20px #0004;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+    }
+    button:hover { background: linear-gradient(150deg, #6684a3, #405a77); }
+    button:focus-visible { outline: 2px solid #eef6ff; outline-offset: 4px; }
+    .hint { margin-top: 20px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main aria-labelledby="title">
+    <div class="mark" aria-hidden="true">{{MARK}}</div>
+    <h1 id="title">{{TITLE}}</h1>
+    <p>{{COPY}}</p>
+    <form action="{{PATH}}" method="post">
+      <button type="submit">{{BUTTON}} <span aria-hidden="true">→</span></button>
+    </form>
+    <p class="hint">창이 보이지 않으면 작업 표시줄의 사이를 눌러 주세요.</p>
+  </main>
+</body>
+</html>
