@@ -234,8 +234,16 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
                 )
                 .await
         }
+        "teams:members" => {
+            a.google
+                .team_members(
+                    x["epoch"].as_u64().ok_or("팀 목록을 다시 확인해 주세요.")?,
+                    &x.s("folderId"),
+                )
+                .await
+        }
         "teams:enable" | "teams:create" | "teams:connect" | "teams:invite" | "teams:remove"
-        | "teams:open" => {
+        | "teams:open" | "teams:member" | "teams:policy" => {
             let epoch = x["epoch"].as_u64().ok_or("팀 목록을 다시 확인해 주세요.")?;
             let result = match ch {
                 "teams:enable" => {
@@ -251,7 +259,29 @@ async fn dispatch(a: &Arc<App>, win: &WebviewWindow, ch: &str, x: Value) -> R {
                 }
                 "teams:invite" => {
                     a.google
-                        .invite_team_folder(epoch, &x.s("folderId"), &x.s("email"))
+                        .invite_team_folder(epoch, &x.s("folderId"), &x.s("email"), &x.s("role"))
+                        .await?
+                }
+                "teams:member" => {
+                    a.google
+                        .update_team_member(
+                            epoch,
+                            &x.s("folderId"),
+                            &x.s("memberId"),
+                            &x.s("role"),
+                        )
+                        .await?;
+                    Value::Null
+                }
+                "teams:policy" => {
+                    a.google
+                        .set_team_policy(
+                            epoch,
+                            &x.s("folderId"),
+                            x["membersCanInvite"]
+                                .as_bool()
+                                .ok_or("초대 설정을 다시 확인해 주세요.")?,
+                        )
                         .await?
                 }
                 "teams:remove" => {

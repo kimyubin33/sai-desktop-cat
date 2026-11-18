@@ -294,7 +294,12 @@ impl Login {
                                 &redirect,
                                 &nonce,
                                 expected.as_ref(),
-                                oauth::DRIVE_SCOPE,
+                                // 기본 로그인은 Drive 전체 권한 없이 끝난다. 팀 Drive 연결(Files)만 요구한다.
+                                if purpose == oauth::Purpose::Files {
+                                    oauth::DRIVE_SCOPE
+                                } else {
+                                    oauth::APPDATA_SCOPE
+                                },
                             )
                             .await
                             .map(|i| json!({"email":i.email}))

@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
 const FOLDER: &str = "application/vnd.google-apps.folder";
-const FIELDS: &str = "id,name,mimeType,trashed,ownedByMe,properties,capabilities(canListChildren,canAddChildren,canShare)";
+const FIELDS: &str = "id,name,mimeType,trashed,ownedByMe,writersCanShare,properties,owners(displayName,emailAddress),sharingUser(displayName,emailAddress),capabilities(canListChildren,canAddChildren,canShare)";
+/// Roles the app hands out. Owner transfer and public (anyone/domain) sharing are never created here.
+const ROLES: &[&str] = &["writer", "reader"];
 #[derive(Default)]
 pub(super) struct Teams {
     gate: tokio::sync::Mutex<()>,
@@ -40,9 +42,32 @@ fn folder(value: Value, fid: &str) -> Result<Value> {
             !s.trim().is_empty() && s.chars().count() <= 100 && !s.chars().any(char::is_control)
         })
         .ok_or("팀 폴더의 이름을 확인하지 못했어요.")?;
-    Ok(
-        json!({"folderId":fid,"name":name,"accessVerified":true,"canInvite":value["ownedByMe"] == true && value["capabilities"]["canShare"] == true,"canUpload":value["capabilities"]["canAddChildren"] == true}),
-    )
+    let owned = value["ownedByMe"] == true;
+    let can_share = value["capabilities"]["canShare"] == true;
+    // Drive defaults writersCanShare to true. Teams created by this app start with it off,
+    // so only the owner adds people unless the owner deliberately opens invites to members.
+    let members_can_invite = value["writersCanShare"] == true;
+    let owner = &value["owners"][0];
+    Ok(json!({
+        "folderId":fid,
+        "name":name,
+        "accessVerified":true,
+        "canManage":owned && can_share,
+        "canInvite":can_share && (owned || members_can_invite),
+        "membersCanInvite":members_can_invite,
+        "ownerEmail":text(&owner["emailAddress"]),
+        "ownerName":text(&owner["displayName"]),
+        "canUpload":value["capabilities"]["canAddChildren"] == true,
+    }))
+}
+/// Remote display text (names, e-mail addresses) is untrusted: bounded and free of control characters.
+fn text(value: &Value) -> String {
+    value
+        .as_str()
+        .filter(|s| s.chars().count() <= 254 && !s.chars().any(char::is_control))
+        .unwrap_or("")
+        .trim()
+        .to_owned()
 }
 async fn metadata(
     auth: &GoogleAuth,
@@ -99,27 +124,42 @@ impl Teams {
         let state = profiles.team_state(lease.subject())?;
         let q="trashed = false and mimeType = 'application/vnd.google-apps.folder' and properties has { key='saiTeam' and value='1' }";
         let value=auth.profile_request(&lease,"GET",&format!("/drive/v3/files?spaces=drive&pageSize=25&fields=nextPageToken,incompleteSearch,files({FIELDS})&q={}&pageToken={}",urlencoding::encode(q),urlencoding::encode(page)),None).await.map_err(message)?;
-        if value["incompleteSearch"] == true {
-            return err("초대받은 팀 목록을 끝까지 확인하지 못했어요.");
-        }
+        // A partial search is still useful: show what Drive returned and say the list may be incomplete.
+        let incomplete = value["incompleteSearch"] == true;
         let mut entries = vec![];
+        let mut skipped = 0;
         for meta in value["files"]
             .as_array()
             .filter(|v| v.len() <= 25)
             .ok_or("팀 목록의 형식을 확인하지 못했어요.")?
         {
-            let fid = meta["id"]
-                .as_str()
-                .filter(|s| id(s))
-                .ok_or("팀 폴더 주소가 올바르지 않아요.")?;
-            let team = folder(meta.clone(), fid)?;
+            // One unusable folder (bad id, lost access, odd name) must not hide every other team.
+            let Some(fid) = meta["id"].as_str().filter(|s| id(s)) else {
+                skipped += 1;
+                continue;
+            };
+            let Ok(team) = folder(meta.clone(), fid) else {
+                skipped += 1;
+                continue;
+            };
             if state["teams"]
                 .as_array()
                 .is_some_and(|ts| ts.iter().any(|t| t["folderId"] == fid))
             {
                 continue;
             }
-            entries.push(json!({"id":fid,"name":team["name"],"folder":true,"team":true}));
+            // Anyone can share a marked folder with anyone. Show who owns it and who shared it so the
+            // person can recognise a stranger's folder before joining.
+            entries.push(json!({
+                "id":fid,
+                "name":team["name"],
+                "folder":true,
+                "team":true,
+                "ownerEmail":team["ownerEmail"],
+                "ownerName":team["ownerName"],
+                "sharedBy":text(&meta["sharingUser"]["emailAddress"]),
+                "mine":team["canManage"],
+            }));
         }
         let next = match value.get("nextPageToken") {
             None => String::new(),
@@ -127,7 +167,7 @@ impl Teams {
             _ => return err("다음 팀 목록을 확인하지 못했어요."),
         };
         auth.with_lease(&lease, || {
-            Ok(json!({"epoch":epoch,"entries":entries,"nextPage":next}))
+            Ok(json!({"epoch":epoch,"entries":entries,"nextPage":next,"incomplete":incomplete,"skipped":skipped,"email":lease.email()}))
         })
         .await
     }
@@ -189,7 +229,8 @@ impl Teams {
             team["epoch"] = json!(lease.epoch());
             teams.push(team);
         }
-        auth.with_lease(&lease,||Ok(json!({"epoch":lease.epoch(),"signedIn":true,"driveConnected":connected,"driveFull":auth.has_full_drive(),"ready":state["ready"],"teams":teams,"draft":state["draft"],"pending":state["pending"]}))).await
+        let sync_error = profiles.sync_error(lease.subject());
+        auth.with_lease(&lease,||Ok(json!({"epoch":lease.epoch(),"signedIn":true,"email":lease.email(),"driveConnected":connected,"driveFull":auth.has_full_drive(),"ready":state["ready"],"syncError":sync_error,"teams":teams,"draft":state["draft"],"pending":state["pending"]}))).await
     }
     pub async fn create(
         &self,
@@ -229,7 +270,7 @@ impl Teams {
         let value = match metadata(auth, &lease, &fid).await {
             Ok(value) => value,
             Err((404, _)) => {
-                let body = json!({"id":fid,"name":draft.name,"mimeType":FOLDER,"properties":{"saiTeam":"1","saiCreation":draft.operation}});
+                let body = json!({"id":fid,"name":draft.name,"mimeType":FOLDER,"writersCanShare":false,"properties":{"saiTeam":"1","saiCreation":draft.operation}});
                 match auth
                     .profile_request(
                         &lease,
@@ -336,26 +377,48 @@ impl Teams {
         epoch: u64,
         fid: &str,
         email: &str,
+        role: &str,
     ) -> Result<Value> {
         let email = email.trim();
         if !valid_email(email) {
             return err("초대할 팀원의 Google 이메일을 확인해 주세요.");
         }
+        let role = role_of(role)?;
         let lease = lease(auth, epoch).await?;
         let _gate = self.gate.lock().await;
         remembered(profiles, lease.subject(), fid)?;
         let team = checked(auth, &lease, fid).await?;
         if team["canInvite"] != true {
-            return err("팀 폴더의 소유자만 앱에서 초대할 수 있어요.");
+            return err("이 팀은 소유자만 초대할 수 있어요.");
         }
+        if email.eq_ignore_ascii_case(lease.email()) {
+            return err("내 계정은 초대하지 않아도 돼요.");
+        }
+        let url = format!("https://drive.google.com/drive/folders/{fid}");
         let existing = permission(auth, &lease, fid, email).await?;
-        let (method,path,body) = match existing {
-            Some(p) if ["owner","writer"].contains(&p["role"].as_str().unwrap_or("")) => return Ok(json!({"alreadyShared":true,"url":format!("https://drive.google.com/drive/folders/{fid}")})),
-            Some(p) => {
-                let pid = p["id"].as_str().filter(|s|id(s)).ok_or("기존 공유 권한을 확인하지 못했어요.")?;
-                ("PATCH",format!("/drive/v3/files/{fid}/permissions/{pid}?fields=id,role,type"),json!({"role":"writer"}))
+        let (method, path, body) = match existing {
+            Some(p) if p["role"] == "owner" || p["role"] == role => {
+                return Ok(json!({"alreadyShared":true,"role":p["role"],"url":url}))
             }
-            None => ("POST",format!("/drive/v3/files/{fid}/permissions?sendNotificationEmail=true&fields=id,role,type"),json!({"type":"user","role":"writer","emailAddress":email})),
+            Some(_) if team["canManage"] != true => {
+                return err("이미 팀에 있는 사람의 권한은 소유자만 바꿀 수 있어요.")
+            }
+            Some(p) => {
+                let pid = p["id"]
+                    .as_str()
+                    .filter(|s| id(s))
+                    .ok_or("기존 공유 권한을 확인하지 못했어요.")?;
+                (
+                    "PATCH",
+                    format!("/drive/v3/files/{fid}/permissions/{pid}?fields=id,role,type"),
+                    json!({"role":role}),
+                )
+            }
+            None => (
+                "POST",
+                format!("/drive/v3/files/{fid}/permissions?sendNotificationEmail=true&fields=id,role,type"),
+                json!({"type":"user","role":role,"emailAddress":email}),
+            ),
         };
         auth.profile_request(
             &lease,
@@ -371,15 +434,143 @@ impl Teams {
             )
         })?;
         let confirmed = permission(auth, &lease, fid, email).await?;
-        if !confirmed
-            .is_some_and(|p| ["owner", "writer"].contains(&p["role"].as_str().unwrap_or("")))
-        {
+        if !confirmed.is_some_and(|p| p["role"] == role || p["role"] == "owner") {
             return err("초대 결과를 아직 확인하지 못했어요. 공유 상태를 다시 확인해 주세요.");
         }
-        Ok(
-            json!({"alreadyShared":false,"url":format!("https://drive.google.com/drive/folders/{fid}")}),
-        )
+        Ok(json!({"alreadyShared":false,"role":role,"url":url}))
     }
+    /// Owner-only member list, including any public (anyone/domain) access found on the folder.
+    pub async fn members(
+        &self,
+        auth: &GoogleAuth,
+        profiles: &Profiles,
+        epoch: u64,
+        fid: &str,
+    ) -> Result<Value> {
+        let lease = lease(auth, epoch).await?;
+        owner(auth, profiles, &lease, fid).await?;
+        let rows: Vec<_> = permissions(auth, &lease, fid)
+            .await?
+            .into_iter()
+            .filter(|p| p["deleted"] != true && p["id"].as_str().is_some_and(id))
+            .map(|p| {
+                json!({
+                    "id":p["id"],
+                    "type":text(&p["type"]),
+                    "role":text(&p["role"]),
+                    "email":text(&p["emailAddress"]),
+                    "name":text(&p["displayName"]),
+                    "domain":text(&p["domain"]),
+                    "public":p["type"] == "anyone" || p["type"] == "domain",
+                    "me":p["emailAddress"].as_str().is_some_and(|e| e.eq_ignore_ascii_case(lease.email())),
+                })
+            })
+            .collect();
+        auth.with_lease(&lease, || {
+            Ok(json!({"epoch":epoch,"folderId":fid,"members":rows}))
+        })
+        .await
+    }
+    /// Owner-only: change a member's role, or remove them with role "remove". The owner entry is never touched.
+    pub async fn update_member(
+        &self,
+        auth: &GoogleAuth,
+        profiles: &Profiles,
+        epoch: u64,
+        fid: &str,
+        pid: &str,
+        role: &str,
+    ) -> Result<()> {
+        let remove = role == "remove";
+        let role = if remove { "" } else { role_of(role)? };
+        if !id(pid) {
+            return err("팀원 정보를 확인하지 못했어요.");
+        }
+        let lease = lease(auth, epoch).await?;
+        let _gate = self.gate.lock().await;
+        owner(auth, profiles, &lease, fid).await?;
+        let target = permissions(auth, &lease, fid)
+            .await?
+            .into_iter()
+            .find(|p| p["id"] == pid && p["deleted"] != true)
+            .ok_or("이미 팀에서 빠진 사람이에요. 목록을 새로고침해 주세요.")?;
+        if target["role"] == "owner" {
+            return err("소유자의 권한은 바꾸거나 내보낼 수 없어요.");
+        }
+        let public = target["type"] == "anyone" || target["type"] == "domain";
+        if public && !remove {
+            return err("공개 링크 권한은 내보내기만 할 수 있어요.");
+        }
+        let path = format!("/drive/v3/files/{fid}/permissions/{pid}");
+        let result = if remove {
+            auth.profile_request(&lease, "DELETE", &path, None).await
+        } else {
+            auth.profile_request(
+                &lease,
+                "PATCH",
+                &format!("{path}?fields=id,role"),
+                Some((
+                    "application/json".into(),
+                    json!({"role":role}).to_string().into_bytes(),
+                )),
+            )
+            .await
+        };
+        match result {
+            // DELETE answers 204 with an empty body.
+            Ok(_) | Err((204, _)) => Ok(()),
+            Err(e) => Err(message(e)),
+        }
+    }
+    /// Owner-only switch: may editors invite other people? Off by default for app-created teams.
+    pub async fn set_policy(
+        &self,
+        auth: &GoogleAuth,
+        profiles: &Profiles,
+        epoch: u64,
+        fid: &str,
+        members_can_invite: bool,
+    ) -> Result<Value> {
+        let lease = lease(auth, epoch).await?;
+        let _gate = self.gate.lock().await;
+        owner(auth, profiles, &lease, fid).await?;
+        let value = auth
+            .profile_request(
+                &lease,
+                "PATCH",
+                &format!("/drive/v3/files/{fid}?fields={FIELDS}"),
+                Some((
+                    "application/json".into(),
+                    json!({"writersCanShare":members_can_invite})
+                        .to_string()
+                        .into_bytes(),
+                )),
+            )
+            .await
+            .map_err(message)?;
+        let team = folder(value, fid)?;
+        if team["membersCanInvite"] != members_can_invite {
+            return err("초대 설정이 바뀌었는지 확인하지 못했어요. 다시 확인해 주세요.");
+        }
+        Ok(team)
+    }
+}
+fn role_of(role: &str) -> Result<&'static str> {
+    match role {
+        "" => Ok("writer"),
+        r => ROLES
+            .iter()
+            .copied()
+            .find(|x| *x == r)
+            .ok_or_else(|| "팀원 권한을 '편집' 또는 '보기'로 선택해 주세요.".into()),
+    }
+}
+async fn owner(auth: &GoogleAuth, profiles: &Profiles, lease: &Lease, fid: &str) -> Result<()> {
+    remembered(profiles, lease.subject(), fid)?;
+    if checked(auth, lease, fid).await?["canManage"] != true {
+        return err("팀 폴더의 소유자만 팀원을 관리할 수 있어요.");
+    }
+    Ok(())
 }
 fn valid_email(email: &str) -> bool {
     let parts: Vec<_> = email.split('@').collect();
@@ -395,37 +586,23 @@ fn valid_email(email: &str) -> bool {
         && !parts[1].starts_with('.')
         && !parts[1].ends_with('.')
 }
-async fn permission(
-    auth: &GoogleAuth,
-    lease: &Lease,
-    fid: &str,
-    email: &str,
-) -> Result<Option<Value>> {
+async fn permissions(auth: &GoogleAuth, lease: &Lease, fid: &str) -> Result<Vec<Value>> {
     let mut page = String::new();
     let mut pages = BTreeSet::new();
-    let mut found = None;
-    let mut count = 0;
+    let mut rows = vec![];
     loop {
-        let value = auth.profile_request(lease,"GET",&format!("/drive/v3/files/{fid}/permissions?fields=nextPageToken,permissions(id,type,role,emailAddress,deleted)&pageSize=100&pageToken={}",urlencoding::encode(&page)),None).await.map_err(message)?;
+        let value = auth.profile_request(lease,"GET",&format!("/drive/v3/files/{fid}/permissions?fields=nextPageToken,permissions(id,type,role,emailAddress,displayName,domain,deleted)&pageSize=100&pageToken={}",urlencoding::encode(&page)),None).await.map_err(message)?;
         for p in value["permissions"]
             .as_array()
             .ok_or("공유 권한 목록을 확인하지 못했어요.")?
         {
-            count += 1;
-            if count > 1024 {
-                return err("공유 권한 목록이 너무 커서 초대를 중단했어요.");
+            if rows.len() >= 1024 {
+                return err("공유 권한 목록이 너무 커서 확인을 중단했어요.");
             }
-            if p["deleted"] != true
-                && p["type"] == "user"
-                && p["emailAddress"]
-                    .as_str()
-                    .is_some_and(|s| s.eq_ignore_ascii_case(email))
-            {
-                found = Some(p.clone());
-            }
+            rows.push(p.clone());
         }
         match value.get("nextPageToken") {
-            None => return Ok(found),
+            None => return Ok(rows),
             Some(Value::String(token))
                 if !token.is_empty() && token.len() <= 2048 && pages.insert(token.clone()) =>
             {
@@ -434,6 +611,20 @@ async fn permission(
             _ => return err("공유 권한 목록의 다음 페이지를 확인하지 못했어요."),
         }
     }
+}
+async fn permission(
+    auth: &GoogleAuth,
+    lease: &Lease,
+    fid: &str,
+    email: &str,
+) -> Result<Option<Value>> {
+    Ok(permissions(auth, lease, fid).await?.into_iter().rfind(|p| {
+        p["deleted"] != true
+            && p["type"] == "user"
+            && p["emailAddress"]
+                .as_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(email))
+    }))
 }
 #[cfg(test)]
 mod tests;

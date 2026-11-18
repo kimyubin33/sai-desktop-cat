@@ -1,12 +1,11 @@
 //! Google Drive: 계정 백업(사이 전용 숨김 폴더) · 팀 자료 올리기 · 공유 링크 읽기.
 //! 권한
 //!  - drive.appdata: 사이만 보는 숨김 폴더 (팀 목록 맡기기)
-//!  - drive: 내 드라이브·공유 문서함을 둘러보고, 내가 고른 파일만 팀에 보내거나 공유 설정을 바꾼다
-//!    (고르지 않은 파일은 읽거나 바꾸지 않는다)
+//!  - drive: 사용자가 팀 Drive 연결을 허용한 뒤에만 쓴다. 공개 링크(anyone) 권한은 만들지 않는다.
 use super::oauth::GoogleAuth;
 use crate::http::{client, json_body};
 use crate::util::J;
-use crate::{err, Result};
+use crate::Result;
 use serde_json::{json, Value};
 
 const API: &str = "https://www.googleapis.com/drive/v3";
@@ -101,52 +100,7 @@ async fn folder(a: &GoogleAuth, name: &str) -> Result<String> {
 
 const FIELDS: &str = "id,name,mimeType,size,webViewLink";
 
-/// 파일을 내 Drive 의 팀 폴더에 올리고, 링크가 있는 사람은 보거나(edit=false) 고칠 수 있게(edit=true) 한다
-pub async fn upload(a: &GoogleAuth, folder_name: &str, name: &str, mime: &str, bytes: Vec<u8>, edit: bool) -> Result<Value> {
-    if bytes.is_empty() {
-        return err("빈 파일이에요.");
-    }
-    if bytes.len() > MAX_UPLOAD {
-        return err(format!("{}MB 보다 큰 파일은 Drive 에 직접 올린 뒤 링크를 붙여 넣어 주세요.", MAX_UPLOAD / 1024 / 1024));
-    }
-    let mime = if mime.is_empty() { "application/octet-stream" } else { mime };
-    let parent = folder(a, folder_name).await?;
-    let loc = create_resumable(a, &json!({ "name": name, "parents": [parent] }), mime, bytes.len()).await?;
-    let f = put_bytes(a, &format!("{loc}"), mime, bytes).await?;
-    let id = f.s("id");
-    set_access(a, &id, edit).await?;
-    let d = send(a, client().get(format!("{API}/files/{id}")).query(&[("fields", FIELDS)])).await?;
-    Ok(d)
-}
-
-/// 링크가 있는 사람의 권한: 보기(reader) 또는 편집(writer). 팀원이 Google 계정을 몰라도 열리도록
-pub async fn set_access(a: &GoogleAuth, id: &str, edit: bool) -> Result<()> {
-    let role = if edit { "writer" } else { "reader" };
-    let d = send(a, client().get(format!("{API}/files/{id}/permissions")).query(&[("fields", "permissions(id,type,role)")])).await?;
-    let existing = d["permissions"].as_array().and_then(|l| l.iter().find(|p| p.s("type") == "anyone").cloned());
-    match existing {
-        Some(p) if p.s("role") == role => {}
-        Some(p) => {
-            send(a, client().patch(format!("{API}/files/{id}/permissions/{}", p.s("id"))).json(&json!({ "role": role }))).await?;
-        }
-        None => {
-            send(a, client().post(format!("{API}/files/{id}/permissions")).json(&json!({ "role": role, "type": "anyone" }))).await?;
-        }
-    }
-    Ok(())
-}
-
-/// HTML 내용으로 Google 문서를 만든다 (Drive 가 문서로 바꿔 준다)
-pub async fn create_doc(a: &GoogleAuth, folder_name: &str, title: &str, html: &str, edit: bool) -> Result<Value> {
-    let parent = folder(a, folder_name).await?;
-    let body = html.as_bytes().to_vec();
-    let meta = json!({ "name": title, "parents": [parent], "mimeType": "application/vnd.google-apps.document" });
-    let loc = create_resumable(a, &meta, "text/html", body.len()).await?;
-    let f = put_bytes(a, &loc, "text/html", body).await?;
-    let id = f.s("id");
-    set_access(a, &id, edit).await?;
-    send(a, client().get(format!("{API}/files/{id}")).query(&[("fields", FIELDS)])).await
-}
+// '링크가 있는 모든 사용자'(type: anyone) 공유는 만들지 않는다. 팀 자료는 팀 폴더의 개별 사용자 권한으로만 공유한다.
 
 /// Drive 링크에서 파일 id 찾기
 pub fn drive_id(url: &str) -> Option<String> {

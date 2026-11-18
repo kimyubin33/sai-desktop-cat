@@ -356,7 +356,7 @@ impl Google {
     // ---------- 로그인 ----------
     pub async fn login(&self) -> Result<Value> {
         let auth = self.auth()?;
-        if auth.has_session() && auth.has_full_drive() {
+        if auth.has_session() {
             return Ok(json!({"email":auth.verified_identity().await?.email}));
         }
         let result = self
@@ -450,11 +450,49 @@ impl Google {
             .join(&auth, &self.0.profiles, epoch, &selected.s("folderId"))
             .await
     }
-    pub async fn invite_team_folder(&self, epoch: u64, folder: &str, email: &str) -> Result<Value> {
+    pub async fn invite_team_folder(
+        &self,
+        epoch: u64,
+        folder: &str,
+        email: &str,
+        role: &str,
+    ) -> Result<Value> {
         let auth = self.auth()?;
         self.0
             .teams
-            .invite(&auth, &self.0.profiles, epoch, folder, email)
+            .invite(&auth, &self.0.profiles, epoch, folder, email, role)
+            .await
+    }
+    pub async fn team_members(&self, epoch: u64, folder: &str) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .members(&auth, &self.0.profiles, epoch, folder)
+            .await
+    }
+    pub async fn update_team_member(
+        &self,
+        epoch: u64,
+        folder: &str,
+        member: &str,
+        role: &str,
+    ) -> Result<()> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .update_member(&auth, &self.0.profiles, epoch, folder, member, role)
+            .await
+    }
+    pub async fn set_team_policy(
+        &self,
+        epoch: u64,
+        folder: &str,
+        members_can_invite: bool,
+    ) -> Result<Value> {
+        let auth = self.auth()?;
+        self.0
+            .teams
+            .set_policy(&auth, &self.0.profiles, epoch, folder, members_can_invite)
             .await
     }
     pub async fn open_team_folder(&self, epoch: u64, folder: &str) -> Result<String> {
@@ -623,11 +661,19 @@ impl Google {
             .browse(&auth, &self.0.profiles, epoch, page)
             .await
     }
+    /// `folder` is a folder ID or a pasted Google Drive folder link. Links let a member join a team that
+    /// Drive search has not indexed yet. Either way the live folder check in `join` decides.
     pub async fn connect_team_folder(&self, epoch: u64, folder: &str) -> Result<Value> {
         let auth = self.auth()?;
+        let folder = folder.trim();
+        let fid = if folder.contains('/') {
+            drive::drive_id(folder).ok_or("Google Drive 폴더 링크를 확인해 주세요.")?
+        } else {
+            folder.to_owned()
+        };
         self.0
             .teams
-            .join(&auth, &self.0.profiles, epoch, folder)
+            .join(&auth, &self.0.profiles, epoch, &fid)
             .await
     }
     pub async fn import_drive_files(
@@ -866,66 +912,9 @@ impl Google {
         drive::list(&a, mode, folder, query, page).await
     }
 
-    /// 내 드라이브(또는 공유 문서함)의 파일을 팀에 보낼 준비: 공유할 수 있으면 링크 권한을 맞춘다.
-    /// 돌려주는 값: 파일 정보 + access ("edit" | "view" | "link": 공유 설정을 바꿀 수 없어 원래 권한 그대로)
-    pub async fn prepare_send(&self, id: &str, edit: bool) -> Result<Value> {
-        let a = self.drive_auth()?;
-        let mut f = drive::get(&a, id).await?;
-        let access = if f["capabilities"].b("canShare") {
-            match drive::set_access(&a, id, edit).await {
-                Ok(()) => {
-                    if edit {
-                        "edit"
-                    } else {
-                        "view"
-                    }
-                }
-                Err(_) => "link",
-            }
-        } else {
-            "link"
-        };
-        f["access"] = json!(access);
-        Ok(f)
-    }
-
     pub async fn copy_to_mine(&self, id: &str, name: &str) -> Result<Value> {
         let a = self.drive_auth()?;
         drive::copy_to_mine(&a, id, name).await
-    }
-
-    pub async fn set_file_access(&self, drive_id: &str, edit: bool) -> Result<()> {
-        let a = self.drive_auth()?;
-        drive::set_access(&a, drive_id, edit).await
-    }
-
-    pub async fn create_doc(
-        &self,
-        team_name: &str,
-        title: &str,
-        html: &str,
-        edit: bool,
-    ) -> Result<Value> {
-        let a = self.drive_auth()?;
-        drive::create_doc(&a, &format!("사이 - {team_name}"), title, html, edit).await
-    }
-
-    pub async fn upload_file(
-        &self,
-        team_name: &str,
-        name: &str,
-        mime: &str,
-        bytes: Vec<u8>,
-        edit: bool,
-    ) -> Result<Value> {
-        if !self.is_ready() {
-            return err("파일을 올리려면 설정 → 외부 연결에서 Google 로 로그인해 주세요.");
-        }
-        if !self.has_drive() {
-            return err("Drive 에 올리려면 Google 로그인을 한 번 더 해 주세요 (Drive 권한이 새로 필요해요).");
-        }
-        let a = self.auth()?;
-        drive::upload(&a, &format!("사이 - {team_name}"), name, mime, bytes, edit).await
     }
 
     /// 붙여 넣은 Drive 링크의 파일 정보 (볼 수 없으면 None)

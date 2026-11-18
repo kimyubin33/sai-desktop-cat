@@ -135,10 +135,10 @@ impl Api {
             }
             let body: Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
             assert_eq!(body["type"], "user");
-            assert_eq!(body["role"], "writer");
+            assert!(["writer", "reader"].contains(&body["role"].as_str().unwrap()));
             assert!(path.contains("sendNotificationEmail=true"));
             let mut p = body;
-            p["id"] = json!("permission-user");
+            p["id"] = json!(format!("permission-{}", self.invites.load(Ordering::SeqCst)));
             self.permissions.lock().unwrap().push(p.clone());
             self.invites.fetch_add(1, Ordering::SeqCst);
             if self.fail_invite.swap(false, Ordering::SeqCst) {
@@ -146,10 +146,27 @@ impl Api {
             }
             return (200, p);
         }
-        if path.contains("/permissions/permission-user?") && method == "PATCH" {
+        if path.contains("/permissions/") && method == "PATCH" {
+            let body: Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
+            let pid = path.split("/permissions/").nth(1).unwrap().split('?').next().unwrap();
             let mut ps = self.permissions.lock().unwrap();
-            ps[0]["role"] = json!("writer");
-            return (200, ps[0].clone());
+            let p = ps.iter_mut().find(|p| p["id"] == pid).unwrap();
+            p["role"] = body["role"].clone();
+            return (200, p.clone());
+        }
+        if path.contains("/permissions/") && method == "DELETE" {
+            let pid = path.split("/permissions/").nth(1).unwrap();
+            self.permissions.lock().unwrap().retain(|p| p["id"] != pid);
+            // Real Drive answers 204 No Content; the mock server always sends a JSON body.
+            return (204, json!({}));
+        }
+        if method == "PATCH" && path.starts_with("/drive/v3/files/") {
+            let body: Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
+            let fid = path.strip_prefix("/drive/v3/files/").unwrap().split('?').next().unwrap();
+            let mut folders = self.folders.lock().unwrap();
+            let folder = folders.get_mut(fid).unwrap();
+            folder["writersCanShare"] = body["writersCanShare"].clone();
+            return (200, folder.clone());
         }
         if let Some(rest) = path.strip_prefix("/drive/v3/files/") {
             let fid = rest.split('?').next().unwrap();
@@ -331,7 +348,8 @@ async fn restored_reference_requires_live_access_and_removal_preserves_drive_fil
             &restored,
             auth.epoch(),
             fid,
-            "person@example.invalid"
+            "person@example.invalid",
+            "writer"
         )
         .await
         .is_err());
@@ -370,7 +388,8 @@ async fn only_owner_invites_explicit_user_and_retry_does_not_resend_after_uncert
             &profiles,
             auth.epoch(),
             fid,
-            "person@example.invalid"
+            "person@example.invalid",
+            "writer"
         )
         .await
         .is_err());
@@ -383,7 +402,8 @@ async fn only_owner_invites_explicit_user_and_retry_does_not_resend_after_uncert
             &profiles,
             auth.epoch(),
             fid,
-            "person@example.invalid"
+            "person@example.invalid",
+            "writer"
         )
         .await
         .is_err());
@@ -394,6 +414,7 @@ async fn only_owner_invites_explicit_user_and_retry_does_not_resend_after_uncert
             auth.epoch(),
             fid,
             "PERSON@example.invalid",
+            "writer"
         )
         .await
         .unwrap();
@@ -405,7 +426,8 @@ async fn only_owner_invites_explicit_user_and_retry_does_not_resend_after_uncert
             &profiles,
             auth.epoch(),
             fid,
-            "person@example.invalid\r\nother"
+            "person@example.invalid\r\nother",
+            "writer"
         )
         .await
         .is_err());
@@ -430,6 +452,7 @@ async fn reader_upgrade_is_explicit_and_arbitrary_ids_or_non_team_objects_are_re
             auth.epoch(),
             fid,
             "reader@example.invalid",
+            "writer"
         )
         .await
         .unwrap();
@@ -476,4 +499,152 @@ async fn basic_login_does_not_silently_request_or_use_drive_file_access() {
         .is_err());
     assert_eq!(api.creates.load(Ordering::SeqCst), 0);
     assert_eq!(api.ids.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn one_unusable_shared_folder_does_not_hide_other_teams_and_owner_is_shown() {
+    let root = Temp::new();
+    let api = Arc::new(Api::default());
+    let remote = api.clone();
+    let mock = server(move |request| {
+        if request.starts_with("POST /token") {
+            let mut t = file_token();
+            t["scope"] = json!(format!("{} {}", oauth::SCOPES.join(" "), oauth::DRIVE_SCOPE));
+            return (200, t);
+        }
+        let path = request.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+        if path.starts_with("/drive/v3/files?spaces=drive") {
+            return (
+                200,
+                json!({"incompleteSearch":true,"files":[
+                    {"id":"../bad","name":"bad id","mimeType":FOLDER,"trashed":false,"properties":{"saiTeam":"1"},"capabilities":{"canListChildren":true}},
+                    {"id":"no-access","name":"Lost","mimeType":FOLDER,"trashed":false,"properties":{"saiTeam":"1"},"capabilities":{"canListChildren":false}},
+                    {"id":"good","name":"Good team","mimeType":FOLDER,"trashed":false,"properties":{"saiTeam":"1"},
+                     "owners":[{"displayName":"Owner","emailAddress":"owner@example.invalid"}],
+                     "sharingUser":{"displayName":"Owner","emailAddress":"owner@example.invalid\u{0007}"},
+                     "capabilities":{"canListChildren":true,"canAddChildren":true}}
+                ]}),
+            );
+        }
+        remote.handle(request)
+    })
+    .await;
+    let settings = Store::memory(json!({}));
+    let client = auth(settings.clone(), &mock.url);
+    client
+        .exchange_code("base", "v", "http://127.0.0.1/", "attempt")
+        .await
+        .unwrap();
+    let profiles = Profiles::new(root.0.clone());
+    profiles.sync(&client, &settings).await.unwrap();
+    let rows = Teams::default()
+        .browse(&client, &profiles, client.epoch(), "")
+        .await
+        .unwrap();
+    let entries = rows["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["id"], "good");
+    assert_eq!(entries[0]["ownerEmail"], "owner@example.invalid");
+    // Control characters in remote text are dropped rather than shown.
+    assert_eq!(entries[0]["sharedBy"], "");
+    assert_eq!(rows["skipped"], 2);
+    assert_eq!(rows["incomplete"], true);
+    assert_eq!(rows["email"], "a@example.invalid");
+}
+
+#[tokio::test]
+async fn app_teams_lock_resharing_and_only_the_owner_manages_members() {
+    let root = Temp::new();
+    let api = Arc::new(Api::default());
+    let (_server, auth, profiles) = fixture(api.clone(), &root).await;
+    let teams = Teams::default();
+    let team = teams
+        .create(&auth, &profiles, auth.epoch(), "Team")
+        .await
+        .unwrap();
+    let fid = team["folderId"].as_str().unwrap().to_owned();
+    // New team folders are created with resharing by editors switched off.
+    assert_eq!(api.folders.lock().unwrap()[&fid]["writersCanShare"], false);
+    assert_eq!(team["membersCanInvite"], false);
+    assert_eq!(team["canManage"], true);
+
+    // Viewer role is honoured; unknown roles and self-invites are refused.
+    teams
+        .invite(&auth, &profiles, auth.epoch(), &fid, "viewer@example.invalid", "reader")
+        .await
+        .unwrap();
+    assert_eq!(api.permissions.lock().unwrap()[0]["role"], "reader");
+    assert!(teams
+        .invite(&auth, &profiles, auth.epoch(), &fid, "x@example.invalid", "owner")
+        .await
+        .is_err());
+    assert!(teams
+        .invite(&auth, &profiles, auth.epoch(), &fid, "A@example.invalid", "writer")
+        .await
+        .is_err());
+
+    // A non-owner editor cannot invite while resharing is off, but can after the owner opens it.
+    api.not_owner.store(true, Ordering::SeqCst);
+    assert!(teams
+        .invite(&auth, &profiles, auth.epoch(), &fid, "guest@example.invalid", "writer")
+        .await
+        .is_err());
+    assert!(teams
+        .set_policy(&auth, &profiles, auth.epoch(), &fid, true)
+        .await
+        .is_err());
+    assert!(teams.members(&auth, &profiles, auth.epoch(), &fid).await.is_err());
+    api.not_owner.store(false, Ordering::SeqCst);
+    let opened = teams
+        .set_policy(&auth, &profiles, auth.epoch(), &fid, true)
+        .await
+        .unwrap();
+    assert_eq!(opened["membersCanInvite"], true);
+    api.not_owner.store(true, Ordering::SeqCst);
+    teams
+        .invite(&auth, &profiles, auth.epoch(), &fid, "guest@example.invalid", "writer")
+        .await
+        .unwrap();
+    // Members still cannot change an existing member's role.
+    assert!(teams
+        .invite(&auth, &profiles, auth.epoch(), &fid, "viewer@example.invalid", "writer")
+        .await
+        .is_err());
+    api.not_owner.store(false, Ordering::SeqCst);
+
+    // Owner sees members, including public access added outside the app, and can remove them.
+    api.permissions.lock().unwrap().extend([
+        json!({"id":"anyoneWithLink","type":"anyone","role":"reader"}),
+        json!({"id":"owner-perm","type":"user","role":"owner","emailAddress":"a@example.invalid"}),
+    ]);
+    let members = teams
+        .members(&auth, &profiles, auth.epoch(), &fid)
+        .await
+        .unwrap();
+    let rows = members["members"].as_array().unwrap();
+    assert_eq!(rows.len(), 4);
+    assert!(rows.iter().any(|m| m["public"] == true));
+    assert!(rows.iter().any(|m| m["me"] == true && m["role"] == "owner"));
+    assert!(teams
+        .update_member(&auth, &profiles, auth.epoch(), &fid, "owner-perm", "remove")
+        .await
+        .is_err());
+    assert!(teams
+        .update_member(&auth, &profiles, auth.epoch(), &fid, "anyoneWithLink", "writer")
+        .await
+        .is_err());
+    teams
+        .update_member(&auth, &profiles, auth.epoch(), &fid, "anyoneWithLink", "remove")
+        .await
+        .unwrap();
+    teams
+        .update_member(&auth, &profiles, auth.epoch(), &fid, "permission-0", "writer")
+        .await
+        .unwrap();
+    let ps = api.permissions.lock().unwrap().clone();
+    assert!(!ps.iter().any(|p| p["type"] == "anyone"));
+    assert_eq!(
+        ps.iter().find(|p| p["id"] == "permission-0").unwrap()["role"],
+        "writer"
+    );
 }

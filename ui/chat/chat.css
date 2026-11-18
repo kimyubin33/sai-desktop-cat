@@ -835,6 +835,14 @@ input[type="checkbox"] {
 .team-options summary { cursor:pointer; color:var(--muted); font-size:10px; }
 .team-invite-form { margin:18px 0; }
 .team-invite-form .micro { margin-bottom:14px; }
+.team-invite-form select { margin-top:6px; }
+.team-owner-tools { margin:14px 0; display:grid; gap:10px; }
+.check-row { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); cursor:pointer; }
+.team-members { display:grid; gap:8px; }
+.team-member { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; }
+.team-member span { flex:1 1 160px; min-width:0; overflow-wrap:anywhere; }
+.team-member small { color:var(--muted); }
+.team-member select { width:auto; padding:4px 8px; font-size:12px; }
 .team-create-form { margin:16px 0; }
 .files-panel { margin:22px 0; }
 .files-panel .files-heading { margin-bottom:22px; }

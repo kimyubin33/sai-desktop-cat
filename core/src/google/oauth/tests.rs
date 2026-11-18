@@ -340,7 +340,7 @@ async fn granting_files_for_a_different_google_subject_preserves_the_original_ac
 }
 
 #[test]
-fn initial_login_bundles_approved_full_drive_with_independent_state_nonce_and_pkce() {
+fn initial_login_asks_only_identity_and_app_settings_with_independent_state_nonce_and_pkce() {
     let (verifier, challenge) = pkce();
     assert_eq!(verifier.len(), 43);
     assert_eq!(
@@ -357,16 +357,14 @@ fn initial_login_bundles_approved_full_drive_with_independent_state_nonce_and_pk
     ))
     .unwrap();
     let params: std::collections::HashMap<_, _> = url.query_pairs().collect();
-    assert_eq!(
-        params["scope"],
-        format!("{} {DRIVE_SCOPE}", SCOPES.join(" "))
-    );
+    // Least privilege: full Drive is requested only when the person turns on team Drive.
+    assert_eq!(params["scope"], SCOPES.join(" "));
     assert_eq!(params["nonce"], "nonce");
     assert_eq!(params["state"], "state");
     assert_eq!(params["code_challenge_method"], "S256");
     assert!(!params["scope"].contains("calendar"));
     assert!(!params["scope"].contains("tasks"));
-    assert!(params["scope"]
+    assert!(!params["scope"]
         .split_whitespace()
         .any(|s| s == "https://www.googleapis.com/auth/drive"));
     assert!(account_scopes(&format!(

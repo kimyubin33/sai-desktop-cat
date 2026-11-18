@@ -15,6 +15,10 @@ pub(super) struct Profiles {
     gate: tokio::sync::Mutex<()>,
 }
 impl Profiles {
+    /// Last settings-sync failure for this account, so the team screen can say why joining is paused.
+    pub fn sync_error(&self, subject: &str) -> Option<String> {
+        self.errors.lock().unwrap().get(subject).cloned()
+    }
     pub fn team_state(&self, subject: &str) -> Result<Value> {
         self.account(subject, |a| Ok(json!({"ready":a.checked,"teams":a.view()["teams"],"draft":a.folder_draft,"pending":a.outbox.len()})), false)
     }
