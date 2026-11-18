@@ -74,7 +74,9 @@ fn open(p: Picker) {
     );
     toggle(&by_id("drivePickerTools").unwrap(), "hidden", p.teams);
     toggle(&by_id("drivePickerImport").unwrap(), "hidden", p.teams);
+    toggle(&by_id("drivePickerLink").unwrap(), "hidden", !p.teams);
     set_val(&by_id("drivePickerQuery").unwrap(), "");
+    set_val(&by_id("drivePickerLinkInput").unwrap(), "");
     STATE.with(|s| *s.borrow_mut() = Some(p));
     if dialog().show_modal().is_err() {
         reset();
@@ -146,7 +148,7 @@ fn render() {
         let chosen = p.selected.contains_key(&id);
         let mut button = el("button").cls("drive-choice").attr("type", "button");
         let suffix = if p.teams {
-            "연결 →"
+            "참여 →"
         } else if folder {
             "폴더 열기 →"
         } else if chosen {
@@ -161,15 +163,32 @@ fn render() {
         }
         let team_mode = p.teams;
         let epoch = p.epoch;
+        let owner = s(row, "ownerEmail");
+        let shared_by = s(row, "sharedBy");
+        let origin = match (owner.as_str(), shared_by.as_str()) {
+            ("", "") => "소유자를 확인하지 못했어요".to_owned(),
+            (o, sb) if sb.is_empty() || sb.eq_ignore_ascii_case(o) => format!("소유자 {o}"),
+            ("", sb) => format!("공유한 사람 {sb}"),
+            (o, sb) => format!("소유자 {o} · 공유한 사람 {sb}"),
+        };
         button = button
             .flag(
                 "disabled",
                 loading || (!team_mode && !folder && !b(row, "canCopy")),
             )
             .kid(el("span").text(&name))
-            .kid(el("small").text(suffix))
+            .kid(el("small").text(if team_mode { &origin } else { suffix }))
             .click(move |_| {
                 if team_mode {
+                    // Anyone can share a folder with anyone; joining is an explicit, informed choice.
+                    if !confirm(&format!(
+                        "‘{name}’ 팀에 참여할까요?
+
+{origin}
+모르는 사람이 공유한 폴더라면 참여하지 마세요. 참여하면 이 팀 폴더로 파일을 올리고 내려받게 돼요."
+                    )) {
+                        return;
+                    }
                     close();
                     super::teams::connect(id.clone(), epoch);
                 } else if folder {
@@ -244,7 +263,7 @@ async fn load(more: bool) {
     match result {
         Ok(v) if v["epoch"].as_u64() == Some(p.epoch) => {
             let rows = v["entries"].as_array().cloned().unwrap_or_default();
-            let empty = rows.is_empty();
+            let empty = rows.is_empty() && !more;
             STATE.with(|s| {
                 if let Some(p) = s.borrow_mut().as_mut() {
                     if !more {
@@ -258,14 +277,27 @@ async fn load(more: bool) {
                     p.next = super::s(&v, "nextPage");
                 }
             });
-            set_text(
-                "drivePickerMessage",
+            let mut notes = vec![];
+            if p.teams {
                 if empty {
-                    "표시할 항목이 없어요."
-                } else {
-                    ""
-                },
-            );
+                    notes.push(format!(
+                        "{} 계정으로 초대받은 팀이 없어요. 초대받은 이메일이 이 계정과 같은지 확인해 주세요. 방금 초대받았다면 Drive 검색에 늦게 잡힐 수 있으니 소유자에게 받은 폴더 링크를 아래에 붙여 넣어 주세요.",
+                        s(&v, "email")
+                    ));
+                }
+                if b(&v, "incomplete") {
+                    notes.push("Drive가 목록 일부만 돌려줬어요. 보이지 않는 팀은 폴더 링크로 참여해 주세요.".into());
+                }
+                if v["skipped"].as_u64().unwrap_or(0) > 0 {
+                    notes.push(format!(
+                        "열 수 없는 팀 폴더 {}개는 빼고 보여 드려요.",
+                        v["skipped"]
+                    ));
+                }
+            } else if empty {
+                notes.push("표시할 항목이 없어요.".into());
+            }
+            set_text("drivePickerMessage", &notes.join(" "));
         }
         Ok(_) => {
             close();
@@ -312,6 +344,30 @@ pub fn bind() {
             }
         });
         navigate("search", "", "이름 검색", false);
+    });
+    on(&by_id("drivePickerLink").unwrap(), "submit", |e| {
+        e.prevent_default();
+        let link = val(&by_id("drivePickerLinkInput").unwrap()).trim().to_owned();
+        let Some(p) = STATE.with(|s| s.borrow().clone()) else {
+            return;
+        };
+        if !p.teams || link.is_empty() {
+            return;
+        }
+        if !link.starts_with("https://drive.google.com/") {
+            set_text(
+                "drivePickerMessage",
+                "https://drive.google.com/ 으로 시작하는 팀 폴더 링크를 붙여 넣어 주세요.",
+            );
+            return;
+        }
+        // The link is only a pointer: the app still checks that this account was invited to the folder.
+        if !confirm("이 링크의 팀 폴더에 참여할까요?
+링크를 보낸 사람이 아는 사람인지 확인해 주세요. 초대받지 않은 계정이면 참여할 수 없어요.") {
+            return;
+        }
+        close();
+        super::teams::connect(link, p.epoch);
     });
     on(&by_id("drivePickerMore").unwrap(), "click", |_| {
         spawn(load(true))

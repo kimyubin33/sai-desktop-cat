@@ -34,7 +34,8 @@ impl Purpose {
         matches!(self, Self::Folder | Self::SelectedFiles)
     }
 }
-// 팀 폴더·파일·Calendar 권한은 해당 기능을 붙일 때 별도 동의 흐름으로 요청한다.
+// 기본 로그인은 신원 + 앱 전용 숨김 폴더(drive.appdata)만 요청한다.
+// Drive 전체(팀 폴더)·선택 파일·Calendar 권한은 사용자가 그 기능을 켤 때 별도 동의 흐름으로 요청한다.
 pub const SCOPES: &[&str] = &["openid", "email", APPDATA_SCOPE];
 
 pub fn random_token() -> String {
@@ -73,15 +74,12 @@ pub(super) fn auth_url_for(
     purpose: Purpose,
     hint: Option<&str>,
 ) -> String {
-    let mut scopes = SCOPES.to_vec();
-    if purpose == Purpose::Calendar {
-        scopes = vec!["openid", "email", CALENDAR_SCOPE];
-    } else if !purpose.picker() {
-        scopes.push(DRIVE_SCOPE);
-    }
-    if purpose.picker() {
-        scopes = vec![FILE_SCOPE];
-    }
+    let scopes = match purpose {
+        Purpose::Identity => SCOPES.to_vec(),
+        Purpose::Files => [SCOPES, &[DRIVE_SCOPE]].concat(),
+        Purpose::Calendar => vec!["openid", "email", CALENDAR_SCOPE],
+        Purpose::Folder | Purpose::SelectedFiles => vec![FILE_SCOPE],
+    };
     let scope = scopes.join(" ");
     let mut params = vec![
         ("client_id", client_id),
